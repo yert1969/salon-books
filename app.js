@@ -178,24 +178,29 @@ function _defaultCategoryMap() {
   };
 }
 
-// Load categories from DB into state at startup. Called once in initApp.
+// Load categories from DB into state. Called at startup and before any modal
+// that needs them. Safe to call multiple times — cheap single key-value read.
 async function loadCategories() {
-  const saved = await db.settings.get('categories');
-  if (saved?.value) {
-    try {
-      state.categories = JSON.parse(saved.value);
-      // Guarantee all three keys exist even if the JSON is partial
-      if (!state.categories.INCOME)          state.categories.INCOME          = [];
-      if (!state.categories.DAILY_EXPENSE)   state.categories.DAILY_EXPENSE   = [];
-      if (!state.categories.MONTHLY_EXPENSE) state.categories.MONTHLY_EXPENSE = [];
-    } catch (e) {
+  try {
+    const saved = await db.settings.get('categories');
+    if (saved?.value) {
+      const parsed = JSON.parse(saved.value);
+      // Merge with defaults so any missing key gets filled in
+      state.categories = {
+        INCOME:          parsed.INCOME?.length          ? parsed.INCOME          : _defaultCategoryMap().INCOME,
+        DAILY_EXPENSE:   parsed.DAILY_EXPENSE?.length   ? parsed.DAILY_EXPENSE   : _defaultCategoryMap().DAILY_EXPENSE,
+        MONTHLY_EXPENSE: parsed.MONTHLY_EXPENSE?.length ? parsed.MONTHLY_EXPENSE : _defaultCategoryMap().MONTHLY_EXPENSE,
+      };
+    } else {
+      // Nothing saved yet — write defaults now so next read finds them
       state.categories = _defaultCategoryMap();
       await saveCategories();
     }
-  } else {
-    // First run — no saved categories yet, use defaults
+  } catch (e) {
+    // DB unavailable or JSON corrupt — use defaults in memory, try to save
+    console.warn('loadCategories error:', e);
     state.categories = _defaultCategoryMap();
-    await saveCategories();
+    try { await saveCategories(); } catch (_) { /* best effort */ }
   }
 }
 
@@ -433,6 +438,7 @@ async function deleteTransaction(id) {
 // ----------------------------------------------------------------
 
 async function openAddTransactionModal(type) {
+  await loadCategories();          // always fresh — cheap single-key DB read
   const isIncome = type === 'INCOME';
   const catOptions = categoryOptions(isIncome ? 'INCOME' : 'DAILY_EXPENSE');
 
@@ -587,10 +593,10 @@ async function renderMonthlyView() {
   const content = document.getElementById('app-content');
   document.getElementById('header-actions').innerHTML = '';
 
-  const expenses = await db.monthlyExpenses
-    .where('[year+month]')
-    .equals([state.selectedYear, state.selectedMonth])
-    .toArray();
+  const allExpenses = await db.monthlyExpenses.toArray();
+  const expenses = allExpenses.filter(
+    e => e.year === state.selectedYear && e.month === state.selectedMonth
+  );
 
   const total = expenses.reduce((s, e) => s + (e.amount || 0), 0);
 
@@ -656,6 +662,7 @@ function changeMonth(delta) {
 }
 
 async function openAddMonthlyExpenseModal() {
+  await loadCategories();          // always fresh — cheap single-key DB read
   const catOptions = categoryOptions('MONTHLY_EXPENSE');
 
   openModal(`
@@ -996,7 +1003,8 @@ async function runMonthlyReport() {
   const monthStr = `${year}-${String(month).padStart(2,'0')}`;
   const allTxns  = await db.transactions.toArray();
   const txns     = allTxns.filter(t => t.date && t.date.startsWith(monthStr));
-  const mExps    = await db.monthlyExpenses.where('[year+month]').equals([year, month]).toArray();
+  const allMExps = await db.monthlyExpenses.toArray();
+  const mExps    = allMExps.filter(e => e.year === year && e.month === month);
   const sums     = await db.dailySummary.toArray();
 
   const income   = txns.filter(t => t.type === 'INCOME');
