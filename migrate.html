@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mane Frame — Data Migration</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #3A0009; color: #fff;
+      display: flex; align-items: center; justify-content: center;
+      min-height: 100vh; margin: 0; padding: 20px; box-sizing: border-box;
+    }
+    .card {
+      background: rgba(255,255,255,0.08); border-radius: 20px;
+      padding: 36px 32px; max-width: 420px; width: 100%;
+      text-align: center;
+    }
+    h1 { font-size: 22px; margin: 0 0 8px; }
+    p  { font-size: 14px; color: rgba(255,255,255,0.6); line-height: 1.6; margin: 0 0 24px; }
+    button {
+      background: #C9A84C; color: #3A0009; border: none; border-radius: 12px;
+      padding: 14px 28px; font-size: 16px; font-weight: 700;
+      cursor: pointer; width: 100%; font-family: inherit;
+    }
+    button:disabled { opacity: 0.4; cursor: not-allowed; }
+    .status {
+      margin-top: 20px; font-size: 14px; line-height: 1.7;
+      color: rgba(255,255,255,0.75); min-height: 60px;
+    }
+    .ok  { color: #7BCB8A; font-weight: 600; }
+    .err { color: #F08080; font-weight: 600; }
+  </style>
+</head>
+<body>
+<div class="card">
+  <div style="font-size:40px;margin-bottom:16px;">✂️</div>
+  <h1>Mane Frame Migration</h1>
+  <p>
+    This page reads your <strong>existing local data</strong> from this browser
+    and downloads it as a backup file.<br><br>
+    Open this page in the <strong>same browser where you previously used the app</strong>,
+    tap the button, then use <strong>Settings → Restore from Backup File</strong>
+    in the main app to import it.
+  </p>
+  <button id="btn" onclick="runMigration()">⬇ Export My Data</button>
+  <div class="status" id="status"></div>
+</div>
+
+<script src="https://unpkg.com/dexie@3.2.4/dist/dexie.min.js"></script>
+<script>
+async function runMigration() {
+  const btn    = document.getElementById('btn');
+  const status = document.getElementById('status');
+  btn.disabled = true;
+  status.innerHTML = 'Opening local database…';
+
+  try {
+    // Open the same Dexie DB the old app used
+    const db = new Dexie('SalonBooks');
+    db.version(4).stores({
+      transactions:    '++id, date, type, category, paymentMethod',
+      dailySummary:    '++id, &date',
+      monthlyExpenses: '++id, year, month, category',
+      categories:      '++id, name, type',
+      settings:        'key',
+      renters:         '++id, name, status',
+      rentPayments:    '++id, renterId, weekStart, datePaid',
+    });
+
+    await db.open();
+    status.innerHTML = 'Reading data…';
+
+    const transactions    = await db.transactions.toArray();
+    const dailySummary    = await db.dailySummary.toArray();
+    const monthlyExpenses = await db.monthlyExpenses.toArray();
+    const renters         = await db.renters.toArray();
+    const rentPayments    = await db.rentPayments.toArray();
+    const settings        = await db.settings.toArray();
+
+    // Reconstruct the category map from the settings row (v4 format)
+    let categories;
+    const catSetting = settings.find(s => s.key === 'categories');
+    if (catSetting?.value) {
+      try { categories = JSON.parse(catSetting.value); } catch(_) {}
+    }
+    if (!categories) {
+      // Fall back to reading from the categories table (v3 and older)
+      const catRows = await db.categories.toArray();
+      categories = { INCOME: [], DAILY_EXPENSE: [], MONTHLY_EXPENSE: [] };
+      catRows.forEach(c => {
+        if (c.type && categories[c.type] && !categories[c.type].includes(c.name)) {
+          categories[c.type].push(c.name);
+        }
+      });
+    }
+
+    const today = new Date().toISOString().split('T')[0];
+    const backup = {
+      exportDate:      today,
+      appVersion:      '4.0',
+      businessName:    settings.find(s => s.key === 'businessName')?.value || '',
+      categories,
+      transactions,
+      dailySummary,
+      monthlyExpenses,
+      renters,
+      rentPayments,
+      settings,
+    };
+
+    const counts = [
+      `${transactions.length} transactions`,
+      `${dailySummary.length} day summaries`,
+      `${monthlyExpenses.length} monthly expenses`,
+      `${renters.length} renters`,
+      `${rentPayments.length} rent payments`,
+    ];
+
+    if (transactions.length === 0 && dailySummary.length === 0 && monthlyExpenses.length === 0) {
+      status.innerHTML = `<span class="err">⚠ No data found in this browser.<br>
+        Make sure you're on the same device and browser<br>
+        where the old app was used.</span>`;
+      btn.disabled = false;
+      return;
+    }
+
+    // Trigger download
+    const json = JSON.stringify(backup, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href     = url;
+    a.download = `mane-frame-migration-${today}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    status.innerHTML = `
+      <span class="ok">✓ Backup file downloaded!</span><br><br>
+      Found: ${counts.join(', ')}.<br><br>
+      Now go to the main app →
+      <strong>Settings → Restore from Backup File</strong>
+      and select the downloaded file.
+    `;
+
+  } catch (err) {
+    console.error(err);
+    status.innerHTML = `<span class="err">✗ Error: ${err.message}</span><br>
+      <span style="font-size:12px;opacity:.7;">Check the browser console for details.</span>`;
+    btn.disabled = false;
+  }
+}
+</script>
+</body>
+</html>
