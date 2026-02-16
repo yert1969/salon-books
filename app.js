@@ -274,6 +274,7 @@ const state = {
   pinBuffer:         '',
   pinEnabled:        false,
   rentersWeekStart:  null,
+  showRentersTab:    true,  // Auto-hides if no renters exist
   categories:        { INCOME: [], DAILY_EXPENSE: [], MONTHLY_EXPENSE: [] },
 };
 
@@ -382,11 +383,35 @@ function categoryOptions(type) {
 // 8. NAVIGATION
 // ----------------------------------------------------------------
 
+/**
+ * Updates whether the Renters tab is shown.
+ * Auto-hides if no renters exist, unless manually overridden in Settings.
+ */
+async function updateRentersTabVisibility() {
+  // Check for manual override first
+  const override = await db.settings.get('showRentersTab');
+  
+  if (override?.value !== undefined) {
+    // Manual override exists — respect it
+    state.showRentersTab = override.value === 'true';
+  } else {
+    // No override — auto-detect based on renter data
+    const allRenters = await db.renters.toArray();
+    state.showRentersTab = allRenters.length > 0;
+  }
+}
+
 function navigate(view) {
   state.currentView = view;
   ['daily', 'monthly', 'renters', 'reports', 'settings'].forEach(v => {
     const btn = document.getElementById('nav-' + v);
-    if (btn) btn.classList.toggle('active', v === view);
+    if (btn) {
+      btn.classList.toggle('active', v === view);
+      // Hide renters tab if showRentersTab is false
+      if (v === 'renters') {
+        btn.style.display = state.showRentersTab ? 'flex' : 'none';
+      }
+    }
   });
   const titles = {
     daily:    'Daily Log',
@@ -1321,6 +1346,23 @@ async function runMonthlyReport() {
       <div class="report-stat"><div class="report-stat-label">Clients</div><div class="report-stat-value">${totalClients}</div></div>
       <div class="report-stat"><div class="report-stat-label">Hours</div><div class="report-stat-value">${totalHours}</div></div>
     </div>
+
+    ${(svcTotal + tipTotal + rentTotal) > 0 ? `
+    <div class="report-white-card">
+      <div class="report-section-title">Income Sources</div>
+      <div class="pie-chart-wrap">
+        <canvas id="pie-monthly-income" width="260" height="260"></canvas>
+      </div>
+    </div>` : ''}
+
+    ${totalExp > 0 ? `
+    <div class="report-white-card">
+      <div class="report-section-title">Expense Breakdown</div>
+      <div class="pie-chart-wrap">
+        <canvas id="pie-monthly-exp" width="260" height="260"></canvas>
+      </div>
+    </div>` : ''}
+
     ${rentTotal > 0 ? `
     <div class="report-white-card">
       <div class="report-section-title">Booth Rent Collected</div>
@@ -1338,6 +1380,28 @@ async function runMonthlyReport() {
       `).join('')}
     </div>` : ''}
   `;
+
+  // Income sources pie
+  if ((svcTotal + tipTotal + rentTotal) > 0) {
+    const incLabels = [], incVals = [];
+    if (svcTotal  > 0) { incLabels.push('Services');    incVals.push(svcTotal); }
+    if (tipTotal  > 0) { incLabels.push('Tips');        incVals.push(tipTotal); }
+    if (rentTotal > 0) { incLabels.push('Booth Rent');  incVals.push(rentTotal); }
+    drawPie('pie-monthly-income', incLabels, incVals);
+  }
+
+  // Expense breakdown pie — daily exp by category + monthly exp by category
+  if (totalExp > 0) {
+    const expMap = {};
+    dExpense.forEach(t => {
+      expMap[t.category] = (expMap[t.category]||0) + (t.amount||0);
+    });
+    mExps.forEach(e => {
+      expMap[e.category] = (expMap[e.category]||0) + (e.amount||0);
+    });
+    const expEntries = Object.entries(expMap).sort((a,b)=>b[1]-a[1]);
+    drawPie('pie-monthly-exp', expEntries.map(([k])=>k), expEntries.map(([,v])=>v));
+  }
 }
 
 // ---- Annual Report ----
@@ -1470,12 +1534,18 @@ async function runCategoryReport() {
   });
 
   const sortDesc = obj => Object.entries(obj).sort((a,b)=>b[1]-a[1]);
+  const hasInc   = Object.keys(incMap).length > 0;
+  const hasExp   = Object.keys(expMap).length > 0;
 
   document.getElementById('report-output').innerHTML = `
     <div style="font-size:13px; color:var(--text-muted); padding: 4px 0 12px;">${from} — ${to}</div>
-    ${Object.keys(incMap).length > 0 ? `
+
+    ${hasInc ? `
     <div class="report-white-card">
       <div class="report-section-title">Income by Category</div>
+      <div class="pie-chart-wrap">
+        <canvas id="pie-income" width="260" height="260"></canvas>
+      </div>
       ${sortDesc(incMap).map(([k,v])=>`
         <div class="report-row">
           <div class="report-row-label">${k}</div>
@@ -1483,9 +1553,13 @@ async function runCategoryReport() {
         </div>
       `).join('')}
     </div>` : ''}
-    ${Object.keys(expMap).length > 0 ? `
+
+    ${hasExp ? `
     <div class="report-white-card">
       <div class="report-section-title">Expenses by Category</div>
+      <div class="pie-chart-wrap">
+        <canvas id="pie-expense" width="260" height="260"></canvas>
+      </div>
       ${sortDesc(expMap).map(([k,v])=>`
         <div class="report-row">
           <div class="report-row-label">${k}</div>
@@ -1493,15 +1567,103 @@ async function runCategoryReport() {
         </div>
       `).join('')}
     </div>` : ''}
-    ${Object.keys(incMap).length === 0 && Object.keys(expMap).length === 0
+
+    ${!hasInc && !hasExp
       ? '<p style="color:var(--text-muted);text-align:center;padding:30px 0;">No data for this date range.</p>'
       : ''}
   `;
+
+  // Draw after innerHTML is set so canvas elements exist in DOM
+  if (hasInc) {
+    const incEntries = sortDesc(incMap);
+    drawPie('pie-income', incEntries.map(([k])=>k), incEntries.map(([,v])=>v));
+  }
+  if (hasExp) {
+    const expEntries = sortDesc(expMap);
+    drawPie('pie-expense', expEntries.map(([k])=>k), expEntries.map(([,v])=>v));
+  }
 }
 
 // ----------------------------------------------------------------
-// 14. CSV EXPORT
+// 14. PIE CHART HELPER
 // ----------------------------------------------------------------
+
+// Tracks live Chart.js instances so we can destroy before re-drawing
+const _chartInstances = {};
+
+// Salon-brand colour palette for pie slices
+const PIE_COLORS = [
+  '#C9A84C', // gold
+  '#6B1A2A', // plum
+  '#7BCB8A', // green
+  '#C96B6B', // red/rose
+  '#6B9BC9', // blue
+  '#C96BA8', // pink
+  '#8BC96B', // lime
+  '#C9956B', // amber
+  '#6BC9C9', // teal
+  '#A86BC9', // purple
+];
+
+/**
+ * Renders a doughnut chart into a <canvas id="canvasId">.
+ * Call after setting innerHTML so the canvas exists in the DOM.
+ * @param {string} canvasId
+ * @param {string[]} labels
+ * @param {number[]} values
+ * @param {string} centerLabel  — small text shown below the canvas (optional)
+ */
+function drawPie(canvasId, labels, values, centerLabel) {
+  if (_chartInstances[canvasId]) {
+    _chartInstances[canvasId].destroy();
+    delete _chartInstances[canvasId];
+  }
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+
+  _chartInstances[canvasId] = new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels,
+      datasets: [{
+        data:            values,
+        backgroundColor: PIE_COLORS.slice(0, values.length),
+        borderColor:     '#fff',
+        borderWidth:     2,
+        hoverOffset:     6,
+      }],
+    },
+    options: {
+      responsive:          true,
+      maintainAspectRatio: true,
+      cutout:              '58%',
+      plugins: {
+        legend: {
+          position:  'bottom',
+          labels: {
+            color:      '#5C3A4A',
+            font:       { size: 11, family: "'DM Sans', sans-serif" },
+            padding:    10,
+            boxWidth:   12,
+            boxHeight:  12,
+          },
+        },
+        tooltip: {
+          callbacks: {
+            label: ctx => {
+              const total = ctx.dataset.data.reduce((a, b) => a + b, 0);
+              const pct   = total > 0 ? ((ctx.parsed / total) * 100).toFixed(1) : 0;
+              return ` ${ctx.label}: ${fmt(ctx.parsed)} (${pct}%)`;
+            },
+          },
+        },
+      },
+    },
+  });
+}
+
+
 
 async function exportCSV() {
   const from = document.getElementById('r-exp-from')?.value;
@@ -1571,6 +1733,20 @@ async function renderSettingsView() {
   const bizName = await db.settings.get('businessName');
   const pinSet  = await db.settings.get('pin');
   const pinOn   = await db.settings.get('pinEnabled');
+  
+  // Get renters tab status
+  const rentersOverride = await db.settings.get('showRentersTab');
+  const allRenters = await db.renters.toArray();
+  let rentersStatus;
+  if (!rentersOverride || rentersOverride.value === undefined) {
+    rentersStatus = allRenters.length > 0 
+      ? 'Auto (shown — you have renters)' 
+      : 'Auto (hidden — no renters yet)';
+  } else if (rentersOverride.value === 'true') {
+    rentersStatus = 'Always shown';
+  } else {
+    rentersStatus = 'Always hidden';
+  }
 
   content.innerHTML = `
     <!-- Business Name -->
@@ -1641,6 +1817,21 @@ async function renderSettingsView() {
         </label>
       </div>
       ` : ''}
+    </div>
+
+    <!-- Features -->
+    <div class="settings-section">
+      <div class="settings-label">Features</div>
+      <div class="settings-item" onclick="toggleRentersTab()">
+        <div>
+          <div class="settings-item-label">Show Booth Renters Tab</div>
+          <div class="settings-item-sub">${rentersStatus}</div>
+        </div>
+        <label class="toggle" onclick="event.stopPropagation()">
+          <input type="checkbox" id="renters-tab-toggle" ${state.showRentersTab ? 'checked' : ''} onchange="toggleRentersTab()">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
     </div>
 
     <!-- Backup & Restore -->
@@ -1800,6 +1991,41 @@ async function togglePINLock() {
   const newVal  = current?.value === 'true' ? 'false' : 'true';
   await db.settings.put({ key: 'pinEnabled', value: newVal });
   renderSettingsView();
+}
+
+async function toggleRentersTab() {
+  const override = await db.settings.get('showRentersTab');
+  const allRenters = await db.renters.toArray();
+  const wasHidden = !state.showRentersTab;
+  
+  // Cycle through: Auto → Always Show → Always Hide → Auto
+  let newValue;
+  if (!override || override.value === undefined) {
+    // Currently Auto → switch to Always Show
+    newValue = 'true';
+  } else if (override.value === 'true') {
+    // Currently Always Show → switch to Always Hide
+    newValue = 'false';
+  } else {
+    // Currently Always Hide → back to Auto (delete the setting)
+    await db.settings.delete('showRentersTab');
+    await updateRentersTabVisibility();
+    navigate(state.currentView); // Refresh to show/hide tab
+    renderSettingsView();
+    return;
+  }
+  
+  await db.settings.put({ key: 'showRentersTab', value: newValue });
+  await updateRentersTabVisibility();
+  
+  // If the tab was hidden and is now being shown, navigate to Renters view
+  // so the user can immediately add their first renter
+  if (wasHidden && state.showRentersTab) {
+    navigate('renters');
+  } else {
+    navigate(state.currentView); // Refresh to show/hide tab
+    renderSettingsView();
+  }
 }
 
 let pinBuffer = '';
@@ -2122,9 +2348,12 @@ async function saveNewRenter() {
     status:     'active',
   });
 
+  // Update tab visibility in case this is the first renter
+  await updateRentersTabVisibility();
+  
   closeModal();
   showToast(`${name} added ✓`);
-  renderRentersView();
+  navigate('renters'); // Refresh nav bar + render view
 }
 
 function openEditRenterModal(renterId) {
@@ -2267,6 +2496,9 @@ async function importBackup(file) {
     await saveCategories();
     await db.settings.put({ key: 'lastBackup', value: todayStr() });
 
+    // Update tab visibility in case restored backup includes renters
+    await updateRentersTabVisibility();
+
     showToast('Restore complete ✓');
     navigate('daily');
 
@@ -2308,6 +2540,7 @@ function closeModal() {
 // Called after Firebase confirms the user is signed in.
 async function bootApp() {
   await loadCategories();
+  await updateRentersTabVisibility();
 
   const pinSetting  = await db.settings.get('pin');
   const pinEnabled  = await db.settings.get('pinEnabled');

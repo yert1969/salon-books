@@ -1161,3 +1161,17 @@ html, body {
   font-size: 12px; color: rgba(255,255,255,0.4);
   text-align: center; line-height: 1.6; margin-top: 20px;
 }
+
+/* ================================================================
+   PIE CHARTS
+   ================================================================ */
+.pie-chart-wrap {
+  display: flex;
+  justify-content: center;
+  padding: 12px 0 8px;
+  max-width: 280px;
+  margin: 0 auto;
+}
+.pie-chart-wrap canvas {
+  max-width: 100%;
+}
