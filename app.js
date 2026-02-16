@@ -274,7 +274,7 @@ const state = {
   pinBuffer:         '',
   pinEnabled:        false,
   rentersWeekStart:  null,
-  showRentersTab:    true,  // Auto-hides if no renters exist
+  showRentersTab:    false,  // Updated by updateRentersTabVisibility() on boot
   categories:        { INCOME: [], DAILY_EXPENSE: [], MONTHLY_EXPENSE: [] },
 };
 
@@ -1614,15 +1614,25 @@ const PIE_COLORS = [
  * @param {string} centerLabel  — small text shown below the canvas (optional)
  */
 function drawPie(canvasId, labels, values, centerLabel) {
+  // Check if Chart.js is loaded
+  if (typeof Chart === 'undefined') {
+    console.error('Chart.js not loaded');
+    return;
+  }
+  
   if (_chartInstances[canvasId]) {
     _chartInstances[canvasId].destroy();
     delete _chartInstances[canvasId];
   }
   const canvas = document.getElementById(canvasId);
-  if (!canvas) return;
+  if (!canvas) {
+    console.warn('Canvas not found:', canvasId);
+    return;
+  }
   const ctx = canvas.getContext('2d');
 
-  _chartInstances[canvasId] = new Chart(ctx, {
+  try {
+    _chartInstances[canvasId] = new Chart(ctx, {
     type: 'doughnut',
     data: {
       labels,
@@ -1661,6 +1671,9 @@ function drawPie(canvasId, labels, values, centerLabel) {
       },
     },
   });
+  } catch (err) {
+    console.error('Chart creation failed:', err);
+  }
 }
 
 
@@ -2063,6 +2076,7 @@ async function checkPin() {
   if (stored && pinBuffer === stored.value) {
     document.getElementById('pin-screen').classList.add('hidden');
     document.getElementById('app').classList.remove('hidden');
+    navigate('daily'); // Update tab visibility and render view
   } else {
     document.getElementById('pin-error').classList.remove('hidden');
     pinBuffer = '';
