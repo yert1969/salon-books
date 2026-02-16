@@ -405,12 +405,10 @@ async function updateRentersTabVisibility() {
  * Wraps render functions with error handling to prevent blank pages
  */
 async function safeRender(renderFn, viewName) {
-  console.log(`[RENDER] Starting render of ${viewName}...`);
   try {
     await renderFn();
-    console.log(`[RENDER] ${viewName} rendered successfully`);
-  } catch (err) {
-    console.error(`[RENDER] Error rendering ${viewName}:`, err);
+    } catch (err) {
+    console.error(`Error rendering ${viewName}:`, err);
     const content = document.getElementById('app-content');
     if (content) {
       content.innerHTML = `
@@ -435,8 +433,6 @@ async function safeRender(renderFn, viewName) {
 }
 
 function navigate(view) {
-  console.log(`[NAV] Navigating to ${view}`);
-  console.log(`[NAV] Current renters tab state: ${state.showRentersTab}`);
   state.currentView = view;
   
   // Update all nav buttons
@@ -451,10 +447,9 @@ function navigate(view) {
   const rentersBtn = document.getElementById('nav-renters');
   if (rentersBtn) {
     const shouldShow = state.showRentersTab;
-    console.log(`[NAV] Updating renters tab visibility: ${shouldShow ? 'VISIBLE' : 'HIDDEN'}`);
-    rentersBtn.style.display = shouldShow ? 'flex' : 'none';
+      rentersBtn.style.display = shouldShow ? 'flex' : 'none';
   } else {
-    console.warn('[NAV] Renters button not found in DOM');
+    console.warn('Renters button not found in DOM');
   }
   
   const titles = {
@@ -1438,22 +1433,17 @@ async function runMonthlyReport() {
 
   // Income sources pie
   if ((svcTotal + tipTotal + rentTotal) > 0) {
-    console.log('[REPORT] Monthly report - creating income pie chart');
-    console.log('[REPORT] Services:', svcTotal, 'Tips:', tipTotal, 'Rent:', rentTotal);
-    const incLabels = [], incVals = [];
+        const incLabels = [], incVals = [];
     if (svcTotal  > 0) { incLabels.push('Services');    incVals.push(svcTotal); }
     if (tipTotal  > 0) { incLabels.push('Tips');        incVals.push(tipTotal); }
     if (rentTotal > 0) { incLabels.push('Booth Rent');  incVals.push(rentTotal); }
     drawPie('pie-monthly-income', incLabels, incVals);
   } else {
-    console.log('[REPORT] Monthly report - no income data, skipping income pie');
-  }
+    }
 
   // Expense breakdown pie — daily exp by category + monthly exp by category
   if (totalExp > 0) {
-    console.log('[REPORT] Monthly report - creating expense pie chart');
-    console.log('[REPORT] Total expenses:', totalExp);
-    const expMap = {};
+        const expMap = {};
     dExpense.forEach(t => {
       expMap[t.category] = (expMap[t.category]||0) + (t.amount||0);
     });
@@ -1461,11 +1451,9 @@ async function runMonthlyReport() {
       expMap[e.category] = (expMap[e.category]||0) + (e.amount||0);
     });
     const expEntries = Object.entries(expMap).sort((a,b)=>b[1]-a[1]);
-    console.log('[REPORT] Expense categories:', expEntries);
-    drawPie('pie-monthly-exp', expEntries.map(([k])=>k), expEntries.map(([,v])=>v));
+      drawPie('pie-monthly-exp', expEntries.map(([k])=>k), expEntries.map(([,v])=>v));
   } else {
-    console.log('[REPORT] Monthly report - no expense data, skipping expense pie');
-  }
+    }
 }
 
 // ---- Annual Report ----
@@ -1639,21 +1627,15 @@ async function runCategoryReport() {
 
   // Draw after innerHTML is set so canvas elements exist in DOM
   if (hasInc) {
-    console.log('[REPORT] Category report - creating income pie chart');
-    const incEntries = sortDesc(incMap);
-    console.log('[REPORT] Income categories:', incEntries);
-    drawPie('pie-income', incEntries.map(([k])=>k), incEntries.map(([,v])=>v));
+      const incEntries = sortDesc(incMap);
+      drawPie('pie-income', incEntries.map(([k])=>k), incEntries.map(([,v])=>v));
   } else {
-    console.log('[REPORT] Category report - no income data');
-  }
+    }
   if (hasExp) {
-    console.log('[REPORT] Category report - creating expense pie chart');
-    const expEntries = sortDesc(expMap);
-    console.log('[REPORT] Expense categories:', expEntries);
-    drawPie('pie-expense', expEntries.map(([k])=>k), expEntries.map(([,v])=>v));
+      const expEntries = sortDesc(expMap);
+      drawPie('pie-expense', expEntries.map(([k])=>k), expEntries.map(([,v])=>v));
   } else {
-    console.log('[REPORT] Category report - no expense data');
-  }
+    }
 }
 
 // ----------------------------------------------------------------
@@ -1686,24 +1668,20 @@ const PIE_COLORS = [
  * @param {string} centerLabel  — small text shown below the canvas (optional)
  */
 function drawPie(canvasId, labels, values, centerLabel) {
-  console.log(`[CHART] Drawing pie chart: ${canvasId}`);
-  console.log(`[CHART] Labels:`, labels);
-  console.log(`[CHART] Values:`, values);
   
   // Check if Chart.js is loaded
   if (typeof Chart === 'undefined') {
-    console.error('[CHART] Chart.js not loaded');
+    console.error('Chart.js not loaded');
     return;
   }
   
   if (_chartInstances[canvasId]) {
-    console.log(`[CHART] Destroying existing chart instance: ${canvasId}`);
-    _chartInstances[canvasId].destroy();
+      _chartInstances[canvasId].destroy();
     delete _chartInstances[canvasId];
   }
   const canvas = document.getElementById(canvasId);
   if (!canvas) {
-    console.warn(`[CHART] Canvas not found: ${canvasId}`);
+    console.warn(`Canvas not found: ${canvasId}`);
     return;
   }
   const ctx = canvas.getContext('2d');
@@ -1752,8 +1730,6 @@ function drawPie(canvasId, labels, values, centerLabel) {
     console.error('Chart creation failed:', err);
   }
 }
-
-
 
 async function exportCSV() {
   const from = document.getElementById('r-exp-from')?.value;
@@ -2154,35 +2130,28 @@ function updatePinDots() {
 }
 
 async function checkPin() {
-  console.log('[PIN] Checking PIN...');
   const stored = await db.settings.get('pin');
-  console.log('[PIN] Stored PIN exists:', !!stored);
   
   if (stored && pinBuffer === stored.value) {
-    console.log('[PIN] PIN correct, showing app...');
-    try {
+      try {
       document.getElementById('pin-screen').classList.add('hidden');
       document.getElementById('app').classList.remove('hidden');
       
-      console.log('[PIN] Renters tab state before navigate:', state.showRentersTab);
-      
+          
       // Call navigate to update tab visibility and render the view
       navigate('daily');
       
-      console.log('[PIN] Navigate called, waiting for render...');
-      
+          
       // Give renderDailyView a moment to complete
       // (navigate is sync but calls async renderDailyView)
       await new Promise(resolve => setTimeout(resolve, 100));
       
-      console.log('[PIN] PIN entry complete');
-    } catch (err) {
-      console.error('[PIN] Error after PIN entry:', err);
+        } catch (err) {
+      console.error('Error after PIN entry:', err);
       showToast('Error loading app — please refresh');
     }
   } else {
-    console.log('[PIN] Incorrect PIN');
-    document.getElementById('pin-error').classList.remove('hidden');
+      document.getElementById('pin-error').classList.remove('hidden');
     pinBuffer = '';
     updatePinDots();
   }
