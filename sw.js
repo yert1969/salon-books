@@ -1,8 +1,7 @@
 // Service Worker — Mane Frame Salon App
-// Caches app files so it works offline
-// v3 — force cache refresh for category fix
+// v5 — categories moved to settings JSON, no more categories table queries
 
-const CACHE_NAME = 'salon-books-v3';
+const CACHE_NAME = 'salon-books-v5';
 
 // All the files our app needs to work offline
 const FILES_TO_CACHE = [

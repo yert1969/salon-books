@@ -9,28 +9,71 @@
 // 1. DATABASE SETUP
 // ----------------------------------------------------------------
 
+// ================================================================
+//  DATABASE SCHEMA
+//  v1: initial  v2: added renters  v4: categories moved to settings JSON
+// ================================================================
+
 const db = new Dexie('SalonBooks');
 
-// Version 1 schema
 db.version(1).stores({
-  transactions:     '++id, date, type, category, paymentMethod',
-  dailySummary:     '++id, &date',
-  monthlyExpenses:  '++id, year, month, category',
-  categories:       '++id, name, type',
-  settings:         'key'
+  transactions:    '++id, date, type, category, paymentMethod',
+  dailySummary:    '++id, &date',
+  monthlyExpenses: '++id, year, month, category',
+  categories:      '++id, name, type',
+  settings:        'key',
 });
 
-// Version 2 — adds booth renters and rent payment tracking
 db.version(2).stores({
-  transactions:     '++id, date, type, category, paymentMethod',
-  dailySummary:     '++id, &date',
-  monthlyExpenses:  '++id, year, month, category',
-  categories:       '++id, name, type',
-  settings:         'key',
-  // Booth renter profiles
-  renters:          '++id, name, status',
-  // Weekly rent payment records
-  rentPayments:     '++id, renterId, weekStart, datePaid',
+  transactions:    '++id, date, type, category, paymentMethod',
+  dailySummary:    '++id, &date',
+  monthlyExpenses: '++id, year, month, category',
+  categories:      '++id, name, type',
+  settings:        'key',
+  renters:         '++id, name, status',
+  rentPayments:    '++id, renterId, weekStart, datePaid',
+});
+
+db.version(3).stores({
+  transactions:    '++id, date, type, category, paymentMethod',
+  dailySummary:    '++id, &date',
+  monthlyExpenses: '++id, year, month, category',
+  categories:      '++id, name, type',
+  settings:        'key',
+  renters:         '++id, name, status',
+  rentPayments:    '++id, renterId, weekStart, datePaid',
+});
+
+// v4: Migrate categories out of their own table into a single JSON
+// blob stored in settings. Categories are configuration data — small,
+// always loaded all at once, never queried by index. Storing them as
+// individual indexed rows was the wrong design and caused all the
+// dropdown bugs. From v4 onward the categories table is unused;
+// all reads/writes go through state.categories + settings JSON.
+db.version(4).stores({
+  transactions:    '++id, date, type, category, paymentMethod',
+  dailySummary:    '++id, &date',
+  monthlyExpenses: '++id, year, month, category',
+  categories:      '++id, name, type',   // kept in schema, no longer used
+  settings:        'key',
+  renters:         '++id, name, status',
+  rentPayments:    '++id, renterId, weekStart, datePaid',
+}).upgrade(async tx => {
+  // Read whatever categories survived in the old table
+  const existing = await tx.table('categories').toArray();
+  const catMap = { INCOME: [], DAILY_EXPENSE: [], MONTHLY_EXPENSE: [] };
+  existing.forEach(c => {
+    if (c.type && catMap[c.type] && !catMap[c.type].includes(c.name)) {
+      catMap[c.type].push(c.name);
+    }
+  });
+  // Fill in any missing defaults so nothing is lost
+  const defs = _defaultCategoryMap();
+  if (catMap.INCOME.length          === 0) catMap.INCOME          = defs.INCOME;
+  if (catMap.DAILY_EXPENSE.length   === 0) catMap.DAILY_EXPENSE   = defs.DAILY_EXPENSE;
+  if (catMap.MONTHLY_EXPENSE.length === 0) catMap.MONTHLY_EXPENSE = defs.MONTHLY_EXPENSE;
+  // Persist as a single JSON string in the settings table
+  await tx.table('settings').put({ key: 'categories', value: JSON.stringify(catMap) });
 });
 
 // ----------------------------------------------------------------
@@ -45,7 +88,10 @@ const state = {
   reportType:        'daily',
   pinBuffer:         '',
   pinEnabled:        false,
-  rentersWeekStart:  null,   // set on first visit to Renters tab
+  rentersWeekStart:  null,
+  // Categories live here in memory after loadCategories() runs at startup.
+  // Shape: { INCOME: ['Haircut', 'Color', ...], DAILY_EXPENSE: [...], MONTHLY_EXPENSE: [...] }
+  categories:        { INCOME: [], DAILY_EXPENSE: [], MONTHLY_EXPENSE: [] },
 };
 
 // ----------------------------------------------------------------
@@ -106,47 +152,63 @@ function showToast(msg) {
 }
 
 // ----------------------------------------------------------------
-// 4. DEFAULT DATA — Pre-load useful categories on first run
+// 4. CATEGORY MANAGEMENT
+// Categories are configuration data — stored as a single JSON blob
+// in the settings table and loaded into state.categories at startup.
+// Every part of the app reads state.categories synchronously from
+// memory. No index queries, no async calls, nothing to break.
 // ----------------------------------------------------------------
 
-const DEFAULT_CATEGORIES = [
-  // Income categories
-  { name: 'Haircut',          type: 'INCOME' },
-  { name: 'Color',            type: 'INCOME' },
-  { name: 'Highlights',       type: 'INCOME' },
-  { name: 'Blowout',          type: 'INCOME' },
-  { name: 'Treatment',        type: 'INCOME' },
-  { name: 'Nails',            type: 'INCOME' },
-  { name: 'Waxing',           type: 'INCOME' },
-  { name: 'Retail Product',   type: 'INCOME' },
-  { name: 'Other Service',    type: 'INCOME' },
-  // Daily expense categories
-  { name: 'Supplies',         type: 'DAILY_EXPENSE' },
-  { name: 'Products',         type: 'DAILY_EXPENSE' },
-  { name: 'Tools/Equipment',  type: 'DAILY_EXPENSE' },
-  { name: 'Advertising',      type: 'DAILY_EXPENSE' },
-  { name: 'Education',        type: 'DAILY_EXPENSE' },
-  { name: 'Meals',            type: 'DAILY_EXPENSE' },
-  { name: 'Misc Daily',       type: 'DAILY_EXPENSE' },
-  { name: 'Employee Pay',     type: 'DAILY_EXPENSE' },
-  // Monthly fixed expense categories
-  { name: 'Rent',             type: 'MONTHLY_EXPENSE' },
-  { name: 'Electric',         type: 'MONTHLY_EXPENSE' },
-  { name: 'Water',            type: 'MONTHLY_EXPENSE' },
-  { name: 'Gas',              type: 'MONTHLY_EXPENSE' },
-  { name: 'Insurance',        type: 'MONTHLY_EXPENSE' },
-  { name: 'Cleaning Service', type: 'MONTHLY_EXPENSE' },
-  { name: 'Booking Software', type: 'MONTHLY_EXPENSE' },
-  { name: 'Phone',            type: 'MONTHLY_EXPENSE' },
-  { name: 'Marketing',        type: 'MONTHLY_EXPENSE' },
-  { name: 'Misc Monthly',     type: 'MONTHLY_EXPENSE' },
-];
+// The hardcoded defaults — only used if no saved categories exist yet
+function _defaultCategoryMap() {
+  return {
+    INCOME: [
+      'Haircut', 'Color', 'Highlights', 'Blowout', 'Treatment',
+      'Nails', 'Waxing', 'Retail Product', 'Other Service',
+    ],
+    DAILY_EXPENSE: [
+      'Supplies', 'Products', 'Tools/Equipment', 'Advertising',
+      'Education', 'Meals', 'Employee Pay', 'Misc Daily',
+    ],
+    MONTHLY_EXPENSE: [
+      'Rent', 'Electric', 'Water', 'Gas', 'Insurance',
+      'Cleaning Service', 'Booking Software', 'Phone',
+      'Marketing', 'Misc Monthly',
+    ],
+  };
+}
 
-async function seedDefaultCategories() {
-  const count = await db.categories.count();
-  if (count === 0) {
-    await db.categories.bulkAdd(DEFAULT_CATEGORIES);
+// Load categories from DB into state at startup. Called once in initApp.
+async function loadCategories() {
+  const saved = await db.settings.get('categories');
+  if (saved?.value) {
+    try {
+      state.categories = JSON.parse(saved.value);
+      // Guarantee all three keys exist even if the JSON is partial
+      if (!state.categories.INCOME)          state.categories.INCOME          = [];
+      if (!state.categories.DAILY_EXPENSE)   state.categories.DAILY_EXPENSE   = [];
+      if (!state.categories.MONTHLY_EXPENSE) state.categories.MONTHLY_EXPENSE = [];
+    } catch (e) {
+      state.categories = _defaultCategoryMap();
+      await saveCategories();
+    }
+  } else {
+    // First run — no saved categories yet, use defaults
+    state.categories = _defaultCategoryMap();
+    await saveCategories();
   }
+}
+
+// Persist current state.categories back to the DB. Simple and atomic.
+async function saveCategories() {
+  await db.settings.put({ key: 'categories', value: JSON.stringify(state.categories) });
+}
+
+// Return options HTML for a category select element
+function categoryOptions(type) {
+  return (state.categories[type] || [])
+    .map(name => `<option value="${name}">${name}</option>`)
+    .join('');
 }
 
 // ----------------------------------------------------------------
@@ -372,10 +434,7 @@ async function deleteTransaction(id) {
 
 async function openAddTransactionModal(type) {
   const isIncome = type === 'INCOME';
-  const catType = isIncome ? 'INCOME' : 'DAILY_EXPENSE';
-  const allCats = await db.categories.toArray();
-  const cats = allCats.filter(c => c.type === catType);
-  const catOptions = cats.map(c => `<option value="${c.name}">${c.name}</option>`).join('');
+  const catOptions = categoryOptions(isIncome ? 'INCOME' : 'DAILY_EXPENSE');
 
   const paymentMethods = ['Cash', 'Card', 'Venmo', 'Zelle', 'Other'];
   const pmOptions = paymentMethods.map(m => `<option value="${m}">${m}</option>`).join('');
@@ -597,9 +656,7 @@ function changeMonth(delta) {
 }
 
 async function openAddMonthlyExpenseModal() {
-  const allCats = await db.categories.toArray();
-  const cats = allCats.filter(c => c.type === 'MONTHLY_EXPENSE');
-  const catOptions = cats.map(c => `<option value="${c.name}">${c.name}</option>`).join('');
+  const catOptions = categoryOptions('MONTHLY_EXPENSE');
 
   openModal(`
     <h2 class="modal-title">+ Add Monthly Expense</h2>
@@ -1338,7 +1395,7 @@ async function renderSettingsView() {
     document.body.appendChild(inp);
   }
 
-  await loadCategoryChips();
+  loadCategoryChips();
 
   // Load last backup date
   const lastBackup = await db.settings.get('lastBackup');
@@ -1351,24 +1408,6 @@ async function renderSettingsView() {
   }
 }
 
-async function loadCategoryChips() {
-  const types = [
-    { type: 'INCOME',          container: 'income-cats' },
-    { type: 'DAILY_EXPENSE',   container: 'daily-exp-cats' },
-    { type: 'MONTHLY_EXPENSE', container: 'monthly-exp-cats' },
-  ];
-  const allCats = await db.categories.toArray();
-  for (const { type, container } of types) {
-    const cats = allCats.filter(c => c.type === type);
-    const el   = document.getElementById(container);
-    if (el) el.innerHTML = cats.map(c =>
-      `<span class="category-chip">${c.name}
-        <button class="chip-delete" onclick="deleteCategory(${c.id})">×</button>
-      </span>`
-    ).join('');
-  }
-}
-
 async function saveBusinessName() {
   const val = document.getElementById('biz-name').value.trim();
   if (!val) return;
@@ -1376,21 +1415,42 @@ async function saveBusinessName() {
   showToast('Business name saved ✓');
 }
 
+// Render the category chips in Settings from state.categories (synchronous)
+function loadCategoryChips() {
+  const map = {
+    'income-cats':      'INCOME',
+    'daily-exp-cats':   'DAILY_EXPENSE',
+    'monthly-exp-cats': 'MONTHLY_EXPENSE',
+  };
+  for (const [containerId, type] of Object.entries(map)) {
+    const el = document.getElementById(containerId);
+    if (!el) continue;
+    el.innerHTML = (state.categories[type] || []).map(name =>
+      `<span class="category-chip">${name}
+        <button class="chip-delete" onclick="deleteCategory('${type}','${name.replace(/'/g,"\\'")}')">×</button>
+      </span>`
+    ).join('');
+  }
+}
+
 async function addCategory(type) {
   const inputId = { INCOME: 'new-income-cat', DAILY_EXPENSE: 'new-dexp-cat', MONTHLY_EXPENSE: 'new-mexp-cat' }[type];
   const input   = document.getElementById(inputId);
   const name    = input?.value.trim();
   if (!name) return;
-  await db.categories.add({ name, type });
+  if (state.categories[type].includes(name)) { showToast('Already exists'); return; }
+  state.categories[type].push(name);
+  await saveCategories();
   input.value = '';
   showToast(`"${name}" added ✓`);
-  await loadCategoryChips();
+  loadCategoryChips();
 }
 
-async function deleteCategory(id) {
-  if (!confirm('Remove this category?')) return;
-  await db.categories.delete(id);
-  await loadCategoryChips();
+async function deleteCategory(type, name) {
+  if (!confirm(`Remove "${name}"?`)) return;
+  state.categories[type] = state.categories[type].filter(n => n !== name);
+  await saveCategories();
+  loadCategoryChips();
 }
 
 // ----------------------------------------------------------------
@@ -1836,14 +1896,15 @@ async function exportBackup() {
   try {
     const backup = {
       exportDate:      todayStr(),
-      appVersion:      '2.0',
+      appVersion:      '4.0',
       businessName:    (await db.settings.get('businessName'))?.value || '',
+      // Categories are already in memory as a clean map — save them directly
+      categories:      state.categories,
       transactions:    await db.transactions.toArray(),
       dailySummary:    await db.dailySummary.toArray(),
       monthlyExpenses: await db.monthlyExpenses.toArray(),
       renters:         await db.renters.toArray(),
       rentPayments:    await db.rentPayments.toArray(),
-      categories:      await db.categories.toArray(),
       settings:        await db.settings.toArray(),
     };
 
@@ -1858,7 +1919,6 @@ async function exportBackup() {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
 
-    // Record last backup date
     await db.settings.put({ key: 'lastBackup', value: todayStr() });
     showToast('Backup saved ✓');
     renderSettingsView();
@@ -1880,42 +1940,50 @@ async function importBackup(file) {
     const text = await file.text();
     const data = JSON.parse(text);
 
-    // Basic validation
-    if (!data.transactions || !data.categories) {
-      showToast('Invalid backup file');
-      return;
+    if (!data.transactions) { showToast('Invalid backup file'); return; }
+
+    // Handle both old-format (categories = array of {id,name,type} rows)
+    // and new-format (categories = {INCOME:[...], DAILY_EXPENSE:[...], MONTHLY_EXPENSE:[...]})
+    let catMap;
+    if (Array.isArray(data.categories)) {
+      // Old format — convert to new map
+      catMap = { INCOME: [], DAILY_EXPENSE: [], MONTHLY_EXPENSE: [] };
+      data.categories.forEach(c => {
+        if (c.type && catMap[c.type]) catMap[c.type].push(c.name);
+      });
+    } else if (data.categories && typeof data.categories === 'object') {
+      catMap = data.categories;
+    } else {
+      catMap = _defaultCategoryMap();
     }
 
-    // Clear and restore each table
+    // Restore transactional data
     await db.transaction('rw',
       db.transactions, db.dailySummary, db.monthlyExpenses,
-      db.renters, db.rentPayments, db.categories, db.settings,
+      db.renters, db.rentPayments, db.settings,
       async () => {
         await db.transactions.clear();
         await db.dailySummary.clear();
         await db.monthlyExpenses.clear();
-        await db.categories.clear();
         await db.settings.clear();
+        if (data.renters)      await db.renters.clear();
+        if (data.rentPayments) await db.rentPayments.clear();
 
-        // Only clear renters tables if backup contains them (version 2+)
-        if (data.renters)      { await db.renters.clear();      }
-        if (data.rentPayments) { await db.rentPayments.clear(); }
-
-        // Re-insert all records (strip IDs so they're auto-assigned cleanly)
         const strip = arr => arr.map(({ id, ...rest }) => rest);
-
         await db.transactions.bulkAdd(strip(data.transactions));
-        await db.dailySummary.bulkAdd(strip(data.dailySummary));
-        await db.monthlyExpenses.bulkAdd(strip(data.monthlyExpenses));
-        await db.categories.bulkAdd(strip(data.categories));
-        await db.settings.bulkAdd(data.settings); // settings use key not id
+        if (data.dailySummary?.length)    await db.dailySummary.bulkAdd(strip(data.dailySummary));
+        if (data.monthlyExpenses?.length) await db.monthlyExpenses.bulkAdd(strip(data.monthlyExpenses));
+        if (data.renters?.length)         await db.renters.bulkAdd(strip(data.renters));
+        if (data.rentPayments?.length)    await db.rentPayments.bulkAdd(strip(data.rentPayments));
 
-        if (data.renters)      await db.renters.bulkAdd(strip(data.renters));
-        if (data.rentPayments) await db.rentPayments.bulkAdd(strip(data.rentPayments));
+        // Restore settings rows (they use key, not id)
+        if (data.settings?.length) await db.settings.bulkAdd(data.settings);
       }
     );
 
-    // Record restore date
+    // Save the categories map and reload into state
+    state.categories = catMap;
+    await saveCategories();
     await db.settings.put({ key: 'lastBackup', value: todayStr() });
 
     showToast('Restore complete ✓');
@@ -1959,7 +2027,8 @@ function closeModal() {
 // ----------------------------------------------------------------
 
 async function initApp() {
-  await seedDefaultCategories();
+  // Load categories into memory first — all views depend on this
+  await loadCategories();
 
   const pinSetting    = await db.settings.get('pin');
   const pinEnabled    = await db.settings.get('pinEnabled');
@@ -1980,7 +2049,26 @@ async function initApp() {
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('sw.js')
+      .then(reg => {
+        // When a new SW takes over, reload the page to get fresh files
+        reg.addEventListener('updatefound', () => {
+          const newWorker = reg.installing;
+          if (newWorker) {
+            newWorker.addEventListener('statechange', () => {
+              if (newWorker.state === 'activated') {
+                // New SW is in control — reload to apply updates
+                window.location.reload();
+              }
+            });
+          }
+        });
+      })
       .catch(err => console.log('SW registration skipped:', err));
+
+    // If a SW just took over this session, reload once to get fresh files
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      window.location.reload();
+    });
   });
 }
 
