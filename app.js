@@ -1,83 +1,268 @@
 // ================================================================
 //  SALON BOOKS — Main Application Logic
-//  Uses Dexie.js (IndexedDB wrapper) for local data storage
+//  Data layer: Firebase Firestore  |  Auth: Google Sign-In
 // ================================================================
 
 'use strict';
 
 // ----------------------------------------------------------------
-// 1. DATABASE SETUP
+// 1. FIREBASE INITIALIZATION
 // ----------------------------------------------------------------
 
-// ================================================================
-//  DATABASE SCHEMA
-//  v1: initial  v2: added renters  v4: categories moved to settings JSON
-// ================================================================
+const firebaseConfig = {
+  apiKey:            "AIzaSyAQ4HdSBoCDFe5I3k-aWXMCO-98N_44Cso",
+  authDomain:        "mane-frame-salon.firebaseapp.com",
+  projectId:         "mane-frame-salon",
+  storageBucket:     "mane-frame-salon.firebasestorage.app",
+  messagingSenderId: "261521689074",
+  appId:             "1:261521689074:web:7d095aa53fd87301d8036b",
+};
 
-const db = new Dexie('SalonBooks');
+firebase.initializeApp(firebaseConfig);
 
-db.version(1).stores({
-  transactions:    '++id, date, type, category, paymentMethod',
-  dailySummary:    '++id, &date',
-  monthlyExpenses: '++id, year, month, category',
-  categories:      '++id, name, type',
-  settings:        'key',
-});
+const auth      = firebase.auth();
+const firestore = firebase.firestore();
 
-db.version(2).stores({
-  transactions:    '++id, date, type, category, paymentMethod',
-  dailySummary:    '++id, &date',
-  monthlyExpenses: '++id, year, month, category',
-  categories:      '++id, name, type',
-  settings:        'key',
-  renters:         '++id, name, status',
-  rentPayments:    '++id, renterId, weekStart, datePaid',
-});
-
-db.version(3).stores({
-  transactions:    '++id, date, type, category, paymentMethod',
-  dailySummary:    '++id, &date',
-  monthlyExpenses: '++id, year, month, category',
-  categories:      '++id, name, type',
-  settings:        'key',
-  renters:         '++id, name, status',
-  rentPayments:    '++id, renterId, weekStart, datePaid',
-});
-
-// v4: Migrate categories out of their own table into a single JSON
-// blob stored in settings. Categories are configuration data — small,
-// always loaded all at once, never queried by index. Storing them as
-// individual indexed rows was the wrong design and caused all the
-// dropdown bugs. From v4 onward the categories table is unused;
-// all reads/writes go through state.categories + settings JSON.
-db.version(4).stores({
-  transactions:    '++id, date, type, category, paymentMethod',
-  dailySummary:    '++id, &date',
-  monthlyExpenses: '++id, year, month, category',
-  categories:      '++id, name, type',   // kept in schema, no longer used
-  settings:        'key',
-  renters:         '++id, name, status',
-  rentPayments:    '++id, renterId, weekStart, datePaid',
-}).upgrade(async tx => {
-  // Read whatever categories survived in the old table
-  const existing = await tx.table('categories').toArray();
-  const catMap = { INCOME: [], DAILY_EXPENSE: [], MONTHLY_EXPENSE: [] };
-  existing.forEach(c => {
-    if (c.type && catMap[c.type] && !catMap[c.type].includes(c.name)) {
-      catMap[c.type].push(c.name);
+// Enable offline persistence so the app works without a network
+firestore.enablePersistence({ synchronizeTabs: true })
+  .catch(err => {
+    if (err.code === 'failed-precondition') {
+      console.warn('Firestore persistence: multiple tabs open.');
+    } else if (err.code === 'unimplemented') {
+      console.warn('Firestore persistence not available in this browser.');
     }
   });
-  // Fill in any missing defaults so nothing is lost
-  const defs = _defaultCategoryMap();
-  if (catMap.INCOME.length          === 0) catMap.INCOME          = defs.INCOME;
-  if (catMap.DAILY_EXPENSE.length   === 0) catMap.DAILY_EXPENSE   = defs.DAILY_EXPENSE;
-  if (catMap.MONTHLY_EXPENSE.length === 0) catMap.MONTHLY_EXPENSE = defs.MONTHLY_EXPENSE;
-  // Persist as a single JSON string in the settings table
-  await tx.table('settings').put({ key: 'categories', value: JSON.stringify(catMap) });
-});
 
 // ----------------------------------------------------------------
-// 2. APP STATE
+// 2. AUTH STATE & CURRENT USER
+// ----------------------------------------------------------------
+
+// Holds the currently signed-in Firebase user (or null)
+let currentUser = null;
+
+// Returns a Firestore CollectionReference scoped to the signed-in user.
+// Called lazily — only when an actual DB operation runs, after auth.
+function userCol(name) {
+  if (!currentUser) throw new Error('Not authenticated — cannot access DB.');
+  return firestore.collection('users').doc(currentUser.uid).collection(name);
+}
+
+// ----------------------------------------------------------------
+// 3. DB COMPATIBILITY SHIM  (drop-in Dexie replacement)
+//
+// Exposes a Dexie-like API so all existing app code works unchanged:
+//   db.transactions.add(record)
+//   db.transactions.where('date').equals(date).toArray()
+//   db.settings.get('pin')
+//   db.settings.put({key, value})
+//   db.transaction('rw', ...tables, fn)
+// ----------------------------------------------------------------
+
+// Converts a Firestore DocumentSnapshot into a plain object with id field.
+function docToObj(doc) {
+  if (!doc.exists) return undefined;
+  return { ...doc.data(), id: doc.id };
+}
+
+// Converts a Firestore QuerySnapshot into an array of plain objects.
+function snapToArr(snap) {
+  return snap.docs.map(d => ({ ...d.data(), id: d.id }));
+}
+
+// Creates a table wrapper for a Firestore collection.
+function makeTable(colName) {
+  // Lazy accessor — resolved at call time so currentUser is always set
+  const col = () => userCol(colName);
+
+  return {
+    // ---- Read all ----
+    async toArray() {
+      const snap = await col().get();
+      return snapToArr(snap);
+    },
+
+    // ---- Read one by Firestore doc ID ----
+    async get(id) {
+      const doc = await col().doc(String(id)).get();
+      return docToObj(doc);
+    },
+
+    // ---- Insert (returns new string ID) ----
+    async add(data) {
+      const ref = await col().add(data);
+      return ref.id;
+    },
+
+    // ---- Update fields on existing doc ----
+    async update(id, changes) {
+      await col().doc(String(id)).update(changes);
+    },
+
+    // ---- Delete a doc ----
+    async delete(id) {
+      await col().doc(String(id)).delete();
+    },
+
+    // ---- Delete all docs (used by restore) ----
+    async clear() {
+      const snap = await col().get();
+      const batch = firestore.batch();
+      snap.docs.forEach(d => batch.delete(d.ref));
+      await batch.commit();
+    },
+
+    // ---- Bulk insert (used by restore) ----
+    async bulkAdd(records) {
+      const CHUNK = 499; // Firestore batch limit is 500 ops
+      for (let i = 0; i < records.length; i += CHUNK) {
+        const batch = firestore.batch();
+        records.slice(i, i + CHUNK).forEach(r => {
+          batch.set(col().doc(), r); // auto-ID
+        });
+        await batch.commit();
+      }
+    },
+
+    // ---- Query builder — mirrors Dexie's .where().equals() API ----
+    where(field) {
+      return {
+        equals(value) {
+          const q = col().where(field, '==', value);
+
+          return {
+            // Return all matching docs
+            async toArray() {
+              const snap = await q.get();
+              return snapToArr(snap);
+            },
+
+            // Return first matching doc
+            async first() {
+              const snap = await q.limit(1).get();
+              if (snap.empty) return undefined;
+              return docToObj(snap.docs[0]);
+            },
+
+            // Apply an additional client-side filter, then return first match.
+            // Used for saveRentPayment() to check if payment exists for a week.
+            filter(fn) {
+              return {
+                async first() {
+                  const snap = await q.get();
+                  return snapToArr(snap).find(fn);
+                },
+              };
+            },
+
+            // Reverse order + limit — used for renter payment history.
+            // Tries a Firestore server-side sort; falls back to client-side.
+            reverse() {
+              return {
+                limit(n) {
+                  return {
+                    async toArray() {
+                      try {
+                        const snap = await q.orderBy('weekStart', 'desc').limit(n).get();
+                        return snapToArr(snap);
+                      } catch (_) {
+                        // No composite index yet — sort client-side
+                        const snap = await q.get();
+                        return snapToArr(snap)
+                          .sort((a, b) => (b.weekStart > a.weekStart ? 1 : -1))
+                          .slice(0, n);
+                      }
+                    },
+                  };
+                },
+              };
+            },
+          };
+        },
+      };
+    },
+  };
+}
+
+// ---- Settings table (special: key is the document ID) ----
+const settingsTable = {
+  async get(key) {
+    try {
+      const doc = await userCol('settings').doc(key).get();
+      if (!doc.exists) return undefined;
+      return { key: doc.id, ...doc.data() };
+    } catch(_) { return undefined; }
+  },
+
+  // Dexie put({key, value}) → Firestore set at settings/{key}
+  async put(obj) {
+    const { key } = obj;
+    await userCol('settings').doc(key).set(obj);
+  },
+
+  async toArray() {
+    const snap = await userCol('settings').get();
+    return snap.docs.map(d => ({ key: d.id, ...d.data() }));
+  },
+
+  async clear() {
+    const snap = await userCol('settings').get();
+    const batch = firestore.batch();
+    snap.docs.forEach(d => batch.delete(d.ref));
+    await batch.commit();
+  },
+
+  async bulkAdd(records) {
+    const batch = firestore.batch();
+    records.forEach(r => {
+      const ref = userCol('settings').doc(r.key);
+      batch.set(ref, r);
+    });
+    await batch.commit();
+  },
+};
+
+// ---- The db object exposed to all app code ----
+const db = {
+  transactions:    makeTable('transactions'),
+  dailySummary:    makeTable('dailySummary'),
+  monthlyExpenses: makeTable('monthlyExpenses'),
+  renters:         makeTable('renters'),
+  rentPayments:    makeTable('rentPayments'),
+  settings:        settingsTable,
+
+  // Restore uses db.transaction('rw', ...tables, fn).
+  // Firestore handles its own atomicity; we just call fn().
+  async transaction(_mode, ...args) {
+    const fn = args[args.length - 1];
+    return fn();
+  },
+};
+
+// ----------------------------------------------------------------
+// 4. GOOGLE SIGN-IN / SIGN-OUT
+// ----------------------------------------------------------------
+
+async function signInWithGoogle() {
+  const provider = new firebase.auth.GoogleAuthProvider();
+  try {
+    await auth.signInWithPopup(provider);
+    // onAuthStateChanged below will fire and boot the app
+  } catch (err) {
+    if (err.code !== 'auth/popup-closed-by-user') {
+      showToast('Sign-in failed — please try again');
+      console.error(err);
+    }
+  }
+}
+
+async function signOutUser() {
+  if (!confirm('Sign out of Mane Frame?')) return;
+  await auth.signOut();
+  // onAuthStateChanged fires → shows login screen
+}
+
+// ----------------------------------------------------------------
+// 5. APP STATE
 // ----------------------------------------------------------------
 
 const state = {
@@ -89,61 +274,50 @@ const state = {
   pinBuffer:         '',
   pinEnabled:        false,
   rentersWeekStart:  null,
-  // Categories live here in memory after loadCategories() runs at startup.
-  // Shape: { INCOME: ['Haircut', 'Color', ...], DAILY_EXPENSE: [...], MONTHLY_EXPENSE: [...] }
   categories:        { INCOME: [], DAILY_EXPENSE: [], MONTHLY_EXPENSE: [] },
 };
 
 // ----------------------------------------------------------------
-// 3. UTILITY FUNCTIONS
+// 6. UTILITY FUNCTIONS
 // ----------------------------------------------------------------
 
-// Returns today's date as 'YYYY-MM-DD'
 function todayStr() {
-  const d = new Date();
-  return d.toISOString().split('T')[0];
+  return new Date().toISOString().split('T')[0];
 }
 
-// Format a date string 'YYYY-MM-DD' for display
 function formatDateDisplay(dateStr) {
-  const d = new Date(dateStr + 'T12:00:00'); // noon avoids timezone issues
+  const d = new Date(dateStr + 'T12:00:00');
   return d.toLocaleDateString('en-US', { weekday: 'short', month: 'long', day: 'numeric', year: 'numeric' });
 }
 
-// Format a date string for short display
 function formatDateShort(dateStr) {
   const d = new Date(dateStr + 'T12:00:00');
   return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
 }
 
-// Format a currency amount
 function fmt(amount) {
   if (amount === null || amount === undefined || isNaN(amount)) return '$0.00';
   return '$' + parseFloat(amount).toFixed(2);
 }
 
-// Get month name from number (1-12)
 function monthName(num) {
   return new Date(2000, num - 1, 1).toLocaleString('en-US', { month: 'long' });
 }
 
-// Add days to a date string
 function addDays(dateStr, days) {
   const d = new Date(dateStr + 'T12:00:00');
   d.setDate(d.getDate() + days);
   return d.toISOString().split('T')[0];
 }
 
-// Get Monday of the week for a given date
 function getWeekStart(dateStr) {
-  const d = new Date(dateStr + 'T12:00:00');
-  const day = d.getDay(); // 0 = Sunday
+  const d   = new Date(dateStr + 'T12:00:00');
+  const day = d.getDay();
   const diff = day === 0 ? -6 : 1 - day;
   d.setDate(d.getDate() + diff);
   return d.toISOString().split('T')[0];
 }
 
-// Show a brief toast notification at the bottom of the screen
 function showToast(msg) {
   const toast = document.getElementById('toast');
   toast.textContent = msg;
@@ -152,14 +326,9 @@ function showToast(msg) {
 }
 
 // ----------------------------------------------------------------
-// 4. CATEGORY MANAGEMENT
-// Categories are configuration data — stored as a single JSON blob
-// in the settings table and loaded into state.categories at startup.
-// Every part of the app reads state.categories synchronously from
-// memory. No index queries, no async calls, nothing to break.
+// 7. CATEGORY MANAGEMENT
 // ----------------------------------------------------------------
 
-// The hardcoded defaults — only used if no saved categories exist yet
 function _defaultCategoryMap() {
   return {
     INCOME: [
@@ -178,38 +347,31 @@ function _defaultCategoryMap() {
   };
 }
 
-// Load categories from DB into state. Called at startup and before any modal
-// that needs them. Safe to call multiple times — cheap single key-value read.
 async function loadCategories() {
   try {
     const saved = await db.settings.get('categories');
     if (saved?.value) {
       const parsed = JSON.parse(saved.value);
-      // Merge with defaults so any missing key gets filled in
       state.categories = {
         INCOME:          parsed.INCOME?.length          ? parsed.INCOME          : _defaultCategoryMap().INCOME,
         DAILY_EXPENSE:   parsed.DAILY_EXPENSE?.length   ? parsed.DAILY_EXPENSE   : _defaultCategoryMap().DAILY_EXPENSE,
         MONTHLY_EXPENSE: parsed.MONTHLY_EXPENSE?.length ? parsed.MONTHLY_EXPENSE : _defaultCategoryMap().MONTHLY_EXPENSE,
       };
     } else {
-      // Nothing saved yet — write defaults now so next read finds them
       state.categories = _defaultCategoryMap();
       await saveCategories();
     }
   } catch (e) {
-    // DB unavailable or JSON corrupt — use defaults in memory, try to save
     console.warn('loadCategories error:', e);
     state.categories = _defaultCategoryMap();
     try { await saveCategories(); } catch (_) { /* best effort */ }
   }
 }
 
-// Persist current state.categories back to the DB. Simple and atomic.
 async function saveCategories() {
   await db.settings.put({ key: 'categories', value: JSON.stringify(state.categories) });
 }
 
-// Return options HTML for a category select element
 function categoryOptions(type) {
   return (state.categories[type] || [])
     .map(name => `<option value="${name}">${name}</option>`)
@@ -217,19 +379,15 @@ function categoryOptions(type) {
 }
 
 // ----------------------------------------------------------------
-// 5. NAVIGATION
+// 8. NAVIGATION
 // ----------------------------------------------------------------
 
 function navigate(view) {
   state.currentView = view;
-
-  // Update nav button active states
   ['daily', 'monthly', 'renters', 'reports', 'settings'].forEach(v => {
     const btn = document.getElementById('nav-' + v);
     if (btn) btn.classList.toggle('active', v === view);
   });
-
-  // Update header title
   const titles = {
     daily:    'Daily Log',
     monthly:  'Monthly Expenses',
@@ -238,8 +396,6 @@ function navigate(view) {
     settings: 'Settings',
   };
   document.getElementById('view-title').textContent = titles[view] || '';
-
-  // Render the appropriate view
   const views = {
     daily:    renderDailyView,
     monthly:  renderMonthlyView,
@@ -251,7 +407,7 @@ function navigate(view) {
 }
 
 // ----------------------------------------------------------------
-// 6. DAILY VIEW
+// 9. DAILY VIEW
 // ----------------------------------------------------------------
 
 async function renderDailyView() {
@@ -259,22 +415,20 @@ async function renderDailyView() {
   const hdr = document.getElementById('header-actions');
   hdr.innerHTML = '';
 
-  // Fetch data for the selected date
-  const txns = await db.transactions.where('date').equals(state.selectedDate).toArray();
+  const txns    = await db.transactions.where('date').equals(state.selectedDate).toArray();
   const summary = await db.dailySummary.where('date').equals(state.selectedDate).first();
 
-  const income  = txns.filter(t => t.type === 'INCOME');
+  const income   = txns.filter(t => t.type === 'INCOME');
   const expenses = txns.filter(t => t.type === 'EXPENSE');
 
   const totalService = income.reduce((s, t) => s + (t.serviceAmount || 0), 0);
-  const totalTips    = income.reduce((s, t) => s + (t.tipAmount || 0), 0);
+  const totalTips    = income.reduce((s, t) => s + (t.tipAmount    || 0), 0);
   const totalIncome  = totalService + totalTips;
   const totalExp     = expenses.reduce((s, t) => s + (t.amount || 0), 0);
   const net          = totalIncome - totalExp;
 
   const isToday = state.selectedDate === todayStr();
 
-  // Check if backup is overdue (> 7 days)
   const lastBackupSetting = await db.settings.get('lastBackup');
   let backupNudge = '';
   if (isToday) {
@@ -282,122 +436,113 @@ async function renderDailyView() {
     const daysOverdue = lastBackupDate
       ? Math.floor((new Date() - new Date(lastBackupDate + 'T12:00:00')) / 86400000)
       : 999;
-    if (daysOverdue >= 7) {
+    if (daysOverdue >= 30) {
       backupNudge = `
         <div class="backup-nudge" onclick="navigate('settings')">
-          💾 Back up your data — ${daysOverdue >= 999 ? "you haven't backed up yet" : `last backup ${daysOverdue} days ago`}
+          💾 Export a local backup — ${daysOverdue >= 999 ? "no local backup yet" : `last export ${daysOverdue} days ago`}
           <span style="margin-left:6px;opacity:.7;">›</span>
         </div>`;
     }
   }
 
   content.innerHTML = `
-    <!-- Backup nudge (if overdue) -->
     ${backupNudge}
 
-    <!-- Date Navigation Bar -->
     <div class="daily-date-bar">
       <button class="date-nav-btn" onclick="changeDate(-1)">‹</button>
-      <div class="current-date" onclick="promptDatePicker()">
-        ${formatDateShort(state.selectedDate)}
-        ${isToday ? '<small>Today</small>' : ''}
-      </div>
-      <button class="date-nav-btn" onclick="changeDate(1)">›</button>
+      <div class="current-date" onclick="openDatePicker()">${isToday ? 'Today' : formatDateDisplay(state.selectedDate)}</div>
+      <button class="date-nav-btn" onclick="changeDate(1)" ${isToday ? 'disabled style="opacity:0.3"' : ''}>›</button>
     </div>
 
-    <!-- Summary Cards -->
-    <div class="summary-section">
-      <div class="summary-grid">
-        <div class="summary-card income">
-          <div class="summary-label">Income</div>
-          <div class="summary-value">${fmt(totalService)}</div>
-        </div>
-        <div class="summary-card expense">
-          <div class="summary-label">Expenses</div>
-          <div class="summary-value">${fmt(totalExp)}</div>
-        </div>
-        <div class="summary-card tips">
-          <div class="summary-label">Tips</div>
-          <div class="summary-value">${fmt(totalTips)}</div>
-        </div>
-        <div class="summary-card net">
-          <div class="summary-label">Net</div>
-          <div class="summary-value" style="${net < 0 ? 'color:var(--danger)' : ''}">${fmt(net)}</div>
-        </div>
+    <div class="summary-cards">
+      <div class="summary-card income-card">
+        <div class="summary-label">Income</div>
+        <div class="summary-amount">${fmt(totalIncome)}</div>
+        ${totalTips > 0 ? `<div class="summary-sub">incl. ${fmt(totalTips)} tips</div>` : ''}
       </div>
-
-      <!-- Clients & Hours Card -->
-      <div class="day-meta-card">
-        <div class="day-meta-item">
-          <span class="day-meta-label">Clients</span>
-          <span class="day-meta-value">${summary ? summary.clientsSeen : '—'}</span>
-        </div>
-        <div class="day-meta-item">
-          <span class="day-meta-label">Hours</span>
-          <span class="day-meta-value">${summary ? summary.hoursWorked : '—'}</span>
-        </div>
-        ${summary && income.length > 0 ? `
-        <div class="day-meta-item">
-          <span class="day-meta-label">Avg/Client</span>
-          <span class="day-meta-value">${summary.clientsSeen > 0 ? fmt(totalIncome / summary.clientsSeen) : '—'}</span>
-        </div>` : ''}
-        <button class="day-meta-edit" onclick="openDaySummaryModal()">Edit</button>
+      <div class="summary-card expense-card">
+        <div class="summary-label">Expenses</div>
+        <div class="summary-amount">${fmt(totalExp)}</div>
+      </div>
+      <div class="summary-card net-card">
+        <div class="summary-label">Net</div>
+        <div class="summary-amount ${net >= 0 ? 'positive' : 'negative'}">${fmt(net)}</div>
       </div>
     </div>
 
-    <!-- Transaction List -->
-    <div class="transactions-section">
-      ${income.length > 0 ? `
-        <div class="section-label">Income</div>
-        ${income.map(t => renderTransactionItem(t)).join('')}
-      ` : ''}
+    ${summary ? `
+    <div class="day-summary-bar" onclick="openDaySummaryModal()">
+      <span>👤 ${summary.clientsSeen} clients</span>
+      <span>⏱ ${summary.hoursWorked}h worked</span>
+      <span style="margin-left:auto;opacity:.5;font-size:12px;">edit ✏</span>
+    </div>
+    ` : `
+    <div class="day-summary-bar empty" onclick="openDaySummaryModal()">
+      <span style="color:var(--text-muted);">+ Log clients & hours</span>
+    </div>
+    `}
 
-      ${expenses.length > 0 ? `
-        <div class="section-label" style="margin-top: 12px;">Expenses</div>
-        ${expenses.map(t => renderTransactionItem(t)).join('')}
-      ` : ''}
-
-      ${txns.length === 0 ? `
+    <div style="padding: 0 16px 8px;">
+      <div class="section-label">Income</div>
+      ${income.length === 0 ? `
         <div class="empty-state">
-          <div class="empty-icon">✂️</div>
-          <div class="empty-text">No entries yet for this day.<br>Use the buttons below to get started.</div>
+          <div class="empty-icon">💈</div>
+          <div class="empty-text">No income logged yet.<br>Tap below to add an entry.</div>
         </div>
-      ` : ''}
+      ` : income.map(t => renderTransactionItem(t)).join('')}
+
+      <div class="section-label" style="margin-top:16px;">Expenses</div>
+      ${expenses.length === 0 ? `
+        <div class="empty-state">
+          <div class="empty-icon">🧾</div>
+          <div class="empty-text">No expenses logged yet.</div>
+        </div>
+      ` : expenses.map(t => renderTransactionItem(t)).join('')}
     </div>
 
-    <!-- Add Buttons -->
     <div class="fab-row">
-      <button class="fab fab-income" onclick="openAddTransactionModal('INCOME')">
-        <span style="font-size:18px">+</span> Add Income
+      <button class="fab fab-income"  onclick="openAddTransactionModal('INCOME')">
+        <span style="font-size:18px">+</span> Income
       </button>
       <button class="fab fab-expense" onclick="openAddTransactionModal('EXPENSE')">
-        <span style="font-size:18px">+</span> Add Expense
+        <span style="font-size:18px">+</span> Expense
       </button>
     </div>
+
+    <div style="height:16px;"></div>
   `;
 }
 
-// Renders a single transaction row
 function renderTransactionItem(t) {
   const isIncome = t.type === 'INCOME';
-  const dot = isIncome ? '💰' : '📤';
-  const pmPill = t.paymentMethod ? `<span class="pill pill-${(t.paymentMethod||'').toLowerCase()}">${t.paymentMethod}</span>` : '';
+  const total    = isIncome ? (t.serviceAmount || 0) + (t.tipAmount || 0) : (t.amount || 0);
+  const sign     = isIncome ? '+' : '-';
+  const colorClass = isIncome ? 'income-amount' : 'expense-amount';
+
   return `
-    <div class="transaction-item">
-      <div class="txn-type-dot ${isIncome ? 'income' : 'expense'}">${dot}</div>
-      <div class="txn-body" onclick="openEditTransactionModal(${t.id})" style="cursor:pointer;flex:1;">
-        <div class="txn-category">${t.category || 'Uncategorized'} <span style="font-size:11px;color:var(--text-light);font-weight:400;">✏</span></div>
-        <div class="txn-meta">${pmPill} ${t.notes ? `· ${t.notes}` : ''}</div>
+    <div class="txn-row">
+      <div class="txn-body" onclick="openEditTransactionModal('${t.id}')">
+        <div class="txn-category">${t.category || '—'} <span style="font-size:11px;color:var(--text-light);font-weight:400;">✏</span></div>
+        <div class="txn-meta">${t.paymentMethod || ''}${t.notes ? ' · ' + t.notes : ''}${isIncome && t.tipAmount > 0 ? ' · tip ' + fmt(t.tipAmount) : ''}</div>
       </div>
-      <div class="txn-amount-col" onclick="openEditTransactionModal(${t.id})" style="cursor:pointer;">
-        <div class="txn-amount ${isIncome ? 'income' : 'expense'}">
-          ${isIncome ? '+' : '-'}${fmt(isIncome ? t.serviceAmount : t.amount)}
-        </div>
-        ${isIncome && t.tipAmount > 0 ? `<div class="txn-tip">tip +${fmt(t.tipAmount)} ${t.tipMethod ? '(' + t.tipMethod + ')' : ''}</div>` : ''}
-      </div>
-      <button class="txn-delete" onclick="deleteTransaction(${t.id})">✕</button>
+      <div class="txn-amount-col ${colorClass}" onclick="openEditTransactionModal('${t.id}')">${sign}${fmt(Math.abs(total))}</div>
+      <button class="txn-delete" onclick="deleteTransaction('${t.id}')">✕</button>
+    </div>`;
+}
+
+function openDatePicker() {
+  openModal(`
+    <h2 class="modal-title">Go to Date</h2>
+    <div class="form-group">
+      <input type="date" class="form-input" id="date-picker-val" value="${state.selectedDate}">
     </div>
-  `;
+    <button class="btn-submit" onclick="jumpToDate()">Go</button>
+  `);
+}
+
+function jumpToDate() {
+  const v = document.getElementById('date-picker-val').value;
+  if (v) { state.selectedDate = v; closeModal(); renderDailyView(); }
 }
 
 function changeDate(delta) {
@@ -405,151 +550,20 @@ function changeDate(delta) {
   renderDailyView();
 }
 
-// Let user pick a specific date using the native date input
-function promptDatePicker() {
-  openModal(`
-    <h2 class="modal-title">Select Date</h2>
-    <div class="form-group">
-      <label class="form-label">Date</label>
-      <input type="date" class="form-input" id="date-picker-input" value="${state.selectedDate}">
-    </div>
-    <button class="btn-submit" onclick="pickDate()">Go to Date</button>
-  `);
-}
-
-function pickDate() {
-  const val = document.getElementById('date-picker-input').value;
-  if (val) {
-    state.selectedDate = val;
-    closeModal();
-    renderDailyView();
-  }
-}
-
-async function deleteTransaction(id) {
-  if (!confirm('Delete this entry?')) return;
-  await db.transactions.delete(id);
-  showToast('Entry deleted');
-  renderDailyView();
-}
-
-async function openEditTransactionModal(id) {
-  await loadCategories();
-  const t = await db.transactions.get(id);
-  if (!t) return;
-  const isIncome = t.type === 'INCOME';
-  const catOptions = (state.categories[isIncome ? 'INCOME' : 'DAILY_EXPENSE'] || [])
-    .map(name => `<option value="${name}" ${name === t.category ? 'selected' : ''}>${name}</option>`)
-    .join('');
-  const paymentMethods = ['Cash', 'Card', 'Venmo', 'Zelle', 'Other'];
-  const pmOptions = paymentMethods.map(m =>
-    `<option value="${m}" ${m === t.paymentMethod ? 'selected' : ''}>${m}</option>`
-  ).join('');
-
-  openModal(`
-    <h2 class="modal-title">${isIncome ? 'Edit Income' : 'Edit Expense'}</h2>
-
-    <div class="form-group">
-      <label class="form-label">Date</label>
-      <input type="date" class="form-input" id="txn-date" value="${t.date}">
-    </div>
-
-    <div class="form-group">
-      <label class="form-label">Category</label>
-      <select class="form-select" id="txn-category">
-        <option value="">Select category…</option>
-        ${catOptions}
-      </select>
-    </div>
-
-    <div class="form-group">
-      <label class="form-label">${isIncome ? 'Service Amount ($)' : 'Amount ($)'}</label>
-      <input type="number" class="form-input" id="txn-amount" placeholder="0.00" step="0.01" min="0" inputmode="decimal"
-        value="${isIncome ? (t.serviceAmount || '') : (t.amount || '')}">
-    </div>
-
-    <div class="form-group">
-      <label class="form-label">Payment Method</label>
-      <select class="form-select" id="txn-payment">${pmOptions}</select>
-    </div>
-
-    ${isIncome ? `
-    <hr class="form-section-divider">
-    <div class="form-section-label">Tip (optional)</div>
-    <div class="form-row">
-      <div class="form-group">
-        <label class="form-label">Tip Amount ($)</label>
-        <input type="number" class="form-input" id="txn-tip" placeholder="0.00" step="0.01" min="0" inputmode="decimal"
-          value="${t.tipAmount || ''}">
-      </div>
-      <div class="form-group">
-        <label class="form-label">Tip Method</label>
-        <select class="form-select" id="txn-tip-method">
-          <option value="" ${!t.tipMethod ? 'selected' : ''}>None</option>
-          <option value="Cash" ${t.tipMethod === 'Cash' ? 'selected' : ''}>Cash</option>
-          <option value="Card" ${t.tipMethod === 'Card' ? 'selected' : ''}>Card</option>
-        </select>
-      </div>
-    </div>
-    ` : ''}
-
-    <div class="form-group">
-      <label class="form-label">Notes (optional)</label>
-      <input type="text" class="form-input" id="txn-notes" placeholder="e.g. regular client, product used…"
-        value="${t.notes || ''}">
-    </div>
-
-    <button class="btn-submit" onclick="updateTransaction(${id}, '${t.type}')">Save Changes</button>
-  `);
-}
-
-async function updateTransaction(id, type) {
-  const isIncome = type === 'INCOME';
-  const date     = document.getElementById('txn-date').value;
-  const category = document.getElementById('txn-category').value;
-  const amount   = parseFloat(document.getElementById('txn-amount').value) || 0;
-  const payment  = document.getElementById('txn-payment').value;
-  const notes    = document.getElementById('txn-notes').value.trim();
-
-  if (!category) { alert('Please select a category.'); return; }
-  if (amount <= 0) { alert('Please enter an amount greater than zero.'); return; }
-
-  const changes = { date, category, paymentMethod: payment, notes };
-
-  if (isIncome) {
-    const tip       = parseFloat(document.getElementById('txn-tip').value) || 0;
-    const tipMethod = document.getElementById('txn-tip-method').value;
-    changes.serviceAmount = amount;
-    changes.tipAmount     = tip;
-    changes.tipMethod     = tipMethod;
-    changes.amount        = amount;
-  } else {
-    changes.amount        = amount;
-    changes.serviceAmount = 0;
-    changes.tipAmount     = 0;
-  }
-
-  await db.transactions.update(id, changes);
-  if (date !== state.selectedDate) state.selectedDate = date;
-  closeModal();
-  showToast('Entry updated ✓');
-  renderDailyView();
-}
-
 // ----------------------------------------------------------------
-// 7. ADD TRANSACTION MODAL (Income or Expense)
+// 10. TRANSACTION MODALS
 // ----------------------------------------------------------------
 
 async function openAddTransactionModal(type) {
-  await loadCategories();          // always fresh — cheap single-key DB read
+  await loadCategories();
   const isIncome = type === 'INCOME';
-  const catOptions = categoryOptions(isIncome ? 'INCOME' : 'DAILY_EXPENSE');
-
-  const paymentMethods = ['Cash', 'Card', 'Venmo', 'Zelle', 'Other'];
-  const pmOptions = paymentMethods.map(m => `<option value="${m}">${m}</option>`).join('');
+  const catKey   = isIncome ? 'INCOME' : 'DAILY_EXPENSE';
+  const catOptions = categoryOptions(catKey);
+  const pmOptions = ['Cash','Card','Venmo','Zelle','Check','Other']
+    .map(m => `<option>${m}</option>`).join('');
 
   openModal(`
-    <h2 class="modal-title">${isIncome ? '+ Add Income' : '+ Add Expense'}</h2>
+    <h2 class="modal-title">+ Add ${isIncome ? 'Income' : 'Expense'}</h2>
 
     <div class="form-group">
       <label class="form-label">Date</label>
@@ -604,7 +618,6 @@ async function openAddTransactionModal(type) {
 
 async function saveTransaction(type) {
   const isIncome = type === 'INCOME';
-
   const date     = document.getElementById('txn-date').value;
   const category = document.getElementById('txn-category').value;
   const amount   = parseFloat(document.getElementById('txn-amount').value) || 0;
@@ -614,13 +627,7 @@ async function saveTransaction(type) {
   if (!category) { alert('Please select a category.'); return; }
   if (amount <= 0) { alert('Please enter an amount greater than zero.'); return; }
 
-  const record = {
-    date,
-    type,
-    category,
-    paymentMethod: payment,
-    notes,
-  };
+  const record = { date, type, category, paymentMethod: payment, notes };
 
   if (isIncome) {
     const tip       = parseFloat(document.getElementById('txn-tip').value) || 0;
@@ -628,7 +635,7 @@ async function saveTransaction(type) {
     record.serviceAmount = amount;
     record.tipAmount     = tip;
     record.tipMethod     = tipMethod;
-    record.amount        = amount; // keep amount for easy reporting
+    record.amount        = amount;
   } else {
     record.serviceAmount = 0;
     record.tipAmount     = 0;
@@ -636,8 +643,6 @@ async function saveTransaction(type) {
   }
 
   await db.transactions.add(record);
-
-  // If date changed from selected date, update state
   if (date !== state.selectedDate) state.selectedDate = date;
 
   closeModal();
@@ -645,8 +650,118 @@ async function saveTransaction(type) {
   renderDailyView();
 }
 
+async function deleteTransaction(id) {
+  if (!confirm('Delete this entry?')) return;
+  await db.transactions.delete(id);
+  showToast('Entry deleted');
+  renderDailyView();
+}
+
+async function openEditTransactionModal(id) {
+  await loadCategories();
+  const t = await db.transactions.get(id);
+  if (!t) return;
+
+  const isIncome = t.type === 'INCOME';
+  const catKey   = isIncome ? 'INCOME' : 'DAILY_EXPENSE';
+  const catOptions = (state.categories[catKey] || [])
+    .map(name => `<option value="${name}" ${name === t.category ? 'selected' : ''}>${name}</option>`)
+    .join('');
+  const pmOptions = ['Cash','Card','Venmo','Zelle','Check','Other']
+    .map(m => `<option ${m === t.paymentMethod ? 'selected' : ''}>${m}</option>`).join('');
+
+  openModal(`
+    <h2 class="modal-title">Edit ${isIncome ? 'Income' : 'Expense'}</h2>
+
+    <div class="form-group">
+      <label class="form-label">Date</label>
+      <input type="date" class="form-input" id="txn-date" value="${t.date}">
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Category</label>
+      <select class="form-select" id="txn-category">
+        <option value="">Select category…</option>
+        ${catOptions}
+      </select>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">${isIncome ? 'Service Amount ($)' : 'Amount ($)'}</label>
+      <input type="number" class="form-input" id="txn-amount" step="0.01" min="0" inputmode="decimal"
+        value="${isIncome ? (t.serviceAmount || '') : (t.amount || '')}">
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Payment Method</label>
+      <select class="form-select" id="txn-payment">${pmOptions}</select>
+    </div>
+
+    ${isIncome ? `
+    <hr class="form-section-divider">
+    <div class="form-section-label">Tip (optional)</div>
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label">Tip Amount ($)</label>
+        <input type="number" class="form-input" id="txn-tip" step="0.01" min="0" inputmode="decimal"
+          value="${t.tipAmount || ''}">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Tip Method</label>
+        <select class="form-select" id="txn-tip-method">
+          <option value="">None</option>
+          <option value="Cash" ${t.tipMethod === 'Cash' ? 'selected' : ''}>Cash</option>
+          <option value="Card" ${t.tipMethod === 'Card' ? 'selected' : ''}>Card</option>
+        </select>
+      </div>
+    </div>
+    ` : ''}
+
+    <div class="form-group">
+      <label class="form-label">Notes (optional)</label>
+      <input type="text" class="form-input" id="txn-notes" value="${t.notes || ''}">
+    </div>
+
+    <button class="btn-submit" onclick="updateTransaction('${id}', '${t.type}')">Save Changes</button>
+  `);
+}
+
+async function updateTransaction(id, type) {
+  const isIncome = type === 'INCOME';
+  const date     = document.getElementById('txn-date').value;
+  const category = document.getElementById('txn-category').value;
+  const amount   = parseFloat(document.getElementById('txn-amount').value) || 0;
+  const payment  = document.getElementById('txn-payment').value;
+  const notes    = document.getElementById('txn-notes').value.trim();
+
+  if (!category) { alert('Please select a category.'); return; }
+  if (amount <= 0) { alert('Please enter an amount greater than zero.'); return; }
+
+  const changes = { date, category, paymentMethod: payment, notes };
+
+  if (isIncome) {
+    const tip       = parseFloat(document.getElementById('txn-tip').value) || 0;
+    const tipMethod = document.getElementById('txn-tip-method').value;
+    changes.serviceAmount = amount;
+    changes.tipAmount     = tip;
+    changes.tipMethod     = tipMethod;
+    changes.amount        = amount;
+  } else {
+    changes.amount        = amount;
+    changes.serviceAmount = 0;
+    changes.tipAmount     = 0;
+  }
+
+  await db.transactions.update(id, changes);
+  if (date !== state.selectedDate) state.selectedDate = date;
+
+  closeModal();
+  showToast('Entry updated ✓');
+  renderDailyView();
+}
+
 // ----------------------------------------------------------------
-// 8. DAY SUMMARY MODAL (clients seen, hours worked)
+// 11. DAY SUMMARY MODAL
 // ----------------------------------------------------------------
 
 async function openDaySummaryModal() {
@@ -689,7 +804,7 @@ async function saveDaySummary() {
 }
 
 // ----------------------------------------------------------------
-// 9. MONTHLY EXPENSES VIEW
+// 12. MONTHLY EXPENSES VIEW
 // ----------------------------------------------------------------
 
 async function renderMonthlyView() {
@@ -713,7 +828,6 @@ async function renderMonthlyView() {
   ).join('');
 
   content.innerHTML = `
-    <!-- Month/Year Selector -->
     <div class="monthly-header">
       <button class="date-nav-btn" onclick="changeMonth(-1)">‹</button>
       <div>
@@ -723,13 +837,11 @@ async function renderMonthlyView() {
       <button class="date-nav-btn" onclick="changeMonth(1)">›</button>
     </div>
 
-    <!-- Total Card -->
     <div class="monthly-total-card">
       <div class="monthly-total-label">Total Fixed Expenses — ${monthName(state.selectedMonth)} ${state.selectedYear}</div>
       <div class="monthly-total-value">${fmt(total)}</div>
     </div>
 
-    <!-- Expense List -->
     <div style="padding: 0 16px 8px;">
       <div class="section-label">Expenses</div>
       ${expenses.length === 0 ? `
@@ -739,12 +851,12 @@ async function renderMonthlyView() {
         </div>
       ` : expenses.map(e => `
         <div class="monthly-expense-item">
-          <div style="flex:1;cursor:pointer;" onclick="openEditMonthlyExpenseModal(${e.id})">
+          <div style="flex:1;cursor:pointer;" onclick="openEditMonthlyExpenseModal('${e.id}')">
             <div class="mexp-category">${e.category} <span style="font-size:11px;color:var(--text-light);font-weight:400;">✏</span></div>
             <div class="mexp-notes">${e.datePaid ? formatDateShort(e.datePaid) : ''}${e.notes ? (e.datePaid ? ' · ' : '') + e.notes : ''}</div>
           </div>
-          <div class="mexp-amount" onclick="openEditMonthlyExpenseModal(${e.id})" style="cursor:pointer;">${fmt(e.amount)}</div>
-          <button class="mexp-delete" onclick="deleteMonthlyExpense(${e.id})">✕</button>
+          <div class="mexp-amount" onclick="openEditMonthlyExpenseModal('${e.id}')" style="cursor:pointer;">${fmt(e.amount)}</div>
+          <button class="mexp-delete" onclick="deleteMonthlyExpense('${e.id}')">✕</button>
         </div>
       `).join('')}
 
@@ -765,7 +877,7 @@ function changeMonth(delta) {
 }
 
 async function openAddMonthlyExpenseModal() {
-  await loadCategories();          // always fresh — cheap single-key DB read
+  await loadCategories();
   const catOptions = categoryOptions('MONTHLY_EXPENSE');
 
   openModal(`
@@ -883,11 +995,10 @@ async function openEditMonthlyExpenseModal(id) {
 
     <div class="form-group">
       <label class="form-label">Notes (optional)</label>
-      <input type="text" class="form-input" id="me-notes" placeholder="e.g. annual increase, pro-rated…"
-        value="${e.notes || ''}">
+      <input type="text" class="form-input" id="me-notes" value="${e.notes || ''}">
     </div>
 
-    <button class="btn-submit" onclick="updateMonthlyExpense(${id})">Save Changes</button>
+    <button class="btn-submit" onclick="updateMonthlyExpense('${id}')">Save Changes</button>
   `);
 }
 
@@ -905,13 +1016,14 @@ async function updateMonthlyExpense(id) {
   await db.monthlyExpenses.update(id, { datePaid, month, year, category, amount, notes });
   state.selectedMonth = month;
   state.selectedYear  = year;
+
   closeModal();
   showToast('Expense updated ✓');
   renderMonthlyView();
 }
 
 // ----------------------------------------------------------------
-// 10. REPORTS VIEW
+// 13. REPORTS VIEW
 // ----------------------------------------------------------------
 
 async function renderReportsView() {
@@ -935,13 +1047,8 @@ async function renderReportsView() {
     </button>`
   ).join('');
 
-  const yearNow = new Date().getFullYear();
-
   content.innerHTML = `
-    <!-- Report Type Tabs -->
     <div class="report-type-tabs">${tabs}</div>
-
-    <!-- Controls & Body render dynamically -->
     <div id="report-inner"></div>
   `;
 
@@ -957,7 +1064,6 @@ async function renderReportInner() {
 
   switch (state.reportType) {
 
-    // ---- DAILY REPORT ----
     case 'daily': {
       el.innerHTML = `
         <div class="report-controls">
@@ -970,7 +1076,6 @@ async function renderReportInner() {
       break;
     }
 
-    // ---- WEEKLY REPORT ----
     case 'weekly': {
       el.innerHTML = `
         <div class="report-controls">
@@ -984,7 +1089,6 @@ async function renderReportInner() {
       break;
     }
 
-    // ---- MONTHLY REPORT ----
     case 'monthly': {
       const monthOpts = Array.from({length:12},(_,i)=>
         `<option value="${i+1}" ${i+1===monthNow?'selected':''}>${monthName(i+1)}</option>`).join('');
@@ -1000,11 +1104,10 @@ async function renderReportInner() {
       break;
     }
 
-    // ---- ANNUAL REPORT ----
     case 'annual': {
       el.innerHTML = `
         <div class="report-controls">
-          <input type="number" class="report-input" id="r-annual-year" value="${yearNow}" min="2020" max="2099" inputmode="numeric">
+          <input type="number" class="report-input" id="r-annual-year" value="${yearNow}" min="2020" max="2099" style="max-width:100px" inputmode="numeric">
           <button class="report-btn" onclick="runAnnualReport()">View</button>
         </div>
         <div class="report-body" id="report-output"></div>
@@ -1013,10 +1116,9 @@ async function renderReportInner() {
       break;
     }
 
-    // ---- YEAR OVER YEAR ----
     case 'yoy': {
       el.innerHTML = `
-        <div class="report-controls">
+        <div class="report-controls" style="gap:6px;">
           <input type="number" class="report-input" id="r-yoy-year1" value="${yearNow-1}" min="2020" max="2099" inputmode="numeric">
           <span style="color:var(--text-muted)">vs</span>
           <input type="number" class="report-input" id="r-yoy-year2" value="${yearNow}" min="2020" max="2099" inputmode="numeric">
@@ -1028,7 +1130,6 @@ async function renderReportInner() {
       break;
     }
 
-    // ---- BY CATEGORY ----
     case 'category': {
       el.innerHTML = `
         <div class="report-controls" style="flex-wrap:wrap; gap:8px;">
@@ -1043,7 +1144,6 @@ async function renderReportInner() {
       break;
     }
 
-    // ---- EXPORT CSV ----
     case 'export': {
       el.innerHTML = `
         <div class="report-controls" style="flex-wrap:wrap; gap:8px;">
@@ -1074,8 +1174,8 @@ async function renderReportInner() {
 // ---- Daily Report ----
 async function runDailyReport() {
   const date = document.getElementById('r-date')?.value || state.selectedDate;
-  const txns  = await db.transactions.where('date').equals(date).toArray();
-  const sum   = await db.dailySummary.where('date').equals(date).first();
+  const txns = await db.transactions.where('date').equals(date).toArray();
+  const sum  = await db.dailySummary.where('date').equals(date).first();
 
   const income   = txns.filter(t => t.type === 'INCOME');
   const expenses = txns.filter(t => t.type === 'EXPENSE');
@@ -1130,13 +1230,13 @@ async function runWeeklyReport() {
   const rows = [];
 
   for (let i = 0; i < 7; i++) {
-    const d     = addDays(weekStart, i);
-    const txns  = await db.transactions.where('date').equals(d).toArray();
-    const sum   = await db.dailySummary.where('date').equals(d).first();
-    const inc   = txns.filter(t=>t.type==='INCOME').reduce((s,t)=>s+(t.serviceAmount||0),0);
-    const tips  = txns.filter(t=>t.type==='INCOME').reduce((s,t)=>s+(t.tipAmount||0),0);
-    const exp   = txns.filter(t=>t.type==='EXPENSE').reduce((s,t)=>s+(t.amount||0),0);
-    const cls   = sum ? sum.clientsSeen : 0;
+    const d    = addDays(weekStart, i);
+    const txns = await db.transactions.where('date').equals(d).toArray();
+    const sum  = await db.dailySummary.where('date').equals(d).first();
+    const inc  = txns.filter(t=>t.type==='INCOME').reduce((s,t)=>s+(t.serviceAmount||0),0);
+    const tips = txns.filter(t=>t.type==='INCOME').reduce((s,t)=>s+(t.tipAmount||0),0);
+    const exp  = txns.filter(t=>t.type==='EXPENSE').reduce((s,t)=>s+(t.amount||0),0);
+    const cls  = sum ? sum.clientsSeen : 0;
     weeklyIncome  += inc;
     weeklyTips    += tips;
     weeklyExp     += exp;
@@ -1197,16 +1297,15 @@ async function runMonthlyReport() {
   const mExpTotal = mExps.reduce((s,e)=>s+(e.amount||0),0);
   const totalExp  = dExpTotal + mExpTotal;
 
-  // Booth rent collected this month
   const allRentPmts = await db.rentPayments.toArray();
   const monthRent   = allRentPmts.filter(p => p.datePaid && p.datePaid.startsWith(monthStr));
   const rentTotal   = monthRent.reduce((s,p)=>s+(p.amount||0),0);
   const renters     = await db.renters.where('status').equals('active').toArray();
-  const expectedRent = renters.reduce((s,r)=>s+(r.weeklyRate||0),0) * 4; // approx
+  const expectedRent = renters.reduce((s,r)=>s+(r.weeklyRate||0),0) * 4;
 
   const net       = svcTotal + tipTotal + rentTotal - totalExp;
 
-  const monthSums = sums.filter(s => s.date && s.date.startsWith(monthStr));
+  const monthSums    = sums.filter(s => s.date && s.date.startsWith(monthStr));
   const totalClients = monthSums.reduce((s,d)=>s+(d.clientsSeen||0),0);
   const totalHours   = monthSums.reduce((s,d)=>s+(d.hoursWorked||0),0);
 
@@ -1226,7 +1325,7 @@ async function runMonthlyReport() {
     <div class="report-white-card">
       <div class="report-section-title">Booth Rent Collected</div>
       <div class="report-row"><div class="report-row-label">Collected</div><div class="report-row-value income">+${fmt(rentTotal)}</div></div>
-      <div class="report-row"><div class="report-row-label">Renters</div><div class="report-row-value">${monthRent.length} payments</div></div>
+      <div class="report-row"><div class="report-row-label">Payments</div><div class="report-row-value">${monthRent.length}</div></div>
     </div>` : ''}
     ${mExps.length > 0 ? `
     <div class="report-white-card">
@@ -1246,7 +1345,7 @@ async function runAnnualReport() {
   const year = parseInt(document.getElementById('r-annual-year')?.value) || state.selectedYear;
 
   const allTxns = await db.transactions.toArray();
-  const allMExp = await db.monthlyExpenses.where('year').equals(year).toArray();
+  const allMExp = await db.monthlyExpenses.toArray();
   const allSums = await db.dailySummary.toArray();
   const allRentPmts = await db.rentPayments.toArray();
 
@@ -1256,7 +1355,7 @@ async function runAnnualReport() {
   for (let m = 1; m <= 12; m++) {
     const ms    = `${year}-${String(m).padStart(2,'0')}`;
     const txns  = allTxns.filter(t => t.date?.startsWith(ms));
-    const mExps = allMExp.filter(e => e.month === m);
+    const mExps = allMExp.filter(e => e.year === year && e.month === m);
     const inc   = txns.filter(t=>t.type==='INCOME').reduce((s,t)=>s+(t.serviceAmount||0),0);
     const tips  = txns.filter(t=>t.type==='INCOME').reduce((s,t)=>s+(t.tipAmount||0),0);
     const dExp  = txns.filter(t=>t.type==='EXPENSE').reduce((s,t)=>s+(t.amount||0),0);
@@ -1300,22 +1399,23 @@ async function runAnnualReport() {
   `;
 }
 
-// ---- Year Over Year ----
+// ---- Year Over Year Report ----
 async function runYOYReport() {
   const y1 = parseInt(document.getElementById('r-yoy-year1')?.value);
   const y2 = parseInt(document.getElementById('r-yoy-year2')?.value);
   if (!y1 || !y2) return;
 
   async function yearTotals(year) {
-    const txns = await db.transactions.toArray();
+    const txns  = await db.transactions.toArray();
     const yTxns = txns.filter(t => t.date?.startsWith(String(year)));
-    const mExps = await db.monthlyExpenses.where('year').equals(year).toArray();
-    const inc  = yTxns.filter(t=>t.type==='INCOME').reduce((s,t)=>s+(t.serviceAmount||0),0);
-    const tips = yTxns.filter(t=>t.type==='INCOME').reduce((s,t)=>s+(t.tipAmount||0),0);
-    const dExp = yTxns.filter(t=>t.type==='EXPENSE').reduce((s,t)=>s+(t.amount||0),0);
-    const mExp = mExps.reduce((s,e)=>s+(e.amount||0),0);
-    const sums = await db.dailySummary.toArray();
-    const cls  = sums.filter(s=>s.date?.startsWith(String(year))).reduce((s,d)=>s+(d.clientsSeen||0),0);
+    const mExps = await db.monthlyExpenses.toArray();
+    const yMExp = mExps.filter(e => e.year === year);
+    const inc   = yTxns.filter(t=>t.type==='INCOME').reduce((s,t)=>s+(t.serviceAmount||0),0);
+    const tips  = yTxns.filter(t=>t.type==='INCOME').reduce((s,t)=>s+(t.tipAmount||0),0);
+    const dExp  = yTxns.filter(t=>t.type==='EXPENSE').reduce((s,t)=>s+(t.amount||0),0);
+    const mExp  = yMExp.reduce((s,e)=>s+(e.amount||0),0);
+    const sums  = await db.dailySummary.toArray();
+    const cls   = sums.filter(s=>s.date?.startsWith(String(year))).reduce((s,d)=>s+(d.clientsSeen||0),0);
     return { inc, tips, exp: dExp+mExp, net: inc+tips-dExp-mExp, cls };
   }
 
@@ -1323,7 +1423,7 @@ async function runYOYReport() {
 
   const diff = (v1, v2) => {
     if (v1 === 0) return '';
-    const pct = ((v2-v1)/Math.abs(v1)*100).toFixed(1);
+    const pct   = ((v2-v1)/Math.abs(v1)*100).toFixed(1);
     const arrow = v2 >= v1 ? '▲' : '▼';
     const color = v2 >= v1 ? 'green' : 'red';
     return `<span style="color:var(--${color}); font-size:12px; margin-left:6px">${arrow} ${Math.abs(pct)}%</span>`;
@@ -1359,9 +1459,8 @@ async function runCategoryReport() {
   if (!from || !to) return;
 
   const allTxns = await db.transactions.toArray();
-  const txns = allTxns.filter(t => t.date >= from && t.date <= to);
+  const txns    = allTxns.filter(t => t.date >= from && t.date <= to);
 
-  // Group by category
   const incMap = {}, expMap = {};
   txns.filter(t=>t.type==='INCOME').forEach(t => {
     incMap[t.category] = (incMap[t.category]||0) + (t.serviceAmount||0) + (t.tipAmount||0);
@@ -1401,7 +1500,7 @@ async function runCategoryReport() {
 }
 
 // ----------------------------------------------------------------
-// 11. CSV EXPORT
+// 14. CSV EXPORT
 // ----------------------------------------------------------------
 
 async function exportCSV() {
@@ -1413,7 +1512,6 @@ async function exportCSV() {
   const txns    = allTxns.filter(t => t.date >= from && t.date <= to);
   const mExps   = await db.monthlyExpenses.toArray();
 
-  // Build CSV content
   let csv = 'Date,Type,Category,Service Amount,Tip Amount,Tip Method,Payment Method,Notes\n';
 
   txns.forEach(t => {
@@ -1430,7 +1528,6 @@ async function exportCSV() {
     csv += row.join(',') + '\n';
   });
 
-  // Add monthly expenses in range
   csv += '\n\nMonthly Expenses:\nYear,Month,Category,Amount,Notes\n';
   mExps.filter(e => {
     const d = `${e.year}-${String(e.month).padStart(2,'0')}-01`;
@@ -1439,8 +1536,7 @@ async function exportCSV() {
     csv += `${e.year},${monthName(e.month)},${e.category},${e.amount},"${e.notes||''}"\n`;
   });
 
-  // Add rent payments in range
-  const renters  = await db.renters.toArray();
+  const renters   = await db.renters.toArray();
   const renterMap = {};
   renters.forEach(r => { renterMap[r.id] = r.name; });
   const rentPmts = await db.rentPayments.toArray();
@@ -1452,7 +1548,6 @@ async function exportCSV() {
     });
   }
 
-  // Create and trigger download
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
   const url  = URL.createObjectURL(blob);
   const a    = document.createElement('a');
@@ -1466,7 +1561,7 @@ async function exportCSV() {
 }
 
 // ----------------------------------------------------------------
-// 12. SETTINGS VIEW
+// 15. SETTINGS VIEW
 // ----------------------------------------------------------------
 
 async function renderSettingsView() {
@@ -1550,19 +1645,19 @@ async function renderSettingsView() {
 
     <!-- Backup & Restore -->
     <div class="settings-section">
-      <div class="settings-label">Backup & Restore</div>
+      <div class="settings-label">Local Backup</div>
       <div class="card" style="margin-bottom:8px;">
         <div style="font-size:13px;color:var(--text-muted);margin-bottom:12px;line-height:1.5;">
-          Back up all your data to a file. Save it to Google Drive, email it to yourself, or store it anywhere safe. Use it to restore on this phone or a new one.
+          Export your data to a JSON file. Save it to Google Drive or email it to yourself as an extra safety net alongside automatic cloud sync.
         </div>
         <div style="font-size:11px;color:var(--text-muted);margin-bottom:12px;">
-          Last backup: <strong style="color:var(--plum);" id="last-backup-display">Loading…</strong>
+          Last local export: <strong style="color:var(--plum);" id="last-backup-display">Loading…</strong>
         </div>
         <button class="btn-primary" style="width:100%;margin-bottom:8px;" onclick="exportBackup()">
-          ⬇ Back Up Now
+          ⬇ Export Backup File
         </button>
         <button class="btn-secondary" style="width:100%;" onclick="triggerRestoreFilePicker()">
-          ⬆ Restore from Backup
+          ⬆ Restore from Backup File
         </button>
         <div style="font-size:11px;color:var(--danger);margin-top:8px;text-align:center;">
           Restore replaces all current data with the backup file.
@@ -1577,7 +1672,7 @@ async function renderSettingsView() {
       <div class="settings-label">App Updates</div>
       <div class="card" style="margin-bottom:8px;">
         <div style="font-size:13px;color:var(--text-muted);margin-bottom:12px;line-height:1.5;">
-          The app checks for updates automatically when you switch back to it. Tap below to check right now.
+          The app checks for updates automatically when you switch back to it.
         </div>
         <button class="btn-secondary" style="width:100%;" onclick="checkForUpdates()">
           🔄 Check for Updates
@@ -1586,13 +1681,26 @@ async function renderSettingsView() {
     </div>
 
     <div style="height: 24px;"></div>
+
+    <!-- Account -->
+    <div class="settings-section">
+      <div class="settings-label">Account</div>
+      <div class="card" style="margin-bottom:8px;">
+        <div style="font-size:13px;color:var(--text-muted);margin-bottom:4px;">Signed in as</div>
+        <div style="font-size:14px;font-weight:600;color:var(--plum);margin-bottom:16px;">${currentUser?.email || ''}</div>
+        <button class="btn-secondary" style="width:100%;" onclick="signOutUser()">
+          Sign Out
+        </button>
+      </div>
+    </div>
+
+    <div style="height: 24px;"></div>
   `;
 
-  // Hidden file input for restore — lives outside modal so it persists
   if (!document.getElementById('restore-file-input')) {
     const inp = document.createElement('input');
     inp.type = 'file';
-    inp.id = 'restore-file-input';
+    inp.id   = 'restore-file-input';
     inp.accept = '.json';
     inp.style.display = 'none';
     inp.addEventListener('change', e => importBackup(e.target.files[0]));
@@ -1601,13 +1709,12 @@ async function renderSettingsView() {
 
   loadCategoryChips();
 
-  // Load last backup date
   const lastBackup = await db.settings.get('lastBackup');
   const el = document.getElementById('last-backup-display');
   if (el) {
     el.textContent = lastBackup?.value
       ? formatDateDisplay(lastBackup.value)
-      : 'Never — back up now!';
+      : 'Never';
     if (!lastBackup?.value) el.style.color = 'var(--danger)';
   }
 }
@@ -1619,7 +1726,6 @@ async function saveBusinessName() {
   showToast('Business name saved ✓');
 }
 
-// Render the category chips in Settings from state.categories (synchronous)
 function loadCategoryChips() {
   const map = {
     'income-cats':      'INCOME',
@@ -1658,7 +1764,7 @@ async function deleteCategory(type, name) {
 }
 
 // ----------------------------------------------------------------
-// 13. PIN SYSTEM
+// 16. PIN SYSTEM
 // ----------------------------------------------------------------
 
 function openPINSettings() {
@@ -1696,7 +1802,6 @@ async function togglePINLock() {
   renderSettingsView();
 }
 
-// PIN entry logic (used on app load)
 let pinBuffer = '';
 
 function initPINPad() {
@@ -1740,47 +1845,27 @@ async function checkPin() {
 }
 
 // ----------------------------------------------------------------
-// 13. RENTERS VIEW
+// 17. RENTERS VIEW
 // ----------------------------------------------------------------
 
-// Returns Saturday of the week (due date) given the Monday weekStart
-function getWeekDue(weekStart) {
-  const d = new Date(weekStart + 'T12:00:00');
-  d.setDate(d.getDate() + 5); // Mon + 5 = Sat
-  return d.toISOString().split('T')[0];
+// Week date helpers
+function getWeekDue(weekStart) { return addDays(weekStart, 5); } // Saturday
+function nextWeekStart(ws) { return addDays(ws, 7); }
+function prevWeekStart(ws) { return addDays(ws, -7); }
+
+function formatWeekRange(ws) {
+  const end = addDays(ws, 6);
+  const s   = new Date(ws  + 'T12:00:00');
+  const e   = new Date(end + 'T12:00:00');
+  const opts = { month: 'short', day: 'numeric' };
+  return s.toLocaleDateString('en-US', opts) + ' – ' + e.toLocaleDateString('en-US', opts);
 }
 
-// Returns the Monday of next week
-function nextWeekStart(weekStart) {
-  const d = new Date(weekStart + 'T12:00:00');
-  d.setDate(d.getDate() + 7);
-  return d.toISOString().split('T')[0];
-}
-
-// Returns the Monday of previous week
-function prevWeekStart(weekStart) {
-  const d = new Date(weekStart + 'T12:00:00');
-  d.setDate(d.getDate() - 7);
-  return d.toISOString().split('T')[0];
-}
-
-// Determine payment status for a rent record
-// Due = Saturday; grace = 3 days → late if paid after Tuesday (day 9 of week)
 function getRentStatus(weekStart, datePaid) {
   if (!datePaid) return 'unpaid';
-  const due  = new Date(getWeekDue(weekStart) + 'T12:00:00');
+  const due  = new Date(getWeekDue(weekStart) + 'T23:59:59');
   const paid = new Date(datePaid + 'T12:00:00');
-  const diffDays = Math.floor((paid - due) / 86400000);
-  return diffDays <= 3 ? 'ontime' : 'late';
-}
-
-// Format a week range for display: "Feb 10 – Feb 16"
-function formatWeekRange(weekStart) {
-  const start = new Date(weekStart + 'T12:00:00');
-  const end   = new Date(weekStart + 'T12:00:00');
-  end.setDate(end.getDate() + 6);
-  const opts = { month: 'short', day: 'numeric' };
-  return start.toLocaleDateString('en-US', opts) + ' – ' + end.toLocaleDateString('en-US', opts);
+  return paid <= due ? 'ontime' : 'late';
 }
 
 async function renderRentersView() {
@@ -1792,35 +1877,31 @@ async function renderRentersView() {
       </svg>
     </button>`;
 
-  // Default week = current week
   if (!state.rentersWeekStart) {
     state.rentersWeekStart = getWeekStart(todayStr());
   }
 
-  const ws      = state.rentersWeekStart;
-  const weekDue = getWeekDue(ws);
-  const renters = await db.renters.where('status').equals('active').toArray();
+  const ws       = state.rentersWeekStart;
+  const weekDue  = getWeekDue(ws);
+  const renters  = await db.renters.where('status').equals('active').toArray();
   const payments = await db.rentPayments.where('weekStart').equals(ws).toArray();
 
-  // Build payment map: renterId -> payment record
   const payMap = {};
   payments.forEach(p => { payMap[p.renterId] = p; });
 
-  const expectedTotal = renters.reduce((s, r) => s + (r.weeklyRate || 0), 0);
+  const expectedTotal  = renters.reduce((s, r) => s + (r.weeklyRate || 0), 0);
   const collectedTotal = payments.reduce((s, p) => s + (p.amount || 0), 0);
-  const outstanding = expectedTotal - collectedTotal;
+  const outstanding    = expectedTotal - collectedTotal;
 
   const isCurrentWeek = ws === getWeekStart(todayStr());
 
   content.innerHTML = `
-    <!-- Week navigation -->
     <div class="daily-date-bar">
       <button class="date-nav-btn" onclick="rentersChangeWeek(-1)">‹</button>
       <div class="current-date">Week of ${formatWeekRange(ws)}</div>
       <button class="date-nav-btn" onclick="rentersChangeWeek(1)" ${isCurrentWeek ? 'disabled style="opacity:0.3"' : ''}>›</button>
     </div>
 
-    <!-- Summary banner -->
     <div class="renters-summary">
       <div class="renters-sum-item">
         <div class="renters-sum-label">Expected</div>
@@ -1840,10 +1921,8 @@ async function renderRentersView() {
       </div>
     </div>
 
-    <!-- Due date note -->
     <div class="renters-due-note">Rent due Saturday ${formatDateDisplay(weekDue)}</div>
 
-    <!-- Renter rows -->
     <div id="renter-list">
       ${renters.length === 0 ? `
         <div class="empty-state" style="padding:40px 20px;">
@@ -1852,13 +1931,13 @@ async function renderRentersView() {
           <div style="color:var(--text-muted);font-size:14px;">Tap + to add your first renter</div>
         </div>` :
         renters.map(r => {
-          const p = payMap[r.id];
-          const status = p ? getRentStatus(ws, p.datePaid) : 'unpaid';
+          const p           = payMap[r.id];
+          const status      = p ? getRentStatus(ws, p.datePaid) : 'unpaid';
           const statusLabel = { ontime: 'On Time', late: 'Late', unpaid: 'Unpaid' }[status];
           const statusClass = { ontime: 'status-ontime', late: 'status-late', unpaid: 'status-unpaid' }[status];
-          const icon = { ontime: '✅', late: '⚠️', unpaid: '○' }[status];
+          const icon        = { ontime: '✅', late: '⚠️', unpaid: '○' }[status];
           return `
-          <div class="renter-row" onclick="openRenterDetail(${r.id})">
+          <div class="renter-row" onclick="openRenterDetail('${r.id}')">
             <div class="renter-icon">${icon}</div>
             <div class="renter-info">
               <div class="renter-name">${r.name}${r.booth ? ` <span class="renter-booth">Booth ${r.booth}</span>` : ''}</div>
@@ -1870,13 +1949,12 @@ async function renderRentersView() {
             </div>
             <div class="renter-amount">
               <div style="font-weight:700;color:${p ? 'var(--success)' : 'var(--text-muted)'}">${p ? fmt(p.amount) : fmt(r.weeklyRate || 0)}</div>
-              ${!p ? `<button class="renter-pay-btn" onclick="event.stopPropagation();openLogPaymentModal(${r.id})">Log Payment</button>` : ''}
+              ${!p ? `<button class="renter-pay-btn" onclick="event.stopPropagation();openLogPaymentModal('${r.id}')">Log Payment</button>` : ''}
             </div>
           </div>`;
         }).join('')
       }
     </div>
-
     <div style="height:20px;"></div>
   `;
 }
@@ -1888,9 +1966,9 @@ function rentersChangeWeek(dir) {
   renderRentersView();
 }
 
-// Log a rent payment for a renter this week
 function openLogPaymentModal(renterId) {
   db.renters.get(renterId).then(r => {
+    if (!r) return;
     openModal(`
       <h2 class="modal-title">Log Rent Payment</h2>
       <p style="color:var(--text-muted);font-size:13px;margin-bottom:14px;">${r.name} · Week of ${formatWeekRange(state.rentersWeekStart)}</p>
@@ -1915,23 +1993,25 @@ function openLogPaymentModal(renterId) {
       <label class="form-label">Notes (optional)</label>
       <input type="text" class="form-input" id="rp-notes" placeholder="Any notes…">
 
-      <button class="btn-primary" style="width:100%;margin-top:8px;" onclick="saveRentPayment(${renterId})">Save Payment</button>
+      <button class="btn-primary" style="width:100%;margin-top:8px;" onclick="saveRentPayment('${renterId}')">Save Payment</button>
     `);
   });
 }
 
 async function saveRentPayment(renterId) {
-  const amount = parseFloat(document.getElementById('rp-amount').value);
+  const amount  = parseFloat(document.getElementById('rp-amount').value);
   const datePaid = document.getElementById('rp-date').value;
-  const method = document.getElementById('rp-method').value;
-  const notes = document.getElementById('rp-notes').value.trim();
+  const method  = document.getElementById('rp-method').value;
+  const notes   = document.getElementById('rp-notes').value.trim();
 
   if (!amount || !datePaid) { showToast('Please fill in amount and date'); return; }
 
-  // Check if payment already exists for this week — update it if so
+  const ws = state.rentersWeekStart;
+
+  // Check if payment already exists for this renter + week
   const existing = await db.rentPayments
     .where('renterId').equals(renterId)
-    .filter(p => p.weekStart === state.rentersWeekStart)
+    .filter(p => p.weekStart === ws)
     .first();
 
   if (existing) {
@@ -1939,7 +2019,7 @@ async function saveRentPayment(renterId) {
   } else {
     await db.rentPayments.add({
       renterId,
-      weekStart:     state.rentersWeekStart,
+      weekStart:     ws,
       amount,
       datePaid,
       paymentMethod: method,
@@ -1952,9 +2032,9 @@ async function saveRentPayment(renterId) {
   renderRentersView();
 }
 
-// View renter's payment history + edit profile
 function openRenterDetail(renterId) {
   db.renters.get(renterId).then(async r => {
+    if (!r) return;
     const payments = await db.rentPayments
       .where('renterId').equals(renterId)
       .reverse()
@@ -1964,9 +2044,9 @@ function openRenterDetail(renterId) {
     const historyHTML = payments.length === 0
       ? '<p style="color:var(--text-muted);font-size:13px;text-align:center;padding:16px 0;">No payment history yet.</p>'
       : payments.map(p => {
-          const status = getRentStatus(p.weekStart, p.datePaid);
+          const status      = getRentStatus(p.weekStart, p.datePaid);
           const statusClass = { ontime: 'status-ontime', late: 'status-late' }[status];
-          const icon = status === 'ontime' ? '✅' : '⚠️';
+          const icon        = status === 'ontime' ? '✅' : '⚠️';
           return `
           <div class="renter-history-row">
             <span>${icon}</span>
@@ -1990,9 +2070,9 @@ function openRenterDetail(renterId) {
       </div>
 
       <div style="display:flex;gap:8px;margin-bottom:16px;">
-        <button class="btn-secondary" style="flex:1;" onclick="openLogPaymentModal(${r.id});closeModal()">+ Log Payment</button>
-        <button class="btn-secondary" style="flex:1;" onclick="openEditRenterModal(${r.id})">Edit Profile</button>
-        <button class="btn-danger-sm" onclick="deactivateRenter(${r.id})">Deactivate</button>
+        <button class="btn-secondary" style="flex:1;" onclick="openLogPaymentModal('${r.id}');closeModal()">+ Log Payment</button>
+        <button class="btn-secondary" style="flex:1;" onclick="openEditRenterModal('${r.id}')">Edit Profile</button>
+        <button class="btn-danger-sm" onclick="deactivateRenter('${r.id}')">Deactivate</button>
       </div>
 
       <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted);margin-bottom:8px;">Payment History</div>
@@ -2049,6 +2129,7 @@ async function saveNewRenter() {
 
 function openEditRenterModal(renterId) {
   db.renters.get(renterId).then(r => {
+    if (!r) return;
     openModal(`
       <h2 class="modal-title">Edit Renter</h2>
 
@@ -2064,7 +2145,7 @@ function openEditRenterModal(renterId) {
       <label class="form-label">Notes</label>
       <input type="text" class="form-input" id="er-notes" value="${r.notes || ''}">
 
-      <button class="btn-primary" style="width:100%;margin-top:8px;" onclick="saveEditRenter(${r.id})">Save Changes</button>
+      <button class="btn-primary" style="width:100%;margin-top:8px;" onclick="saveEditRenter('${r.id}')">Save Changes</button>
     `);
   });
 }
@@ -2085,6 +2166,7 @@ async function saveEditRenter(renterId) {
 
 async function deactivateRenter(renterId) {
   const r = await db.renters.get(renterId);
+  if (!r) return;
   if (!confirm(`Deactivate ${r.name}? They will be hidden from the weekly view but their payment history is preserved.`)) return;
   await db.renters.update(renterId, { status: 'inactive' });
   closeModal();
@@ -2093,16 +2175,15 @@ async function deactivateRenter(renterId) {
 }
 
 // ----------------------------------------------------------------
-// 14. BACKUP & RESTORE
+// 18. BACKUP & RESTORE
 // ----------------------------------------------------------------
 
 async function exportBackup() {
   try {
     const backup = {
       exportDate:      todayStr(),
-      appVersion:      '4.0',
+      appVersion:      '5.0',
       businessName:    (await db.settings.get('businessName'))?.value || '',
-      // Categories are already in memory as a clean map — save them directly
       categories:      state.categories,
       transactions:    await db.transactions.toArray(),
       dailySummary:    await db.dailySummary.toArray(),
@@ -2124,10 +2205,10 @@ async function exportBackup() {
     URL.revokeObjectURL(url);
 
     await db.settings.put({ key: 'lastBackup', value: todayStr() });
-    showToast('Backup saved ✓');
+    showToast('Backup exported ✓');
     renderSettingsView();
   } catch (err) {
-    showToast('Backup failed — try again');
+    showToast('Export failed — try again');
     console.error(err);
   }
 }
@@ -2146,11 +2227,8 @@ async function importBackup(file) {
 
     if (!data.transactions) { showToast('Invalid backup file'); return; }
 
-    // Handle both old-format (categories = array of {id,name,type} rows)
-    // and new-format (categories = {INCOME:[...], DAILY_EXPENSE:[...], MONTHLY_EXPENSE:[...]})
     let catMap;
     if (Array.isArray(data.categories)) {
-      // Old format — convert to new map
       catMap = { INCOME: [], DAILY_EXPENSE: [], MONTHLY_EXPENSE: [] };
       data.categories.forEach(c => {
         if (c.type && catMap[c.type]) catMap[c.type].push(c.name);
@@ -2161,7 +2239,9 @@ async function importBackup(file) {
       catMap = _defaultCategoryMap();
     }
 
-    // Restore transactional data
+    // Strip integer id fields (Firestore uses string IDs)
+    const strip = arr => arr.map(({ id, ...rest }) => rest);
+
     await db.transaction('rw',
       db.transactions, db.dailySummary, db.monthlyExpenses,
       db.renters, db.rentPayments, db.settings,
@@ -2173,19 +2253,16 @@ async function importBackup(file) {
         if (data.renters)      await db.renters.clear();
         if (data.rentPayments) await db.rentPayments.clear();
 
-        const strip = arr => arr.map(({ id, ...rest }) => rest);
         await db.transactions.bulkAdd(strip(data.transactions));
         if (data.dailySummary?.length)    await db.dailySummary.bulkAdd(strip(data.dailySummary));
         if (data.monthlyExpenses?.length) await db.monthlyExpenses.bulkAdd(strip(data.monthlyExpenses));
         if (data.renters?.length)         await db.renters.bulkAdd(strip(data.renters));
         if (data.rentPayments?.length)    await db.rentPayments.bulkAdd(strip(data.rentPayments));
 
-        // Restore settings rows (they use key, not id)
         if (data.settings?.length) await db.settings.bulkAdd(data.settings);
       }
     );
 
-    // Save the categories map and reload into state
     state.categories = catMap;
     await saveCategories();
     await db.settings.put({ key: 'lastBackup', value: todayStr() });
@@ -2199,21 +2276,19 @@ async function importBackup(file) {
   }
 }
 
-// Trigger the hidden file input for restore
 function triggerRestoreFilePicker() {
   const input = document.getElementById('restore-file-input');
   if (input) input.click();
 }
 
 // ----------------------------------------------------------------
-// 15. MODAL SYSTEM
+// 19. MODAL SYSTEM
 // ----------------------------------------------------------------
 
 function openModal(html) {
   document.getElementById('modal-content').innerHTML = html;
   document.getElementById('modal-overlay').classList.remove('hidden');
   document.getElementById('modal').classList.remove('hidden');
-  // Focus first input automatically
   setTimeout(() => {
     const first = document.querySelector('#modal input, #modal select');
     if (first) first.focus();
@@ -2227,29 +2302,47 @@ function closeModal() {
 }
 
 // ----------------------------------------------------------------
-// 15. APP INITIALIZATION
+// 20. APP INITIALIZATION
 // ----------------------------------------------------------------
 
-async function initApp() {
-  // Load categories into memory first — all views depend on this
+// Called after Firebase confirms the user is signed in.
+async function bootApp() {
   await loadCategories();
 
-  const pinSetting    = await db.settings.get('pin');
-  const pinEnabled    = await db.settings.get('pinEnabled');
-  const shouldPinLock = pinSetting && pinEnabled?.value === 'true';
+  const pinSetting  = await db.settings.get('pin');
+  const pinEnabled  = await db.settings.get('pinEnabled');
+  const shouldPin   = pinSetting && pinEnabled?.value === 'true';
 
-  if (shouldPinLock) {
-    // Show PIN screen
+  // Hide login screen, show correct gate
+  document.getElementById('login-screen').classList.add('hidden');
+
+  if (shouldPin) {
     document.getElementById('pin-screen').classList.remove('hidden');
     initPINPad();
   } else {
-    // Go straight to app
     document.getElementById('app').classList.remove('hidden');
     navigate('daily');
   }
 }
 
-// Register the service worker for offline support
+// Firebase auth state listener — this is the single entry point for the app.
+auth.onAuthStateChanged(user => {
+  if (user) {
+    currentUser = user;
+    bootApp();
+  } else {
+    currentUser = null;
+    // Hide everything, show login screen
+    document.getElementById('app').classList.add('hidden');
+    document.getElementById('pin-screen').classList.add('hidden');
+    document.getElementById('login-screen').classList.remove('hidden');
+  }
+});
+
+// ----------------------------------------------------------------
+// 21. SERVICE WORKER (auto-update)
+// ----------------------------------------------------------------
+
 let _swRegistration = null;
 
 if ('serviceWorker' in navigator) {
@@ -2258,7 +2351,6 @@ if ('serviceWorker' in navigator) {
       .then(reg => {
         _swRegistration = reg;
 
-        // When a new SW installs and activates, reload to apply it
         reg.addEventListener('updatefound', () => {
           const newWorker = reg.installing;
           if (newWorker) {
@@ -2272,16 +2364,11 @@ if ('serviceWorker' in navigator) {
       })
       .catch(err => console.log('SW registration skipped:', err));
 
-    // If a SW just took over this session, reload once to get fresh files
     navigator.serviceWorker.addEventListener('controllerchange', () => {
       window.location.reload();
     });
   });
 
-  // Check for updates whenever the app comes back into the foreground.
-  // This is the key fix — PWAs launched from the home screen don't reload
-  // the page, so the SW never gets a chance to check for a new version.
-  // visibilitychange fires every time the user switches back to the app.
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible' && _swRegistration) {
       _swRegistration.update().catch(() => {});
@@ -2289,20 +2376,12 @@ if ('serviceWorker' in navigator) {
   });
 }
 
-// Manual update check — called from the Settings "Check for Updates" button
 async function checkForUpdates() {
   if (!_swRegistration) { showToast('App is up to date ✓'); return; }
   try {
     await _swRegistration.update();
-    // If an update was found, the updatefound handler above will reload.
-    // If we get here with no reload, there was nothing new.
     showToast('App is up to date ✓');
   } catch (e) {
     showToast('Could not check — are you online?');
   }
 }
-
-// Boot the app when the page loads
-window.addEventListener('DOMContentLoaded', () => {
-  initApp();
-});

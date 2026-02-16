@@ -1,7 +1,7 @@
 // Service Worker — Mane Frame Salon App
-// v5 — categories moved to settings JSON, no more categories table queries
+// v6 — Firebase/Firestore cloud sync (replaced Dexie/IndexedDB)
 
-const CACHE_NAME = 'salon-books-v11';
+const CACHE_NAME = 'salon-books-v12';
 
 // All the files our app needs to work offline
 const FILES_TO_CACHE = [
@@ -10,7 +10,9 @@ const FILES_TO_CACHE = [
   './styles.css',
   './app.js',
   './manifest.json',
-  'https://unpkg.com/dexie@3.2.4/dist/dexie.min.js',
+  'https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js',
+  'https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js',
+  'https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js',
   'https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,400&display=swap',
 ];
 

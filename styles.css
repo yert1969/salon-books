@@ -1115,3 +1115,49 @@ html, body {
   background: none; border: none; cursor: pointer; color: var(--gold);
   padding: 4px; display: flex; align-items: center; border-radius: 8px;
 }
+
+/* ================================================================
+   LOGIN SCREEN
+   ================================================================ */
+.login-screen {
+  position: fixed; inset: 0; z-index: 200;
+  background: linear-gradient(160deg, var(--plum-dark) 0%, var(--plum) 60%, #8B1A2A 100%);
+  display: flex; align-items: center; justify-content: center;
+}
+.login-container {
+  display: flex; flex-direction: column; align-items: center;
+  padding: 40px 32px; max-width: 320px; width: 100%;
+}
+.login-logo-wrap {
+  width: 88px; height: 88px; background: rgba(255,255,255,0.12);
+  border-radius: 24px; display: flex; align-items: center; justify-content: center;
+  margin-bottom: 20px;
+}
+.login-scissors {
+  width: 46px; height: 46px; color: var(--gold);
+}
+.login-title {
+  font-family: var(--font-display); font-size: 32px; font-weight: 700;
+  color: #fff; letter-spacing: -0.5px; margin: 0 0 4px;
+}
+.login-subtitle {
+  font-size: 14px; color: rgba(255,255,255,0.55);
+  letter-spacing: 0.5px; text-transform: uppercase; margin: 0;
+}
+.google-signin-btn {
+  display: flex; align-items: center; gap: 12px;
+  background: #fff; border: none; border-radius: 12px;
+  padding: 14px 24px; font-size: 15px; font-weight: 600;
+  color: #3c4043; cursor: pointer; width: 100%;
+  justify-content: center; font-family: var(--font-body);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+  transition: transform 0.1s, box-shadow 0.1s;
+}
+.google-signin-btn:active {
+  transform: scale(0.97);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+}
+.login-note {
+  font-size: 12px; color: rgba(255,255,255,0.4);
+  text-align: center; line-height: 1.6; margin-top: 20px;
+}
