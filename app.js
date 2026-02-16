@@ -1390,6 +1390,21 @@ async function renderSettingsView() {
     </div>
 
     <div style="height: 24px;"></div>
+
+    <!-- App Updates -->
+    <div class="settings-section">
+      <div class="settings-label">App Updates</div>
+      <div class="card" style="margin-bottom:8px;">
+        <div style="font-size:13px;color:var(--text-muted);margin-bottom:12px;line-height:1.5;">
+          The app checks for updates automatically when you switch back to it. Tap below to check right now.
+        </div>
+        <button class="btn-secondary" style="width:100%;" onclick="checkForUpdates()">
+          🔄 Check for Updates
+        </button>
+      </div>
+    </div>
+
+    <div style="height: 24px;"></div>
   `;
 
   // Hidden file input for restore — lives outside modal so it persists
@@ -2054,17 +2069,20 @@ async function initApp() {
 }
 
 // Register the service worker for offline support
+let _swRegistration = null;
+
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('sw.js')
       .then(reg => {
-        // When a new SW takes over, reload the page to get fresh files
+        _swRegistration = reg;
+
+        // When a new SW installs and activates, reload to apply it
         reg.addEventListener('updatefound', () => {
           const newWorker = reg.installing;
           if (newWorker) {
             newWorker.addEventListener('statechange', () => {
               if (newWorker.state === 'activated') {
-                // New SW is in control — reload to apply updates
                 window.location.reload();
               }
             });
@@ -2078,6 +2096,29 @@ if ('serviceWorker' in navigator) {
       window.location.reload();
     });
   });
+
+  // Check for updates whenever the app comes back into the foreground.
+  // This is the key fix — PWAs launched from the home screen don't reload
+  // the page, so the SW never gets a chance to check for a new version.
+  // visibilitychange fires every time the user switches back to the app.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && _swRegistration) {
+      _swRegistration.update().catch(() => {});
+    }
+  });
+}
+
+// Manual update check — called from the Settings "Check for Updates" button
+async function checkForUpdates() {
+  if (!_swRegistration) { showToast('App is up to date ✓'); return; }
+  try {
+    await _swRegistration.update();
+    // If an update was found, the updatefound handler above will reload.
+    // If we get here with no reload, there was nothing new.
+    showToast('App is up to date ✓');
+  } catch (e) {
+    showToast('Could not check — are you online?');
+  }
 }
 
 // Boot the app when the page loads

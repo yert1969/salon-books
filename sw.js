@@ -1,7 +1,7 @@
 // Service Worker — Mane Frame Salon App
 // v5 — categories moved to settings JSON, no more categories table queries
 
-const CACHE_NAME = 'salon-books-v7';
+const CACHE_NAME = 'salon-books-v8';
 
 // All the files our app needs to work offline
 const FILES_TO_CACHE = [
