@@ -165,7 +165,7 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 20px;
+  padding: 0 16px;
   height: var(--header-height);
   background: var(--white);
   border-bottom: 1px solid var(--border);
@@ -174,15 +174,46 @@ html, body {
   z-index: 10;
 }
 
+/* Brand mark — left side of header */
+.header-brand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 56px;
+  z-index: 1;
+}
+
+.brand-scissors {
+  width: 20px;
+  height: 20px;
+  stroke: var(--gold);
+}
+
+.brand-name {
+  font-family: var(--font-display);
+  font-size: 9px;
+  font-style: italic;
+  font-weight: 600;
+  color: var(--plum-light);
+  letter-spacing: 0.6px;
+  white-space: nowrap;
+}
+
+/* View title — absolutely centered so it ignores left/right column widths */
 .app-title {
   font-family: var(--font-display);
-  font-size: 22px;
+  font-size: 20px;
   font-weight: 600;
   color: var(--plum);
   letter-spacing: 0.3px;
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  pointer-events: none;
 }
 
-.header-actions { display: flex; gap: 10px; align-items: center; }
+.header-actions { display: flex; gap: 10px; align-items: center; min-width: 56px; justify-content: flex-end; z-index: 1; }
 
 .header-btn {
   background: var(--gold-light);
