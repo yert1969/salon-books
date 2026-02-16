@@ -638,7 +638,7 @@ async function renderMonthlyView() {
         <div class="monthly-expense-item">
           <div style="flex:1">
             <div class="mexp-category">${e.category}</div>
-            ${e.notes ? `<div class="mexp-notes">${e.notes}</div>` : ''}
+            <div class="mexp-notes">${e.datePaid ? formatDateShort(e.datePaid) : ''}${e.notes ? (e.datePaid ? ' · ' : '') + e.notes : ''}</div>
           </div>
           <div class="mexp-amount">${fmt(e.amount)}</div>
           <button class="mexp-delete" onclick="deleteMonthlyExpense(${e.id})">✕</button>
@@ -667,6 +667,11 @@ async function openAddMonthlyExpenseModal() {
 
   openModal(`
     <h2 class="modal-title">+ Add Monthly Expense</h2>
+
+    <div class="form-group">
+      <label class="form-label">Date Paid</label>
+      <input type="date" class="form-input" id="me-date" value="${todayStr()}">
+    </div>
 
     <div class="form-row">
       <div class="form-group">
@@ -704,6 +709,7 @@ async function openAddMonthlyExpenseModal() {
 }
 
 async function saveMonthlyExpense() {
+  const datePaid = document.getElementById('me-date').value;
   const month    = parseInt(document.getElementById('me-month').value);
   const year     = parseInt(document.getElementById('me-year').value);
   const category = document.getElementById('me-category').value;
@@ -713,7 +719,7 @@ async function saveMonthlyExpense() {
   if (!category) { alert('Please select a category.'); return; }
   if (amount <= 0) { alert('Please enter an amount greater than zero.'); return; }
 
-  await db.monthlyExpenses.add({ month, year, category, amount, notes });
+  await db.monthlyExpenses.add({ datePaid, month, year, category, amount, notes });
   state.selectedMonth = month;
   state.selectedYear  = year;
 
