@@ -372,7 +372,9 @@ async function deleteTransaction(id) {
 
 async function openAddTransactionModal(type) {
   const isIncome = type === 'INCOME';
-  const cats = await db.categories.where('type').equals(isIncome ? 'INCOME' : 'DAILY_EXPENSE').toArray();
+  const catType = isIncome ? 'INCOME' : 'DAILY_EXPENSE';
+  const allCats = await db.categories.toArray();
+  const cats = allCats.filter(c => c.type === catType);
   const catOptions = cats.map(c => `<option value="${c.name}">${c.name}</option>`).join('');
 
   const paymentMethods = ['Cash', 'Card', 'Venmo', 'Zelle', 'Other'];
@@ -595,7 +597,8 @@ function changeMonth(delta) {
 }
 
 async function openAddMonthlyExpenseModal() {
-  const cats = await db.categories.where('type').equals('MONTHLY_EXPENSE').toArray();
+  const allCats = await db.categories.toArray();
+  const cats = allCats.filter(c => c.type === 'MONTHLY_EXPENSE');
   const catOptions = cats.map(c => `<option value="${c.name}">${c.name}</option>`).join('');
 
   openModal(`
@@ -1354,8 +1357,9 @@ async function loadCategoryChips() {
     { type: 'DAILY_EXPENSE',   container: 'daily-exp-cats' },
     { type: 'MONTHLY_EXPENSE', container: 'monthly-exp-cats' },
   ];
+  const allCats = await db.categories.toArray();
   for (const { type, container } of types) {
-    const cats = await db.categories.where('type').equals(type).toArray();
+    const cats = allCats.filter(c => c.type === type);
     const el   = document.getElementById(container);
     if (el) el.innerHTML = cats.map(c =>
       `<span class="category-chip">${c.name}
@@ -1379,6 +1383,7 @@ async function addCategory(type) {
   if (!name) return;
   await db.categories.add({ name, type });
   input.value = '';
+  showToast(`"${name}" added ✓`);
   await loadCategoryChips();
 }
 

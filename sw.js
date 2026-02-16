@@ -1,7 +1,8 @@
-// Service Worker — Salon Books
+// Service Worker — Mane Frame Salon App
 // Caches app files so it works offline
+// v3 — force cache refresh for category fix
 
-const CACHE_NAME = 'salon-books-v1';
+const CACHE_NAME = 'salon-books-v3';
 
 // All the files our app needs to work offline
 const FILES_TO_CACHE = [
