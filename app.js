@@ -385,11 +385,11 @@ function renderTransactionItem(t) {
   return `
     <div class="transaction-item">
       <div class="txn-type-dot ${isIncome ? 'income' : 'expense'}">${dot}</div>
-      <div class="txn-body">
-        <div class="txn-category">${t.category || 'Uncategorized'}</div>
+      <div class="txn-body" onclick="openEditTransactionModal(${t.id})" style="cursor:pointer;flex:1;">
+        <div class="txn-category">${t.category || 'Uncategorized'} <span style="font-size:11px;color:var(--text-light);font-weight:400;">✏</span></div>
         <div class="txn-meta">${pmPill} ${t.notes ? `· ${t.notes}` : ''}</div>
       </div>
-      <div class="txn-amount-col">
+      <div class="txn-amount-col" onclick="openEditTransactionModal(${t.id})" style="cursor:pointer;">
         <div class="txn-amount ${isIncome ? 'income' : 'expense'}">
           ${isIncome ? '+' : '-'}${fmt(isIncome ? t.serviceAmount : t.amount)}
         </div>
@@ -430,6 +430,109 @@ async function deleteTransaction(id) {
   if (!confirm('Delete this entry?')) return;
   await db.transactions.delete(id);
   showToast('Entry deleted');
+  renderDailyView();
+}
+
+async function openEditTransactionModal(id) {
+  await loadCategories();
+  const t = await db.transactions.get(id);
+  if (!t) return;
+  const isIncome = t.type === 'INCOME';
+  const catOptions = (state.categories[isIncome ? 'INCOME' : 'DAILY_EXPENSE'] || [])
+    .map(name => `<option value="${name}" ${name === t.category ? 'selected' : ''}>${name}</option>`)
+    .join('');
+  const paymentMethods = ['Cash', 'Card', 'Venmo', 'Zelle', 'Other'];
+  const pmOptions = paymentMethods.map(m =>
+    `<option value="${m}" ${m === t.paymentMethod ? 'selected' : ''}>${m}</option>`
+  ).join('');
+
+  openModal(`
+    <h2 class="modal-title">${isIncome ? 'Edit Income' : 'Edit Expense'}</h2>
+
+    <div class="form-group">
+      <label class="form-label">Date</label>
+      <input type="date" class="form-input" id="txn-date" value="${t.date}">
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Category</label>
+      <select class="form-select" id="txn-category">
+        <option value="">Select category…</option>
+        ${catOptions}
+      </select>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">${isIncome ? 'Service Amount ($)' : 'Amount ($)'}</label>
+      <input type="number" class="form-input" id="txn-amount" placeholder="0.00" step="0.01" min="0" inputmode="decimal"
+        value="${isIncome ? (t.serviceAmount || '') : (t.amount || '')}">
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Payment Method</label>
+      <select class="form-select" id="txn-payment">${pmOptions}</select>
+    </div>
+
+    ${isIncome ? `
+    <hr class="form-section-divider">
+    <div class="form-section-label">Tip (optional)</div>
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label">Tip Amount ($)</label>
+        <input type="number" class="form-input" id="txn-tip" placeholder="0.00" step="0.01" min="0" inputmode="decimal"
+          value="${t.tipAmount || ''}">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Tip Method</label>
+        <select class="form-select" id="txn-tip-method">
+          <option value="" ${!t.tipMethod ? 'selected' : ''}>None</option>
+          <option value="Cash" ${t.tipMethod === 'Cash' ? 'selected' : ''}>Cash</option>
+          <option value="Card" ${t.tipMethod === 'Card' ? 'selected' : ''}>Card</option>
+        </select>
+      </div>
+    </div>
+    ` : ''}
+
+    <div class="form-group">
+      <label class="form-label">Notes (optional)</label>
+      <input type="text" class="form-input" id="txn-notes" placeholder="e.g. regular client, product used…"
+        value="${t.notes || ''}">
+    </div>
+
+    <button class="btn-submit" onclick="updateTransaction(${id}, '${t.type}')">Save Changes</button>
+  `);
+}
+
+async function updateTransaction(id, type) {
+  const isIncome = type === 'INCOME';
+  const date     = document.getElementById('txn-date').value;
+  const category = document.getElementById('txn-category').value;
+  const amount   = parseFloat(document.getElementById('txn-amount').value) || 0;
+  const payment  = document.getElementById('txn-payment').value;
+  const notes    = document.getElementById('txn-notes').value.trim();
+
+  if (!category) { alert('Please select a category.'); return; }
+  if (amount <= 0) { alert('Please enter an amount greater than zero.'); return; }
+
+  const changes = { date, category, paymentMethod: payment, notes };
+
+  if (isIncome) {
+    const tip       = parseFloat(document.getElementById('txn-tip').value) || 0;
+    const tipMethod = document.getElementById('txn-tip-method').value;
+    changes.serviceAmount = amount;
+    changes.tipAmount     = tip;
+    changes.tipMethod     = tipMethod;
+    changes.amount        = amount;
+  } else {
+    changes.amount        = amount;
+    changes.serviceAmount = 0;
+    changes.tipAmount     = 0;
+  }
+
+  await db.transactions.update(id, changes);
+  if (date !== state.selectedDate) state.selectedDate = date;
+  closeModal();
+  showToast('Entry updated ✓');
   renderDailyView();
 }
 
@@ -636,11 +739,11 @@ async function renderMonthlyView() {
         </div>
       ` : expenses.map(e => `
         <div class="monthly-expense-item">
-          <div style="flex:1">
-            <div class="mexp-category">${e.category}</div>
+          <div style="flex:1;cursor:pointer;" onclick="openEditMonthlyExpenseModal(${e.id})">
+            <div class="mexp-category">${e.category} <span style="font-size:11px;color:var(--text-light);font-weight:400;">✏</span></div>
             <div class="mexp-notes">${e.datePaid ? formatDateShort(e.datePaid) : ''}${e.notes ? (e.datePaid ? ' · ' : '') + e.notes : ''}</div>
           </div>
-          <div class="mexp-amount">${fmt(e.amount)}</div>
+          <div class="mexp-amount" onclick="openEditMonthlyExpenseModal(${e.id})" style="cursor:pointer;">${fmt(e.amount)}</div>
           <button class="mexp-delete" onclick="deleteMonthlyExpense(${e.id})">✕</button>
         </div>
       `).join('')}
@@ -732,6 +835,78 @@ async function deleteMonthlyExpense(id) {
   if (!confirm('Delete this expense?')) return;
   await db.monthlyExpenses.delete(id);
   showToast('Expense deleted');
+  renderMonthlyView();
+}
+
+async function openEditMonthlyExpenseModal(id) {
+  await loadCategories();
+  const e = await db.monthlyExpenses.get(id);
+  if (!e) return;
+  const catOptions = (state.categories.MONTHLY_EXPENSE || [])
+    .map(name => `<option value="${name}" ${name === e.category ? 'selected' : ''}>${name}</option>`)
+    .join('');
+
+  openModal(`
+    <h2 class="modal-title">Edit Monthly Expense</h2>
+
+    <div class="form-group">
+      <label class="form-label">Date Paid</label>
+      <input type="date" class="form-input" id="me-date" value="${e.datePaid || ''}">
+    </div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label">Month</label>
+        <select class="form-select" id="me-month">
+          ${Array.from({length:12},(_,i)=>`<option value="${i+1}" ${i+1===e.month?'selected':''}>${monthName(i+1)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Year</label>
+        <input type="number" class="form-input" id="me-year" value="${e.year}" min="2020" max="2099" inputmode="numeric">
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Category</label>
+      <select class="form-select" id="me-category">
+        <option value="">Select category…</option>
+        ${catOptions}
+      </select>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Amount ($)</label>
+      <input type="number" class="form-input" id="me-amount" placeholder="0.00" step="0.01" min="0" inputmode="decimal"
+        value="${e.amount || ''}">
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Notes (optional)</label>
+      <input type="text" class="form-input" id="me-notes" placeholder="e.g. annual increase, pro-rated…"
+        value="${e.notes || ''}">
+    </div>
+
+    <button class="btn-submit" onclick="updateMonthlyExpense(${id})">Save Changes</button>
+  `);
+}
+
+async function updateMonthlyExpense(id) {
+  const datePaid = document.getElementById('me-date').value;
+  const month    = parseInt(document.getElementById('me-month').value);
+  const year     = parseInt(document.getElementById('me-year').value);
+  const category = document.getElementById('me-category').value;
+  const amount   = parseFloat(document.getElementById('me-amount').value) || 0;
+  const notes    = document.getElementById('me-notes').value.trim();
+
+  if (!category) { alert('Please select a category.'); return; }
+  if (amount <= 0) { alert('Please enter an amount greater than zero.'); return; }
+
+  await db.monthlyExpenses.update(id, { datePaid, month, year, category, amount, notes });
+  state.selectedMonth = month;
+  state.selectedYear  = year;
+  closeModal();
+  showToast('Expense updated ✓');
   renderMonthlyView();
 }
 

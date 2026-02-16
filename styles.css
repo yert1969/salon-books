@@ -406,6 +406,8 @@ html, body {
   position: relative;
 }
 
+.txn-body:active, .txn-amount-col:active { opacity: 0.6; }
+
 .txn-type-dot {
   width: 34px;
   height: 34px;
@@ -558,6 +560,8 @@ html, body {
   border: 1px solid var(--border);
   gap: 12px;
 }
+
+.monthly-expense-item [onclick]:active { opacity: 0.6; }
 
 .mexp-category { flex: 1; font-size: 14px; font-weight: 500; }
 .mexp-notes { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
