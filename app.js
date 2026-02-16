@@ -401,18 +401,54 @@ async function updateRentersTabVisibility() {
   }
 }
 
+/**
+ * Wraps render functions with error handling to prevent blank pages
+ */
+async function safeRender(renderFn, viewName) {
+  try {
+    await renderFn();
+  } catch (err) {
+    console.error(`Error rendering ${viewName}:`, err);
+    const content = document.getElementById('app-content');
+    if (content) {
+      content.innerHTML = `
+        <div style="padding:40px 20px;text-align:center;">
+          <div style="font-size:48px;margin-bottom:16px;">⚠️</div>
+          <div style="font-size:18px;font-weight:600;color:var(--danger);margin-bottom:8px;">
+            Error loading ${viewName}
+          </div>
+          <div style="font-size:14px;color:var(--text-muted);margin-bottom:20px;">
+            ${err.message || 'Unknown error'}
+          </div>
+          <button class="btn-primary" onclick="navigate('${state.currentView}')">
+            Try Again
+          </button>
+          <button class="btn-secondary" onclick="location.reload()" style="margin-left:8px;">
+            Reload App
+          </button>
+        </div>
+      `;
+    }
+  }
+}
+
 function navigate(view) {
   state.currentView = view;
+  
+  // Update all nav buttons
   ['daily', 'monthly', 'renters', 'reports', 'settings'].forEach(v => {
     const btn = document.getElementById('nav-' + v);
     if (btn) {
       btn.classList.toggle('active', v === view);
-      // Hide renters tab if showRentersTab is false
-      if (v === 'renters') {
-        btn.style.display = state.showRentersTab ? 'flex' : 'none';
-      }
     }
   });
+  
+  // Always update renters tab visibility when navigating
+  const rentersBtn = document.getElementById('nav-renters');
+  if (rentersBtn) {
+    rentersBtn.style.display = state.showRentersTab ? 'flex' : 'none';
+  }
+  
   const titles = {
     daily:    'Daily Log',
     monthly:  'Monthly Expenses',
@@ -421,12 +457,13 @@ function navigate(view) {
     settings: 'Settings',
   };
   document.getElementById('view-title').textContent = titles[view] || '';
+  
   const views = {
-    daily:    renderDailyView,
-    monthly:  renderMonthlyView,
-    renters:  renderRentersView,
-    reports:  renderReportsView,
-    settings: renderSettingsView,
+    daily:    () => safeRender(renderDailyView, 'Daily Log'),
+    monthly:  () => safeRender(renderMonthlyView, 'Monthly Expenses'),
+    renters:  () => safeRender(renderRentersView, 'Booth Renters'),
+    reports:  () => safeRender(renderReportsView, 'Reports'),
+    settings: () => safeRender(renderSettingsView, 'Settings'),
   };
   if (views[view]) views[view]();
 }
@@ -2042,12 +2079,17 @@ async function toggleRentersTab() {
 }
 
 let pinBuffer = '';
+let pinPadInitialized = false; // Prevent duplicate event listeners
 
 function initPINPad() {
+  if (pinPadInitialized) return; // Already initialized
+  
   document.querySelectorAll('.pin-btn[data-num]').forEach(btn => {
     btn.addEventListener('click', () => enterPin(btn.dataset.num));
   });
   document.getElementById('pin-back')?.addEventListener('click', clearPin);
+  
+  pinPadInitialized = true;
 }
 
 function enterPin(num) {
@@ -2074,9 +2116,20 @@ function updatePinDots() {
 async function checkPin() {
   const stored = await db.settings.get('pin');
   if (stored && pinBuffer === stored.value) {
-    document.getElementById('pin-screen').classList.add('hidden');
-    document.getElementById('app').classList.remove('hidden');
-    navigate('daily'); // Update tab visibility and render view
+    try {
+      document.getElementById('pin-screen').classList.add('hidden');
+      document.getElementById('app').classList.remove('hidden');
+      
+      // Call navigate to update tab visibility and render the view
+      navigate('daily');
+      
+      // Give renderDailyView a moment to complete
+      // (navigate is sync but calls async renderDailyView)
+      await new Promise(resolve => setTimeout(resolve, 100));
+    } catch (err) {
+      console.error('Error after PIN entry:', err);
+      showToast('Error loading app — please refresh');
+    }
   } else {
     document.getElementById('pin-error').classList.remove('hidden');
     pinBuffer = '';
