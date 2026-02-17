@@ -537,23 +537,23 @@ async function renderDailyView() {
 
     ${summary ? `
     <div class="day-summary-card" onclick="openDaySummaryModal()">
-      <div style="display:flex;align-items:center;gap:16px;flex:1;">
+      <div style="display:flex;align-items:center;gap:12px;flex:1;font-size:13px;">
         <span>👤 ${summary.clientsSeen} clients</span>
-        <span>⏱ ${summary.hoursWorked}h worked</span>
+        <span>⏱ ${summary.hoursWorked}h</span>
       </div>
-      <span style="opacity:.5;font-size:13px;">edit ✏</span>
+      <span style="opacity:.5;font-size:12px;">edit ✏</span>
     </div>
     ` : `
     <div class="day-summary-card empty" onclick="openDaySummaryModal()">
       <div style="flex:1;">
-        <div style="font-weight:600;font-size:15px;color:var(--plum);margin-bottom:2px;">
+        <div style="font-weight:600;font-size:13px;color:var(--plum);margin-bottom:1px;">
           📋 Log today's activity
         </div>
-        <div style="font-size:13px;color:var(--text-muted);">
-          Track clients seen and hours worked
+        <div style="font-size:12px;color:var(--text-muted);">
+          Track clients & hours
         </div>
       </div>
-      <span style="font-size:24px;opacity:.3;">+</span>
+      <span style="font-size:20px;opacity:.3;">+</span>
     </div>
     `}
 
@@ -562,15 +562,15 @@ async function renderDailyView() {
       ${income.length === 0 ? `
         <div class="empty-state">
           <div class="empty-icon">💈</div>
-          <div class="empty-text">No income logged yet.<br>Tap below to add an entry.</div>
+          <div class="empty-text">No income yet. Tap + below.</div>
         </div>
       ` : income.map(t => renderTransactionItem(t)).join('')}
 
-      <div class="section-label" style="margin-top:16px;">Expenses</div>
+      <div class="section-label" style="margin-top:12px;">Expenses</div>
       ${expenses.length === 0 ? `
         <div class="empty-state">
           <div class="empty-icon">🧾</div>
-          <div class="empty-text">No expenses logged yet.</div>
+          <div class="empty-text">No expenses yet.</div>
         </div>
       ` : expenses.map(t => renderTransactionItem(t)).join('')}
     </div>
