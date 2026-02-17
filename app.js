@@ -2092,8 +2092,9 @@ async function toggleRentersTab() {
     return;
   }
   
-  // Save to database (but DON'T re-read it - we already set state above)
-  db.settings.put({ key: 'showRentersTab', value: newValue }); // Fire and forget
+  // Save to database and WAIT for it to complete
+  // This ensures renderSettingsView reads the correct value
+  await db.settings.put({ key: 'showRentersTab', value: newValue });
   
   showToast(message);
   
