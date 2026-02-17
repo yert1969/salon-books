@@ -2076,29 +2076,32 @@ async function toggleRentersTab() {
     // Currently Auto → switch to Always Show
     newValue = 'true';
     message = 'Renters tab set to Always Show';
+    state.showRentersTab = true; // Update state immediately
   } else if (override.value === 'true') {
     // Currently Always Show → switch to Always Hide
     newValue = 'false';
     message = 'Renters tab set to Always Hide';
+    state.showRentersTab = false; // Update state immediately
   } else {
-    // Currently Always Hide → back to Auto (delete the setting)
+    // Currently Always Hide → back to Auto
     await db.settings.delete('showRentersTab');
-    await updateRentersTabVisibility();
+    // For auto mode, update based on whether renters exist
+    state.showRentersTab = allRenters.length > 0;
     showToast('Renters tab set to Auto');
-    navigate(state.currentView); // Refresh to show/hide tab
+    navigate(state.currentView);
     return;
   }
   
-  await db.settings.put({ key: 'showRentersTab', value: newValue });
-  await updateRentersTabVisibility();
+  // Save to database (but DON'T re-read it - we already set state above)
+  db.settings.put({ key: 'showRentersTab', value: newValue }); // Fire and forget
+  
   showToast(message);
   
-  // If the tab was hidden and is now being shown, navigate to Renters view
-  // so the user can immediately add their first renter
+  // Update navigation
   if (wasHidden && state.showRentersTab) {
     navigate('renters');
   } else {
-    navigate(state.currentView); // Refresh to show/hide tab
+    navigate(state.currentView);
   }
 }
 
