@@ -199,6 +199,10 @@ const settingsTable = {
     await userCol('settings').doc(key).set(obj);
   },
 
+  async delete(key) {
+    await userCol('settings').doc(key).delete();
+  },
+
   async toArray() {
     const snap = await userCol('settings').get();
     return snap.docs.map(d => ({ key: d.id, ...d.data() }));
@@ -1872,7 +1876,7 @@ async function renderSettingsView() {
         <span class="settings-item-arrow">›</span>
       </div>
       ${pinSet ? `
-      <div class="settings-item" onclick="togglePINLock()">
+      <div class="settings-item">
         <div>
           <div class="settings-item-label">PIN Lock</div>
           <div class="settings-item-sub">Require PIN on startup</div>
@@ -1888,7 +1892,7 @@ async function renderSettingsView() {
     <!-- Features -->
     <div class="settings-section">
       <div class="settings-label">Features</div>
-      <div class="settings-item" onclick="toggleRentersTab()">
+      <div class="settings-item">
         <div>
           <div class="settings-item-label">Show Booth Renters Tab</div>
           <div class="settings-item-sub">${rentersStatus}</div>
@@ -2066,23 +2070,28 @@ async function toggleRentersTab() {
   
   // Cycle through: Auto → Always Show → Always Hide → Auto
   let newValue;
+  let message;
+  
   if (!override || override.value === undefined) {
     // Currently Auto → switch to Always Show
     newValue = 'true';
+    message = 'Renters tab set to Always Show';
   } else if (override.value === 'true') {
     // Currently Always Show → switch to Always Hide
     newValue = 'false';
+    message = 'Renters tab set to Always Hide';
   } else {
     // Currently Always Hide → back to Auto (delete the setting)
     await db.settings.delete('showRentersTab');
     await updateRentersTabVisibility();
+    showToast('Renters tab set to Auto');
     navigate(state.currentView); // Refresh to show/hide tab
-    renderSettingsView();
     return;
   }
   
   await db.settings.put({ key: 'showRentersTab', value: newValue });
   await updateRentersTabVisibility();
+  showToast(message);
   
   // If the tab was hidden and is now being shown, navigate to Renters view
   // so the user can immediately add their first renter
@@ -2090,7 +2099,6 @@ async function toggleRentersTab() {
     navigate('renters');
   } else {
     navigate(state.currentView); // Refresh to show/hide tab
-    renderSettingsView();
   }
 }
 
