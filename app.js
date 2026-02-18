@@ -793,7 +793,18 @@ async function saveTransaction(type) {
 }
 
 async function deleteTransaction(id) {
-  if (!confirm('Delete this entry?')) return;
+  const t = await db.transactions.get(id);
+  if (!t) return;
+  
+  const amount = t.type === 'INCOME' 
+    ? fmt((t.serviceAmount || 0) + (t.tipAmount || 0))
+    : fmt(t.amount || 0);
+  const type = t.type === 'INCOME' ? 'income' : 'expense';
+  
+  const message = `Are you sure you want to delete this ${type}?\n\n${t.category || 'Entry'}: ${amount}\n\nThis cannot be undone.`;
+  
+  if (!confirm(message)) return;
+  
   await db.transactions.delete(id);
   showToast('Entry deleted');
   renderDailyView();
@@ -1149,7 +1160,14 @@ async function saveMonthlyExpense() {
 }
 
 async function deleteMonthlyExpense(id) {
-  if (!confirm('Delete this expense?')) return;
+  const e = await db.monthlyExpenses.get(id);
+  if (!e) return;
+  
+  const monthYear = `${monthName(e.month)} ${e.year}`;
+  const message = `Are you sure you want to delete this monthly expense?\n\n${e.category}: ${fmt(e.amount)}\n${monthYear}\n\nThis cannot be undone.`;
+  
+  if (!confirm(message)) return;
+  
   await db.monthlyExpenses.delete(id);
   showToast('Expense deleted');
   renderMonthlyView();
