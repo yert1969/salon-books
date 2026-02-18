@@ -2139,7 +2139,7 @@ async function renderSettingsView() {
         <div style="font-size:13px;color:var(--text-muted);margin-bottom:12px;line-height:1.5;">
           If you don't see the latest changes, use one of these options:
         </div>
-        <button class="btn-secondary" style="width:100%;margin-bottom:8px;" onclick="checkForUpdates()">
+        <button class="btn-secondary" style="width:100%;margin-bottom:8px;" onclick="reloadApp()">
           🔄 Reload App
         </button>
         <button class="btn-secondary" style="width:100%;background:#C13838;color:white;" onclick="forceReload()">
@@ -3075,11 +3075,15 @@ window.dismissUpdateBanner = function() {
   if (banner) {
     banner.remove();
   }
+  _updateAvailable = false;
 };
 
-window.applyUpdate = function() {
+window.applyUpdate = async function() {
   // Remove banner immediately
-  dismissUpdateBanner();
+  const banner = document.getElementById('update-banner');
+  if (banner) {
+    banner.remove();
+  }
   
   showToast('Updating app...');
   
@@ -3087,37 +3091,43 @@ window.applyUpdate = function() {
     // Tell the waiting service worker to skip waiting and become active
     _swRegistration.waiting.postMessage({ type: 'SKIP_WAITING' });
     
-    // If for some reason reload doesn't happen, force it after 2 seconds
+    // The controllerchange event will trigger a reload
+    // But add a fallback just in case
     setTimeout(() => {
       window.location.reload(true);
     }, 2000);
+  } else if (_swRegistration) {
+    // No waiting worker, try to force an update check
+    try {
+      await _swRegistration.unregister();
+      await new Promise(resolve => setTimeout(resolve, 300));
+      window.location.reload(true);
+    } catch (e) {
+      window.location.reload(true);
+    }
   } else {
-    // Fallback: just reload
+    // No service worker, just reload
     window.location.reload(true);
   }
 };
 
-async function checkForUpdates() {
-  if (!_swRegistration) { 
-    showToast('Service worker not available');
-    return;
-  }
-  
-  showToast('Checking for updates...');
+async function reloadApp() {
+  showToast('Reloading app...');
   
   try {
     // Unregister current service worker
-    await _swRegistration.unregister();
+    if (_swRegistration) {
+      await _swRegistration.unregister();
+    }
     
     // Wait a moment
-    await new Promise(resolve => setTimeout(resolve, 500));
+    await new Promise(resolve => setTimeout(resolve, 300));
     
     // Force a hard reload (bypasses all caches)
     window.location.reload(true);
   } catch (e) {
-    showToast('Update check failed - trying force reload...');
     // Fallback: just do a hard reload
-    setTimeout(() => window.location.reload(true), 1000);
+    window.location.reload(true);
   }
 }
 
