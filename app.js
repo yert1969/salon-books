@@ -1578,15 +1578,34 @@ async function runCategoryReport() {
   const to   = document.getElementById('r-cat-to')?.value;
   if (!from || !to) return;
 
+  // Get daily transactions
   const allTxns = await db.transactions.toArray();
   const txns    = allTxns.filter(t => t.date >= from && t.date <= to);
 
+  // Get monthly expenses
+  const allMonthlyExp = await db.monthlyExpenses.toArray();
+  const monthlyExp = allMonthlyExp.filter(e => {
+    if (!e.month) return false;
+    // Convert month (YYYY-MM) to date for comparison
+    const monthDate = e.month + '-01';
+    return monthDate >= from && monthDate <= to;
+  });
+
   const incMap = {}, expMap = {};
+  
+  // Add income from daily transactions
   txns.filter(t=>t.type==='INCOME').forEach(t => {
     incMap[t.category] = (incMap[t.category]||0) + (t.serviceAmount||0) + (t.tipAmount||0);
   });
+  
+  // Add expenses from daily transactions
   txns.filter(t=>t.type==='EXPENSE').forEach(t => {
     expMap[t.category] = (expMap[t.category]||0) + (t.amount||0);
+  });
+  
+  // Add monthly expenses
+  monthlyExp.forEach(e => {
+    expMap[e.category] = (expMap[e.category]||0) + (e.amount||0);
   });
 
   const sortDesc = obj => Object.entries(obj).sort((a,b)=>b[1]-a[1]);
@@ -1844,23 +1863,12 @@ async function renderSettingsView() {
     </div>
 
     <div class="settings-section">
-      <div class="settings-label">Daily Expense Categories</div>
+      <div class="settings-label">Expense Categories</div>
       <div class="card" style="margin-bottom: 8px;">
-        <div id="daily-exp-cats"></div>
+        <div id="all-exp-cats"></div>
         <div class="add-category-row">
-          <input type="text" class="add-category-input" id="new-dexp-cat" placeholder="Add category…">
-          <button class="btn-add-chip" onclick="addCategory('DAILY_EXPENSE')">+ Add</button>
-        </div>
-      </div>
-    </div>
-
-    <div class="settings-section">
-      <div class="settings-label">Monthly Expense Categories</div>
-      <div class="card" style="margin-bottom: 8px;">
-        <div id="monthly-exp-cats"></div>
-        <div class="add-category-row">
-          <input type="text" class="add-category-input" id="new-mexp-cat" placeholder="Add category…">
-          <button class="btn-add-chip" onclick="addCategory('MONTHLY_EXPENSE')">+ Add</button>
+          <input type="text" class="add-category-input" id="new-exp-cat" placeholder="Add category…">
+          <button class="btn-add-chip" onclick="addCategory('EXPENSE')">+ Add</button>
         </div>
       </div>
     </div>
@@ -1988,29 +1996,54 @@ async function saveBusinessName() {
 }
 
 function loadCategoryChips() {
-  const map = {
-    'income-cats':      'INCOME',
-    'daily-exp-cats':   'DAILY_EXPENSE',
-    'monthly-exp-cats': 'MONTHLY_EXPENSE',
-  };
-  for (const [containerId, type] of Object.entries(map)) {
-    const el = document.getElementById(containerId);
-    if (!el) continue;
-    el.innerHTML = (state.categories[type] || []).map(name =>
+  // Income categories
+  const incomeEl = document.getElementById('income-cats');
+  if (incomeEl) {
+    incomeEl.innerHTML = (state.categories.INCOME || []).map(name =>
       `<span class="category-chip">${name}
-        <button class="chip-delete" onclick="deleteCategory('${type}','${name.replace(/'/g,"\\'")}')">×</button>
+        <button class="chip-delete" onclick="deleteCategory('INCOME','${name.replace(/'/g,"\\'")}')">×</button>
       </span>`
     ).join('');
+  }
+  
+  // Combined expense categories (daily + monthly)
+  const expenseEl = document.getElementById('all-exp-cats');
+  if (expenseEl) {
+    const dailyExpenses = state.categories.DAILY_EXPENSE || [];
+    const monthlyExpenses = state.categories.MONTHLY_EXPENSE || [];
+    const allExpenses = [...dailyExpenses, ...monthlyExpenses];
+    
+    expenseEl.innerHTML = allExpenses.map(name => {
+      // Determine which type this category belongs to
+      const type = dailyExpenses.includes(name) ? 'DAILY_EXPENSE' : 'MONTHLY_EXPENSE';
+      return `<span class="category-chip">${name}
+        <button class="chip-delete" onclick="deleteCategory('${type}','${name.replace(/'/g,"\\'")}')">×</button>
+      </span>`;
+    }).join('');
   }
 }
 
 async function addCategory(type) {
-  const inputId = { INCOME: 'new-income-cat', DAILY_EXPENSE: 'new-dexp-cat', MONTHLY_EXPENSE: 'new-mexp-cat' }[type];
+  const inputMap = { 
+    INCOME: 'new-income-cat', 
+    EXPENSE: 'new-exp-cat',
+    DAILY_EXPENSE: 'new-dexp-cat', 
+    MONTHLY_EXPENSE: 'new-mexp-cat' 
+  };
+  const inputId = inputMap[type];
   const input   = document.getElementById(inputId);
   const name    = input?.value.trim();
   if (!name) return;
-  if (state.categories[type].includes(name)) { showToast('Already exists'); return; }
-  state.categories[type].push(name);
+  
+  // For generic 'EXPENSE', default to DAILY_EXPENSE
+  const actualType = type === 'EXPENSE' ? 'DAILY_EXPENSE' : type;
+  
+  if (state.categories[actualType].includes(name)) { 
+    showToast('Already exists'); 
+    return; 
+  }
+  
+  state.categories[actualType].push(name);
   await saveCategories();
   input.value = '';
   showToast(`"${name}" added ✓`);
@@ -2071,32 +2104,55 @@ async function toggleRentersTab() {
   // Cycle through: Auto → Always Show → Always Hide → Auto
   let newValue;
   let message;
+  let newStatus;
   
   if (!override || override.value === undefined) {
     // Currently Auto → switch to Always Show
     newValue = 'true';
     message = 'Renters tab set to Always Show';
-    state.showRentersTab = true; // Update state immediately
+    newStatus = 'Always shown';
+    state.showRentersTab = true;
   } else if (override.value === 'true') {
     // Currently Always Show → switch to Always Hide
     newValue = 'false';
     message = 'Renters tab set to Always Hide';
-    state.showRentersTab = false; // Update state immediately
+    newStatus = 'Always hidden';
+    state.showRentersTab = false;
   } else {
     // Currently Always Hide → back to Auto
     await db.settings.delete('showRentersTab');
-    // For auto mode, update based on whether renters exist
     state.showRentersTab = allRenters.length > 0;
+    newStatus = allRenters.length > 0 
+      ? 'Auto (shown — you have renters)' 
+      : 'Auto (hidden — no renters yet)';
     showToast('Renters tab set to Auto');
+    
+    // Update the status text directly if on settings page
+    const statusEl = document.querySelector('.settings-item .settings-item-sub');
+    if (statusEl && state.currentView === 'settings') {
+      statusEl.textContent = newStatus;
+      // Update checkbox
+      const checkbox = document.getElementById('renters-tab-toggle');
+      if (checkbox) checkbox.checked = state.showRentersTab;
+    }
+    
     navigate(state.currentView);
     return;
   }
   
-  // Save to database and WAIT for it to complete
-  // This ensures renderSettingsView reads the correct value
+  // Save to database and wait for it to complete
   await db.settings.put({ key: 'showRentersTab', value: newValue });
   
   showToast(message);
+  
+  // Update the status text directly if on settings page (avoids re-render cache issues)
+  const statusEl = document.querySelector('.settings-item .settings-item-sub');
+  if (statusEl && state.currentView === 'settings') {
+    statusEl.textContent = newStatus;
+    // Update checkbox
+    const checkbox = document.getElementById('renters-tab-toggle');
+    if (checkbox) checkbox.checked = state.showRentersTab;
+  }
   
   // Update navigation
   if (wasHidden && state.showRentersTab) {
@@ -2631,6 +2687,32 @@ function closeModal() {
   document.getElementById('modal').classList.add('hidden');
   document.getElementById('modal-content').innerHTML = '';
 }
+
+// Add swipe-down gesture to close modal
+let modalTouchStart = null;
+document.addEventListener('DOMContentLoaded', () => {
+  const modal = document.getElementById('modal');
+  const modalHandle = document.querySelector('.modal-handle');
+  
+  if (modalHandle) {
+    modalHandle.addEventListener('touchstart', (e) => {
+      modalTouchStart = e.touches[0].clientY;
+    }, { passive: true });
+    
+    modalHandle.addEventListener('touchend', (e) => {
+      if (modalTouchStart === null) return;
+      const touchEnd = e.changedTouches[0].clientY;
+      const diff = touchEnd - modalTouchStart;
+      
+      // If swiped down at least 50px, close modal
+      if (diff > 50) {
+        closeModal();
+      }
+      
+      modalTouchStart = null;
+    }, { passive: true });
+  }
+});
 
 // ----------------------------------------------------------------
 // 20. APP INITIALIZATION
