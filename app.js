@@ -803,7 +803,8 @@ async function deleteTransaction(id) {
   
   const message = `Are you sure you want to delete this ${type}?\n\n${t.category || 'Entry'}: ${amount}\n\nThis cannot be undone.`;
   
-  if (!confirm(message)) return;
+  const confirmed = await confirmDialog(message, 'Confirm Delete');
+  if (!confirmed) return;
   
   await db.transactions.delete(id);
   showToast('Entry deleted');
@@ -1166,7 +1167,8 @@ async function deleteMonthlyExpense(id) {
   const monthYear = `${monthName(e.month)} ${e.year}`;
   const message = `Are you sure you want to delete this monthly expense?\n\n${e.category}: ${fmt(e.amount)}\n${monthYear}\n\nThis cannot be undone.`;
   
-  if (!confirm(message)) return;
+  const confirmed = await confirmDialog(message, 'Confirm Delete');
+  if (!confirmed) return;
   
   await db.monthlyExpenses.delete(id);
   showToast('Expense deleted');
@@ -2906,6 +2908,26 @@ function closeModal() {
   document.getElementById('modal-overlay').classList.add('hidden');
   document.getElementById('modal').classList.add('hidden');
   document.getElementById('modal-content').innerHTML = '';
+}
+
+// Custom confirmation dialog (replaces browser's confirm)
+function confirmDialog(message, title = 'Mane Frame') {
+  return new Promise((resolve) => {
+    openModal(`
+      <h2 class="modal-title">${title}</h2>
+      <div style="font-size:15px;line-height:1.6;color:var(--text);margin:20px 0;white-space:pre-line;">${message}</div>
+      <div style="display:flex;gap:8px;margin-top:24px;">
+        <button class="btn-secondary" style="flex:1;" onclick="window._confirmResolve(false)">Cancel</button>
+        <button class="btn-submit" style="flex:1;background:var(--danger);" onclick="window._confirmResolve(true)">Delete</button>
+      </div>
+    `);
+    
+    window._confirmResolve = (result) => {
+      closeModal();
+      delete window._confirmResolve;
+      resolve(result);
+    };
+  });
 }
 
 // Add swipe-down gesture to close modal
