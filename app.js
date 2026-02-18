@@ -3024,9 +3024,36 @@ if ('serviceWorker' in navigator) {
   });
 
   // Check for updates when app becomes visible (but not too aggressively)
-  document.addEventListener('visibilitychange', () => {
+  let lastVisibilityCheck = Date.now();
+  document.addEventListener('visibilitychange', async () => {
     if (document.visibilityState === 'visible' && _swRegistration) {
-      _swRegistration.update().catch(() => {});
+      // Only check if it's been more than 5 seconds since last check
+      const now = Date.now();
+      if (now - lastVisibilityCheck < 5000) return;
+      lastVisibilityCheck = now;
+      
+      // Check for updates
+      await _swRegistration.update().catch(() => {});
+      
+      // If there's a waiting service worker after the update check,
+      // it means an update happened while we were in the background
+      // We need to reload immediately to prevent white screen
+      setTimeout(() => {
+        if (_swRegistration.waiting && navigator.serviceWorker.controller) {
+          // Show toast and auto-reload to prevent white screen
+          showToast('New version detected - updating app...');
+          
+          // Give the toast a moment to show, then reload
+          setTimeout(() => {
+            _swRegistration.waiting.postMessage({ type: 'SKIP_WAITING' });
+            // The controllerchange will trigger reload
+            // But add fallback just in case
+            setTimeout(() => {
+              window.location.reload(true);
+            }, 1000);
+          }, 1500);
+        }
+      }, 500);
     }
   });
 
