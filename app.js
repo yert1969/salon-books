@@ -2137,11 +2137,17 @@ async function renderSettingsView() {
       <div class="settings-label">App Updates</div>
       <div class="card" style="margin-bottom:8px;">
         <div style="font-size:13px;color:var(--text-muted);margin-bottom:12px;line-height:1.5;">
-          The app checks for updates automatically when you switch back to it.
+          If you don't see the latest changes, use one of these options:
         </div>
-        <button class="btn-secondary" style="width:100%;" onclick="checkForUpdates()">
-          🔄 Check for Updates
+        <button class="btn-secondary" style="width:100%;margin-bottom:8px;" onclick="checkForUpdates()">
+          🔄 Reload App
         </button>
+        <button class="btn-secondary" style="width:100%;background:#C13838;color:white;" onclick="forceReload()">
+          ⚡ Force Clear & Reload
+        </button>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:8px;line-height:1.4;">
+          "Force Clear" removes all cached data and does a clean reload. Use this if updates aren't appearing.
+        </div>
       </div>
     </div>
 
@@ -2954,44 +2960,157 @@ auth.onAuthStateChanged(user => {
 // ----------------------------------------------------------------
 
 let _swRegistration = null;
+let _updateAvailable = false;
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('sw.js')
+    // Register with cache-busting query parameter
+    const swUrl = 'sw.js?v=' + Date.now();
+    navigator.serviceWorker.register(swUrl, { updateViaCache: 'none' })
       .then(reg => {
         _swRegistration = reg;
 
+        // Check for updates immediately on load
+        reg.update().catch(() => {});
+
+        // Listen for updates
         reg.addEventListener('updatefound', () => {
           const newWorker = reg.installing;
           if (newWorker) {
             newWorker.addEventListener('statechange', () => {
-              if (newWorker.state === 'activated') {
-                window.location.reload();
+              // When new service worker is installed and waiting
+              if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                _updateAvailable = true;
+                // Show update notification
+                showUpdateNotification();
               }
             });
           }
         });
+
+        // Check for waiting service worker (update already downloaded)
+        if (reg.waiting) {
+          _updateAvailable = true;
+          showUpdateNotification();
+        }
       })
       .catch(err => console.log('SW registration skipped:', err));
 
+    // When new service worker takes control, reload
     navigator.serviceWorker.addEventListener('controllerchange', () => {
       window.location.reload();
     });
   });
 
+  // Check for updates when app becomes visible
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible' && _swRegistration) {
       _swRegistration.update().catch(() => {});
     }
   });
+
+  // Check for updates every 30 seconds when app is active
+  setInterval(() => {
+    if (document.visibilityState === 'visible' && _swRegistration) {
+      _swRegistration.update().catch(() => {});
+    }
+  }, 30000);
 }
 
-async function checkForUpdates() {
-  if (!_swRegistration) { showToast('App is up to date ✓'); return; }
-  try {
-    await _swRegistration.update();
-    showToast('App is up to date ✓');
-  } catch (e) {
-    showToast('Could not check — are you online?');
+function showUpdateNotification() {
+  // Show a non-intrusive update banner at the top
+  const existing = document.getElementById('update-banner');
+  if (existing) return; // Already showing
+
+  const banner = document.createElement('div');
+  banner.id = 'update-banner';
+  banner.style.cssText = `
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    background: #2D7A4C;
+    color: white;
+    padding: 12px 16px;
+    text-align: center;
+    z-index: 10000;
+    font-size: 14px;
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+  `;
+  banner.innerHTML = `
+    <span>✨ Update available!</span>
+    <button onclick="applyUpdate()" style="
+      background: white;
+      color: #2D7A4C;
+      border: none;
+      padding: 6px 16px;
+      border-radius: 6px;
+      font-weight: 600;
+      cursor: pointer;
+      font-size: 13px;
+    ">Update Now</button>
+  `;
+  document.body.prepend(banner);
+}
+
+window.applyUpdate = function() {
+  if (_swRegistration && _swRegistration.waiting) {
+    // Tell the waiting service worker to skip waiting and become active
+    _swRegistration.waiting.postMessage({ type: 'SKIP_WAITING' });
+  } else {
+    // Fallback: just reload
+    window.location.reload();
   }
+};
+
+async function checkForUpdates() {
+  if (!_swRegistration) { 
+    showToast('Service worker not available');
+    return;
+  }
+  
+  showToast('Checking for updates...');
+  
+  try {
+    // Unregister current service worker
+    await _swRegistration.unregister();
+    
+    // Wait a moment
+    await new Promise(resolve => setTimeout(resolve, 500));
+    
+    // Force a hard reload (bypasses all caches)
+    window.location.reload(true);
+  } catch (e) {
+    showToast('Update check failed - trying force reload...');
+    // Fallback: just do a hard reload
+    setTimeout(() => window.location.reload(true), 1000);
+  }
+}
+
+async function forceReload() {
+  showToast('Force reloading app...');
+  
+  // Unregister all service workers
+  if ('serviceWorker' in navigator) {
+    const registrations = await navigator.serviceWorker.getRegistrations();
+    for (const registration of registrations) {
+      await registration.unregister();
+    }
+  }
+  
+  // Clear all caches
+  if ('caches' in window) {
+    const cacheNames = await caches.keys();
+    await Promise.all(cacheNames.map(name => caches.delete(name)));
+  }
+  
+  // Hard reload
+  setTimeout(() => {
+    window.location.reload(true);
+  }, 500);
 }

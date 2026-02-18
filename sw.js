@@ -1,7 +1,8 @@
 // Service Worker — Mane Frame Salon App
-// v6 — Firebase/Firestore cloud sync (replaced Dexie/IndexedDB)
+// v8 — Aggressive update checking with cache busting
 
-const CACHE_NAME = 'salon-books-v12';
+const CACHE_NAME = 'salon-books-v15';
+const APP_VERSION = '2025-02-18-001'; // Update this timestamp with each deploy
 
 // All the files our app needs to work offline
 const FILES_TO_CACHE = [
@@ -16,44 +17,83 @@ const FILES_TO_CACHE = [
   'https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,400&display=swap',
 ];
 
-// Install: cache all app files
+// Listen for SKIP_WAITING message from the app
+self.addEventListener('message', event => {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
+});
+
+// Install: cache all app files and skip waiting to activate immediately
 self.addEventListener('install', event => {
   event.waitUntil(
     caches.open(CACHE_NAME).then(cache => {
       return cache.addAll(FILES_TO_CACHE).catch(err => {
-        // Some external resources may fail — that's okay
         console.log('Some cache files skipped:', err);
       });
     })
   );
+  // Force the waiting service worker to become the active service worker
   self.skipWaiting();
 });
 
-// Activate: clean up old caches
+// Activate: clean up old caches and take control immediately
 self.addEventListener('activate', event => {
   event.waitUntil(
     caches.keys().then(keys =>
       Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k)))
     )
   );
+  // Take control of all pages immediately (don't wait for reload)
   self.clients.claim();
 });
 
-// Fetch: serve from cache first, fall back to network
+// Fetch: Network-first for app files, cache-first for external resources
 self.addEventListener('fetch', event => {
-  event.respondWith(
-    caches.match(event.request).then(cached => {
-      return cached || fetch(event.request).then(response => {
-        // Cache new successful responses
-        if (response && response.status === 200 && response.type !== 'opaque') {
-          const clone = response.clone();
-          caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
-        }
-        return response;
-      });
-    }).catch(() => {
-      // If both cache and network fail, serve the main page (for navigation)
-      return caches.match('./index.html');
-    })
-  );
+  const url = new URL(event.request.url);
+  
+  // Network-first for our app files (HTML, CSS, JS) with cache-busting
+  if (url.origin === location.origin && 
+      (url.pathname.endsWith('.html') || 
+       url.pathname.endsWith('.css') || 
+       url.pathname.endsWith('.js') ||
+       url.pathname === '/' || 
+       url.pathname === './')) {
+    
+    event.respondWith(
+      // Add cache-busting query parameter
+      fetch(event.request.url + '?v=' + APP_VERSION, { 
+        cache: 'no-cache',
+        headers: { 'Cache-Control': 'no-cache' }
+      })
+        .then(response => {
+          // Update cache with fresh content
+          if (response && response.status === 200) {
+            const clone = response.clone();
+            caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
+          }
+          return response;
+        })
+        .catch(() => {
+          // Network failed, fall back to cache
+          return caches.match(event.request);
+        })
+    );
+  } 
+  // Cache-first for external resources (Firebase, fonts, etc.)
+  else {
+    event.respondWith(
+      caches.match(event.request).then(cached => {
+        return cached || fetch(event.request).then(response => {
+          if (response && response.status === 200 && response.type !== 'opaque') {
+            const clone = response.clone();
+            caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
+          }
+          return response;
+        });
+      }).catch(() => {
+        return caches.match('./index.html');
+      })
+    );
+  }
 });
