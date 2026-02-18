@@ -498,6 +498,60 @@ async function renderDailyView() {
 
   const isToday = state.selectedDate === todayStr();
 
+  // Calculate comparison stats (only for today)
+  let comparisonHTML = '';
+  if (isToday) {
+    const allTxns = await db.transactions.toArray();
+    
+    // Yesterday
+    const yesterday = addDays(todayStr(), -1);
+    const yesterdayIncome = allTxns
+      .filter(t => t.date === yesterday && t.type === 'INCOME')
+      .reduce((s, t) => s + (t.serviceAmount || 0) + (t.tipAmount || 0), 0);
+    
+    // Last Week (same day of week - this makes sense for salons!)
+    const lastWeek = addDays(todayStr(), -7);
+    const lastWeekIncome = allTxns
+      .filter(t => t.date === lastWeek && t.type === 'INCOME')
+      .reduce((s, t) => s + (t.serviceAmount || 0) + (t.tipAmount || 0), 0);
+    
+    // Calculate percentage changes
+    const calcChange = (current, previous) => {
+      if (previous === 0) return current > 0 ? 100 : 0;
+      return ((current - previous) / previous) * 100;
+    };
+    
+    const vsYesterday = calcChange(totalIncome, yesterdayIncome);
+    const vsLastWeek = calcChange(totalIncome, lastWeekIncome);
+    
+    const formatChange = (change, prevAmount) => {
+      if (prevAmount === 0 && change === 0) return '<span style="color:var(--text-muted);">No data</span>';
+      const arrow = change > 0 ? '↑' : change < 0 ? '↓' : '→';
+      const color = change > 0 ? 'var(--success)' : change < 0 ? 'var(--danger)' : 'var(--text-muted)';
+      return `<span style="color:${color};">${arrow} ${Math.abs(change).toFixed(0)}%</span>`;
+    };
+    
+    // Get day of week for label
+    const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const todayDayOfWeek = new Date().getDay();
+    const dayName = dayNames[todayDayOfWeek];
+    
+    comparisonHTML = `
+      <div class="comparison-cards">
+        <div class="comparison-card">
+          <div class="comparison-label">vs Yesterday</div>
+          <div class="comparison-value">${formatChange(vsYesterday, yesterdayIncome)}</div>
+          <div class="comparison-amount">${fmt(yesterdayIncome)}</div>
+        </div>
+        <div class="comparison-card">
+          <div class="comparison-label">vs Last ${dayName}</div>
+          <div class="comparison-value">${formatChange(vsLastWeek, lastWeekIncome)}</div>
+          <div class="comparison-amount">${fmt(lastWeekIncome)}</div>
+        </div>
+      </div>
+    `;
+  }
+
   const lastBackupSetting = await db.settings.get('lastBackup');
   let backupNudge = '';
   if (isToday) {
@@ -538,6 +592,8 @@ async function renderDailyView() {
         <div class="summary-amount ${net >= 0 ? 'positive' : 'negative'}">${fmt(net)}</div>
       </div>
     </div>
+
+    ${comparisonHTML}
 
     ${summary ? `
     <div class="day-summary-card" onclick="openDaySummaryModal()">
@@ -896,6 +952,60 @@ async function renderMonthlyView() {
   );
 
   const total = expenses.reduce((s, e) => s + (e.amount || 0), 0);
+  
+  // Calculate comparison stats
+  let comparisonHTML = '';
+  const isCurrentMonth = state.selectedYear === new Date().getFullYear() && 
+                        state.selectedMonth === (new Date().getMonth() + 1);
+  
+  if (isCurrentMonth) {
+    // Last month
+    let lastMonth = state.selectedMonth - 1;
+    let lastYear = state.selectedYear;
+    if (lastMonth < 1) {
+      lastMonth = 12;
+      lastYear--;
+    }
+    const lastMonthExpenses = allExpenses
+      .filter(e => e.year === lastYear && e.month === lastMonth)
+      .reduce((s, e) => s + (e.amount || 0), 0);
+    
+    // Same month last year
+    const lastYearExpenses = allExpenses
+      .filter(e => e.year === state.selectedYear - 1 && e.month === state.selectedMonth)
+      .reduce((s, e) => s + (e.amount || 0), 0);
+    
+    const calcChange = (current, previous) => {
+      if (previous === 0) return current > 0 ? 100 : 0;
+      return ((current - previous) / previous) * 100;
+    };
+    
+    const vsLastMonth = calcChange(total, lastMonthExpenses);
+    const vsLastYear = calcChange(total, lastYearExpenses);
+    
+    const formatChange = (change, prevAmount) => {
+      if (prevAmount === 0 && change === 0) return '<span style="color:var(--text-muted);">No data</span>';
+      const arrow = change > 0 ? '↑' : change < 0 ? '↓' : '→';
+      // For expenses, reverse colors: higher = bad (red), lower = good (green)
+      const color = change > 0 ? 'var(--danger)' : change < 0 ? 'var(--success)' : 'var(--text-muted)';
+      return `<span style="color:${color};">${arrow} ${Math.abs(change).toFixed(0)}%</span>`;
+    };
+    
+    comparisonHTML = `
+      <div class="comparison-cards">
+        <div class="comparison-card">
+          <div class="comparison-label">vs ${monthName(lastMonth)}</div>
+          <div class="comparison-value">${formatChange(vsLastMonth, lastMonthExpenses)}</div>
+          <div class="comparison-amount">${fmt(lastMonthExpenses)}</div>
+        </div>
+        <div class="comparison-card">
+          <div class="comparison-label">vs Last Year</div>
+          <div class="comparison-value">${formatChange(vsLastYear, lastYearExpenses)}</div>
+          <div class="comparison-amount">${fmt(lastYearExpenses)}</div>
+        </div>
+      </div>
+    `;
+  }
 
   const monthOptions = Array.from({length:12}, (_,i) =>
     `<option value="${i+1}" ${i+1 === state.selectedMonth ? 'selected' : ''}>${monthName(i+1)}</option>`
@@ -920,6 +1030,8 @@ async function renderMonthlyView() {
       <div class="monthly-total-label">Total Fixed Expenses — ${monthName(state.selectedMonth)} ${state.selectedYear}</div>
       <div class="monthly-total-value">${fmt(total)}</div>
     </div>
+
+    ${comparisonHTML}
 
     <div style="padding: 0 16px 8px;">
       <div class="section-label">Expenses</div>
@@ -1324,6 +1436,68 @@ async function runWeeklyReport() {
       rows.push({ d, inc, tips, exp, cls, net: inc+tips-exp });
     }
   }
+  
+  // Calculate comparison stats
+  let comparisonHTML = '';
+  const isCurrentWeek = getWeekStart(todayStr()) === weekStart;
+  
+  if (isCurrentWeek) {
+    const allTxns = await db.transactions.toArray();
+    
+    // Last week
+    const lastWeekStart = addDays(weekStart, -7);
+    let lastWeekIncome = 0;
+    for (let i = 0; i < 7; i++) {
+      const d = addDays(lastWeekStart, i);
+      const dayIncome = allTxns
+        .filter(t => t.date === d && t.type === 'INCOME')
+        .reduce((s, t) => s + (t.serviceAmount || 0) + (t.tipAmount || 0), 0);
+      lastWeekIncome += dayIncome;
+    }
+    
+    // 4 weeks ago (monthly comparison)
+    const fourWeeksStart = addDays(weekStart, -28);
+    let fourWeeksIncome = 0;
+    for (let i = 0; i < 7; i++) {
+      const d = addDays(fourWeeksStart, i);
+      const dayIncome = allTxns
+        .filter(t => t.date === d && t.type === 'INCOME')
+        .reduce((s, t) => s + (t.serviceAmount || 0) + (t.tipAmount || 0), 0);
+      fourWeeksIncome += dayIncome;
+    }
+    
+    const totalCurrentIncome = weeklyIncome + weeklyTips;
+    
+    const calcChange = (current, previous) => {
+      if (previous === 0) return current > 0 ? 100 : 0;
+      return ((current - previous) / previous) * 100;
+    };
+    
+    const vsLastWeek = calcChange(totalCurrentIncome, lastWeekIncome);
+    const vsFourWeeks = calcChange(totalCurrentIncome, fourWeeksIncome);
+    
+    const formatChange = (change, prevAmount) => {
+      if (prevAmount === 0 && change === 0) return '<span style="color:var(--text-muted);">No data</span>';
+      const arrow = change > 0 ? '↑' : change < 0 ? '↓' : '→';
+      const color = change > 0 ? 'var(--success)' : change < 0 ? 'var(--danger)' : 'var(--text-muted)';
+      return `<span style="color:${color};">${arrow} ${Math.abs(change).toFixed(0)}%</span>`;
+    };
+    
+    comparisonHTML = `
+      <div class="comparison-cards" style="margin-top:16px;">
+        <div class="comparison-card">
+          <div class="comparison-label">vs Last Week</div>
+          <div class="comparison-value">${formatChange(vsLastWeek, lastWeekIncome)}</div>
+          <div class="comparison-amount">${fmt(lastWeekIncome)}</div>
+        </div>
+        <div class="comparison-card">
+          <div class="comparison-label">vs 4 Weeks Ago</div>
+          <div class="comparison-value">${formatChange(vsFourWeeks, fourWeeksIncome)}</div>
+          <div class="comparison-amount">${fmt(fourWeeksIncome)}</div>
+        </div>
+      </div>
+    `;
+  }
 
   document.getElementById('report-output').innerHTML = `
     <div class="report-section-title">Week of ${formatDateShort(weekStart)}</div>
@@ -1335,6 +1509,7 @@ async function runWeeklyReport() {
       <div class="report-stat"><div class="report-stat-label">Clients</div><div class="report-stat-value">${weeklyClients}</div></div>
       <div class="report-stat"><div class="report-stat-label">Avg/Client</div><div class="report-stat-value">${weeklyClients>0?fmt((weeklyIncome+weeklyTips)/weeklyClients):'—'}</div></div>
     </div>
+    ${comparisonHTML}
     ${rows.length > 0 ? `
     <div class="report-white-card">
       <div class="report-section-title">Daily Breakdown</div>
