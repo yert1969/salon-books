@@ -1231,3 +1231,55 @@ html, body {
 .day-summary-card.empty:active {
   background: var(--cream);
 }
+
+/* Comparison Cards */
+.comparison-cards {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+  padding: 0 16px;
+  margin-bottom: 16px;
+}
+
+.comparison-card {
+  background: linear-gradient(135deg, #FFFFFF 0%, #FAF8F5 100%);
+  border: 1px solid #E8DCC8;
+  border-radius: 12px;
+  padding: 14px 12px;
+  text-align: center;
+  box-shadow: 0 1px 3px rgba(107, 26, 42, 0.08);
+}
+
+.comparison-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--text-muted);
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.comparison-value {
+  font-size: 24px;
+  font-weight: 700;
+  margin-bottom: 4px;
+  line-height: 1;
+  font-family: var(--font-display);
+}
+
+.comparison-arrow {
+  font-size: 20px;
+  line-height: 1;
+  margin-right: 2px;
+}
+
+.comparison-percent {
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.comparison-amount {
+  font-size: 12px;
+  color: var(--text-light);
+  font-weight: 500;
+}

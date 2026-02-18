@@ -525,10 +525,17 @@ async function renderDailyView() {
     const vsLastWeek = calcChange(totalIncome, lastWeekIncome);
     
     const formatChange = (change, prevAmount) => {
-      if (prevAmount === 0 && change === 0) return '<span style="color:var(--text-muted);">No data</span>';
+      if (prevAmount === 0 && change === 0) {
+        return '<span style="color:var(--text-muted); font-size:14px;">No data</span>';
+      }
       const arrow = change > 0 ? '↑' : change < 0 ? '↓' : '→';
-      const color = change > 0 ? 'var(--success)' : change < 0 ? 'var(--danger)' : 'var(--text-muted)';
-      return `<span style="color:${color};">${arrow} ${Math.abs(change).toFixed(0)}%</span>`;
+      const color = change > 0 ? '#2D7A4C' : change < 0 ? '#C13838' : '#999';
+      const percent = Math.abs(change).toFixed(0);
+      return `
+        <div style="color:${color};">
+          <span class="comparison-arrow">${arrow}</span><span class="comparison-percent">${percent}%</span>
+        </div>
+      `;
     };
     
     // Get day of week for label
@@ -984,11 +991,18 @@ async function renderMonthlyView() {
     const vsLastYear = calcChange(total, lastYearExpenses);
     
     const formatChange = (change, prevAmount) => {
-      if (prevAmount === 0 && change === 0) return '<span style="color:var(--text-muted);">No data</span>';
+      if (prevAmount === 0 && change === 0) {
+        return '<span style="color:var(--text-muted); font-size:14px;">No data</span>';
+      }
       const arrow = change > 0 ? '↑' : change < 0 ? '↓' : '→';
       // For expenses, reverse colors: higher = bad (red), lower = good (green)
-      const color = change > 0 ? 'var(--danger)' : change < 0 ? 'var(--success)' : 'var(--text-muted)';
-      return `<span style="color:${color};">${arrow} ${Math.abs(change).toFixed(0)}%</span>`;
+      const color = change > 0 ? '#C13838' : change < 0 ? '#2D7A4C' : '#999';
+      const percent = Math.abs(change).toFixed(0);
+      return `
+        <div style="color:${color};">
+          <span class="comparison-arrow">${arrow}</span><span class="comparison-percent">${percent}%</span>
+        </div>
+      `;
     };
     
     comparisonHTML = `
@@ -1477,10 +1491,17 @@ async function runWeeklyReport() {
     const vsFourWeeks = calcChange(totalCurrentIncome, fourWeeksIncome);
     
     const formatChange = (change, prevAmount) => {
-      if (prevAmount === 0 && change === 0) return '<span style="color:var(--text-muted);">No data</span>';
+      if (prevAmount === 0 && change === 0) {
+        return '<span style="color:var(--text-muted); font-size:14px;">No data</span>';
+      }
       const arrow = change > 0 ? '↑' : change < 0 ? '↓' : '→';
-      const color = change > 0 ? 'var(--success)' : change < 0 ? 'var(--danger)' : 'var(--text-muted)';
-      return `<span style="color:${color};">${arrow} ${Math.abs(change).toFixed(0)}%</span>`;
+      const color = change > 0 ? '#2D7A4C' : change < 0 ? '#C13838' : '#999';
+      const percent = Math.abs(change).toFixed(0);
+      return `
+        <div style="color:${color};">
+          <span class="comparison-arrow">${arrow}</span><span class="comparison-percent">${percent}%</span>
+        </div>
+      `;
     };
     
     comparisonHTML = `
