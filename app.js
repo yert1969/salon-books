@@ -581,7 +581,7 @@ async function renderDailyView() {
     <div class="daily-date-bar">
       <button class="date-nav-btn" onclick="changeDate(-1)">‹</button>
       <div class="current-date" onclick="openDatePicker()">${isToday ? 'Today' : formatDateDisplay(state.selectedDate)}</div>
-      <button class="date-nav-btn" onclick="changeDate(1)" ${isToday ? 'disabled style="opacity:0.3"' : ''}>›</button>
+      <button class="date-nav-btn" onclick="changeDate(1)">›</button>
     </div>
 
     <div class="summary-cards">
