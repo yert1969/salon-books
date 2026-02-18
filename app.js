@@ -3018,6 +3018,11 @@ if ('serviceWorker' in navigator) {
 }
 
 function showUpdateNotification() {
+  // Don't show if already dismissed in this session
+  if (sessionStorage.getItem('updateBannerDismissed') === 'true') {
+    return;
+  }
+  
   // Show a non-intrusive update banner at the top
   const existing = document.getElementById('update-banner');
   if (existing) return; // Already showing
@@ -3076,6 +3081,8 @@ window.dismissUpdateBanner = function() {
     banner.remove();
   }
   _updateAvailable = false;
+  // Mark as dismissed for this session
+  sessionStorage.setItem('updateBannerDismissed', 'true');
 };
 
 window.applyUpdate = async function() {
@@ -3085,28 +3092,29 @@ window.applyUpdate = async function() {
     banner.remove();
   }
   
+  _updateAvailable = false;
+  // Mark as dismissed for this session
+  sessionStorage.setItem('updateBannerDismissed', 'true');
+  
   showToast('Updating app...');
   
-  if (_swRegistration && _swRegistration.waiting) {
-    // Tell the waiting service worker to skip waiting and become active
-    _swRegistration.waiting.postMessage({ type: 'SKIP_WAITING' });
-    
-    // The controllerchange event will trigger a reload
-    // But add a fallback just in case
-    setTimeout(() => {
-      window.location.reload(true);
-    }, 2000);
-  } else if (_swRegistration) {
-    // No waiting worker, try to force an update check
-    try {
-      await _swRegistration.unregister();
-      await new Promise(resolve => setTimeout(resolve, 300));
-      window.location.reload(true);
-    } catch (e) {
-      window.location.reload(true);
+  // Just do the same aggressive reload as the Settings button
+  try {
+    // Unregister all service workers
+    if ('serviceWorker' in navigator) {
+      const registrations = await navigator.serviceWorker.getRegistrations();
+      for (const registration of registrations) {
+        await registration.unregister();
+      }
     }
-  } else {
-    // No service worker, just reload
+    
+    // Wait a moment
+    await new Promise(resolve => setTimeout(resolve, 300));
+    
+    // Force hard reload
+    window.location.reload(true);
+  } catch (e) {
+    // Fallback: just reload
     window.location.reload(true);
   }
 };
