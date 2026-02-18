@@ -2982,9 +2982,8 @@ let _updateAvailable = false;
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    // Register with cache-busting query parameter
-    const swUrl = 'sw.js?v=' + Date.now();
-    navigator.serviceWorker.register(swUrl, { updateViaCache: 'none' })
+    // Register normally (no cache busting - causes false positives)
+    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' })
       .then(reg => {
         _swRegistration = reg;
 
@@ -2999,7 +2998,9 @@ if ('serviceWorker' in navigator) {
               // When new service worker is installed and waiting
               if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
                 _updateAvailable = true;
-                // Show update notification
+                
+                // Auto-reload to prevent white screen
+                // But give user option to do it manually
                 showUpdateNotification();
               }
             });
@@ -3007,37 +3008,39 @@ if ('serviceWorker' in navigator) {
         });
 
         // Check for waiting service worker (update already downloaded)
-        if (reg.waiting) {
+        if (reg.waiting && navigator.serviceWorker.controller) {
           _updateAvailable = true;
           showUpdateNotification();
         }
       })
       .catch(err => console.log('SW registration skipped:', err));
 
-    // When new service worker takes control, reload
+    // When new service worker takes control, reload immediately
     navigator.serviceWorker.addEventListener('controllerchange', () => {
+      // Clear the dismiss flag so banner doesn't persist
+      sessionStorage.removeItem('updateBannerDismissed');
       window.location.reload();
     });
   });
 
-  // Check for updates when app becomes visible
+  // Check for updates when app becomes visible (but not too aggressively)
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible' && _swRegistration) {
       _swRegistration.update().catch(() => {});
     }
   });
 
-  // Check for updates every 30 seconds when app is active
-  setInterval(() => {
-    if (document.visibilityState === 'visible' && _swRegistration) {
-      _swRegistration.update().catch(() => {});
-    }
-  }, 30000);
+  // Removed frequent 30-second checks - too aggressive
 }
 
 function showUpdateNotification() {
   // Don't show if already dismissed in this session
   if (sessionStorage.getItem('updateBannerDismissed') === 'true') {
+    return;
+  }
+  
+  // Only show if there's actually a waiting service worker
+  if (!_swRegistration || !_swRegistration.waiting) {
     return;
   }
   
@@ -3111,29 +3114,27 @@ window.applyUpdate = async function() {
   }
   
   _updateAvailable = false;
-  // Mark as dismissed for this session
-  sessionStorage.setItem('updateBannerDismissed', 'true');
   
   showToast('Updating app...');
   
-  // Just do the same aggressive reload as the Settings button
-  try {
-    // Unregister all service workers
-    if ('serviceWorker' in navigator) {
-      const registrations = await navigator.serviceWorker.getRegistrations();
-      for (const registration of registrations) {
-        await registration.unregister();
+  if (_swRegistration && _swRegistration.waiting) {
+    // Tell the waiting service worker to skip waiting and become active
+    // This triggers controllerchange which will reload the page
+    _swRegistration.waiting.postMessage({ type: 'SKIP_WAITING' });
+  } else {
+    // No waiting worker, do aggressive reload
+    try {
+      if ('serviceWorker' in navigator) {
+        const registrations = await navigator.serviceWorker.getRegistrations();
+        for (const registration of registrations) {
+          await registration.unregister();
+        }
       }
+      await new Promise(resolve => setTimeout(resolve, 300));
+      window.location.reload(true);
+    } catch (e) {
+      window.location.reload(true);
     }
-    
-    // Wait a moment
-    await new Promise(resolve => setTimeout(resolve, 300));
-    
-    // Force hard reload
-    window.location.reload(true);
-  } catch (e) {
-    // Fallback: just reload
-    window.location.reload(true);
   }
 };
 

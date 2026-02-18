@@ -1,8 +1,7 @@
 // Service Worker — Mane Frame Salon App
-// v8 — Aggressive update checking with cache busting
+// v9 — Stable updates, no false positives
 
-const CACHE_NAME = 'salon-books-v15';
-const APP_VERSION = '2025-02-18-001'; // Update this timestamp with each deploy
+const CACHE_NAME = 'salon-books-v16';
 
 // All the files our app needs to work offline
 const FILES_TO_CACHE = [
@@ -52,7 +51,7 @@ self.addEventListener('activate', event => {
 self.addEventListener('fetch', event => {
   const url = new URL(event.request.url);
   
-  // Network-first for our app files (HTML, CSS, JS) with cache-busting
+  // Network-first for our app files (HTML, CSS, JS)
   if (url.origin === location.origin && 
       (url.pathname.endsWith('.html') || 
        url.pathname.endsWith('.css') || 
@@ -61,11 +60,7 @@ self.addEventListener('fetch', event => {
        url.pathname === './')) {
     
     event.respondWith(
-      // Add cache-busting query parameter
-      fetch(event.request.url + '?v=' + APP_VERSION, { 
-        cache: 'no-cache',
-        headers: { 'Cache-Control': 'no-cache' }
-      })
+      fetch(event.request, { cache: 'no-cache' })
         .then(response => {
           // Update cache with fresh content
           if (response && response.status === 200) {
