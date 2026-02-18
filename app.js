@@ -3038,33 +3038,62 @@ function showUpdateNotification() {
     font-weight: 500;
     display: flex;
     align-items: center;
-    justify-content: center;
+    justify-content: space-between;
     gap: 12px;
     box-shadow: 0 2px 8px rgba(0,0,0,0.2);
   `;
   banner.innerHTML = `
     <span>✨ Update available!</span>
-    <button onclick="applyUpdate()" style="
-      background: white;
-      color: #2D7A4C;
-      border: none;
-      padding: 6px 16px;
-      border-radius: 6px;
-      font-weight: 600;
-      cursor: pointer;
-      font-size: 13px;
-    ">Update Now</button>
+    <div style="display:flex;gap:8px;align-items:center;">
+      <button onclick="applyUpdate()" style="
+        background: white;
+        color: #2D7A4C;
+        border: none;
+        padding: 6px 16px;
+        border-radius: 6px;
+        font-weight: 600;
+        cursor: pointer;
+        font-size: 13px;
+      ">Update Now</button>
+      <button onclick="dismissUpdateBanner()" style="
+        background: transparent;
+        color: white;
+        border: 1px solid white;
+        padding: 6px 12px;
+        border-radius: 6px;
+        font-weight: 600;
+        cursor: pointer;
+        font-size: 13px;
+      ">Later</button>
+    </div>
   `;
   document.body.prepend(banner);
 }
 
+window.dismissUpdateBanner = function() {
+  const banner = document.getElementById('update-banner');
+  if (banner) {
+    banner.remove();
+  }
+};
+
 window.applyUpdate = function() {
+  // Remove banner immediately
+  dismissUpdateBanner();
+  
+  showToast('Updating app...');
+  
   if (_swRegistration && _swRegistration.waiting) {
     // Tell the waiting service worker to skip waiting and become active
     _swRegistration.waiting.postMessage({ type: 'SKIP_WAITING' });
+    
+    // If for some reason reload doesn't happen, force it after 2 seconds
+    setTimeout(() => {
+      window.location.reload(true);
+    }, 2000);
   } else {
     // Fallback: just reload
-    window.location.reload();
+    window.location.reload(true);
   }
 };
 
