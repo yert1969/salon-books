@@ -287,11 +287,7 @@ const state = {
 // ----------------------------------------------------------------
 
 function todayStr() {
-  const d = new Date();
-  const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
+  return new Date().toISOString().split('T')[0];
 }
 
 function formatDateDisplay(dateStr) {
@@ -585,7 +581,7 @@ async function renderDailyView() {
     <div class="daily-date-bar">
       <button class="date-nav-btn" onclick="changeDate(-1)">‹</button>
       <div class="current-date" onclick="openDatePicker()">${isToday ? 'Today' : formatDateDisplay(state.selectedDate)}</div>
-      <button class="date-nav-btn" onclick="changeDate(1)">›</button>
+      <button class="date-nav-btn" onclick="changeDate(1)" ${isToday ? 'disabled style="opacity:0.3"' : ''}>›</button>
     </div>
 
     <div class="summary-cards">
@@ -822,21 +818,9 @@ async function openEditTransactionModal(id) {
 
   const isIncome = t.type === 'INCOME';
   const catKey   = isIncome ? 'INCOME' : 'DAILY_EXPENSE';
-  const availableCategories = state.categories[catKey] || [];
-  
-  // Check if transaction's category exists in current categories
-  const categoryExists = availableCategories.includes(t.category);
-  
-  // Build category options
-  let catOptions = availableCategories
+  const catOptions = (state.categories[catKey] || [])
     .map(name => `<option value="${name}" ${name === t.category ? 'selected' : ''}>${name}</option>`)
     .join('');
-  
-  // If transaction has a category that's not in the list (legacy category), add it
-  if (t.category && !categoryExists) {
-    catOptions = `<option value="${t.category}" selected>${t.category} (legacy)</option>` + catOptions;
-  }
-  
   const pmOptions = ['Cash','Card','Venmo','Zelle','Check','Other']
     .map(m => `<option ${m === t.paymentMethod ? 'selected' : ''}>${m}</option>`).join('');
 
@@ -1006,8 +990,10 @@ async function renderMonthlyView() {
       .reduce((s, e) => s + (e.amount || 0), 0);
     
     // Same month last year
+    const sameMonthLastYear = state.selectedMonth;
+    const previousYear = state.selectedYear - 1;
     const lastYearExpenses = allExpenses
-      .filter(e => e.year === state.selectedYear - 1 && e.month === state.selectedMonth)
+      .filter(e => e.year === previousYear && e.month === sameMonthLastYear)
       .reduce((s, e) => s + (e.amount || 0), 0);
     
     const calcChange = (current, previous) => {
@@ -1041,7 +1027,7 @@ async function renderMonthlyView() {
           <div class="comparison-amount">${fmt(lastMonthExpenses)}</div>
         </div>
         <div class="comparison-card">
-          <div class="comparison-label">vs Last Year</div>
+          <div class="comparison-label">vs Last ${monthName(sameMonthLastYear)}</div>
           <div class="comparison-value">${formatChange(vsLastYear, lastYearExpenses)}</div>
           <div class="comparison-amount">${fmt(lastYearExpenses)}</div>
         </div>
