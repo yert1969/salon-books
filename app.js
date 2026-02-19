@@ -287,7 +287,11 @@ const state = {
 // ----------------------------------------------------------------
 
 function todayStr() {
-  return new Date().toISOString().split('T')[0];
+  const d = new Date();
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 }
 
 function formatDateDisplay(dateStr) {
@@ -818,9 +822,21 @@ async function openEditTransactionModal(id) {
 
   const isIncome = t.type === 'INCOME';
   const catKey   = isIncome ? 'INCOME' : 'DAILY_EXPENSE';
-  const catOptions = (state.categories[catKey] || [])
+  const availableCategories = state.categories[catKey] || [];
+  
+  // Check if transaction's category exists in current categories
+  const categoryExists = availableCategories.includes(t.category);
+  
+  // Build category options
+  let catOptions = availableCategories
     .map(name => `<option value="${name}" ${name === t.category ? 'selected' : ''}>${name}</option>`)
     .join('');
+  
+  // If transaction has a category that's not in the list (legacy category), add it
+  if (t.category && !categoryExists) {
+    catOptions = `<option value="${t.category}" selected>${t.category} (legacy)</option>` + catOptions;
+  }
+  
   const pmOptions = ['Cash','Card','Venmo','Zelle','Check','Other']
     .map(m => `<option ${m === t.paymentMethod ? 'selected' : ''}>${m}</option>`).join('');
 
