@@ -1467,15 +1467,45 @@ async function renderReportInner() {
           </div>
           
           <!-- Quick Presets -->
-          <div style="display:flex; gap:6px; margin-bottom:16px; flex-wrap:wrap;">
-            <button class="btn-secondary" style="flex:1; font-size:11px; padding:6px;" 
-              onclick="const y=${yearNow}; state.range1Start=y+'-01-01'; state.range1End=y+'-03-31'; state.range2Start=(y-1)+'-01-01'; state.range2End=(y-1)+'-03-31'; renderReportsView()">
-              Q1 YoY
-            </button>
-            <button class="btn-secondary" style="flex:1; font-size:11px; padding:6px;" 
-              onclick="const y=${yearNow}; state.range1Start=y+'-01-01'; state.range1End=y+'-12-31'; state.range2Start=(y-1)+'-01-01'; state.range2End=(y-1)+'-12-31'; renderReportsView()">
-              Full Year
-            </button>
+          <div style="margin-bottom:16px;">
+            <label style="font-size:13px; font-weight:600; display:block; margin-bottom:6px;">Quick Preset:</label>
+            <select class="report-select" style="width:100%; font-size:13px;" onchange="
+              const val = this.value;
+              const y = ${yearNow};
+              if (val === 'q1') {
+                state.range1Start = y+'-01-01'; state.range1End = y+'-03-31';
+                state.range2Start = (y-1)+'-01-01'; state.range2End = (y-1)+'-03-31';
+              } else if (val === 'q2') {
+                state.range1Start = y+'-04-01'; state.range1End = y+'-06-30';
+                state.range2Start = (y-1)+'-04-01'; state.range2End = (y-1)+'-06-30';
+              } else if (val === 'q3') {
+                state.range1Start = y+'-07-01'; state.range1End = y+'-09-30';
+                state.range2Start = (y-1)+'-07-01'; state.range2End = (y-1)+'-09-30';
+              } else if (val === 'q4') {
+                state.range1Start = y+'-10-01'; state.range1End = y+'-12-31';
+                state.range2Start = (y-1)+'-10-01'; state.range2End = (y-1)+'-12-31';
+              } else if (val === 'h1') {
+                state.range1Start = y+'-01-01'; state.range1End = y+'-06-30';
+                state.range2Start = (y-1)+'-01-01'; state.range2End = (y-1)+'-06-30';
+              } else if (val === 'h2') {
+                state.range1Start = y+'-07-01'; state.range1End = y+'-12-31';
+                state.range2Start = (y-1)+'-07-01'; state.range2End = (y-1)+'-12-31';
+              } else if (val === 'fy') {
+                state.range1Start = y+'-01-01'; state.range1End = y+'-12-31';
+                state.range2Start = (y-1)+'-01-01'; state.range2End = (y-1)+'-12-31';
+              }
+              if (val !== '') renderReportsView();
+              this.value = '';
+            ">
+              <option value="">-- Select a preset --</option>
+              <option value="q1">Q1: Jan-Mar (YoY)</option>
+              <option value="q2">Q2: Apr-Jun (YoY)</option>
+              <option value="q3">Q3: Jul-Sep (YoY)</option>
+              <option value="q4">Q4: Oct-Dec (YoY)</option>
+              <option value="h1">H1: Jan-Jun (YoY)</option>
+              <option value="h2">H2: Jul-Dec (YoY)</option>
+              <option value="fy">Full Year (YoY)</option>
+            </select>
           </div>
           
           <button class="btn-primary" style="width:100%;" onclick="runDateRangeCompareReport()">Compare</button>
