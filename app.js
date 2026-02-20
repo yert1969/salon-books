@@ -2003,11 +2003,27 @@ async function runMonthCompareReport() {
       </div>
       
       <!-- Summary Card -->
-      <div style="background:var(--primary); color:white; border-radius:12px; padding:16px;">
-        <div style="font-weight:700; font-size:15px; margin-bottom:8px;">📈 Summary</div>
-        <div style="font-size:14px; line-height:1.6; opacity:0.95;">
-          ${incomeChange >= 0 ? '✅' : '⚠️'} Income ${incomeChange >= 0 ? 'increased' : 'decreased'} by <strong>${fmt(Math.abs(incomeChange))}</strong> (${Math.abs(incomeChangePercent).toFixed(1)}%)<br>
-          ${netChange >= 0 ? '✅' : '⚠️'} Net profit ${netChange >= 0 ? 'improved' : 'declined'} by <strong>${fmt(Math.abs(netChange))}</strong> (${Math.abs(netChangePercent).toFixed(1)}%)
+      <div style="background:var(--bg-secondary); border-radius:12px; padding:16px; border:2px solid var(--border);">
+        <div style="font-weight:700; font-size:16px; margin-bottom:12px; color:var(--text); display:flex; align-items:center; gap:8px;">
+          <span style="font-size:20px;">📊</span> Summary
+        </div>
+        <div style="font-size:15px; line-height:1.8; color:var(--text);">
+          <div style="margin-bottom:8px;">
+            <span style="font-size:18px;">${incomeChange >= 0 ? '✅' : '📉'}</span> 
+            <strong>Income ${incomeChange >= 0 ? 'increased' : 'decreased'}:</strong><br>
+            <span style="font-size:17px; font-weight:700; color:${incomeChange >= 0 ? 'var(--success)' : 'var(--danger)'};">
+              ${fmt(Math.abs(incomeChange))}
+            </span>
+            <span style="color:var(--text-muted);"> (${Math.abs(incomeChangePercent).toFixed(1)}%)</span>
+          </div>
+          <div>
+            <span style="font-size:18px;">${netChange >= 0 ? '✅' : '⚠️'}</span> 
+            <strong>Net profit ${netChange >= 0 ? 'improved' : 'declined'}:</strong><br>
+            <span style="font-size:17px; font-weight:700; color:${netChange >= 0 ? 'var(--success)' : 'var(--danger)'};">
+              ${fmt(Math.abs(netChange))}
+            </span>
+            <span style="color:var(--text-muted);"> (${Math.abs(netChangePercent).toFixed(1)}%)</span>
+          </div>
         </div>
       </div>
       
@@ -2175,11 +2191,27 @@ async function runDateRangeCompareReport() {
       </div>
       
       <!-- Summary Card -->
-      <div style="background:var(--primary); color:white; border-radius:12px; padding:16px;">
-        <div style="font-weight:700; font-size:15px; margin-bottom:8px;">📈 Summary</div>
-        <div style="font-size:14px; line-height:1.6; opacity:0.95;">
-          ${incomeChange >= 0 ? '✅' : '⚠️'} Income ${incomeChange >= 0 ? 'increased' : 'decreased'} by <strong>${fmt(Math.abs(incomeChange))}</strong> (${Math.abs(incomeChangePercent).toFixed(1)}%)<br>
-          ${netChange >= 0 ? '✅' : '⚠️'} Net profit ${netChange >= 0 ? 'improved' : 'declined'} by <strong>${fmt(Math.abs(netChange))}</strong> (${Math.abs(netChangePercent).toFixed(1)}%)
+      <div style="background:var(--bg-secondary); border-radius:12px; padding:16px; border:2px solid var(--border);">
+        <div style="font-weight:700; font-size:16px; margin-bottom:12px; color:var(--text); display:flex; align-items:center; gap:8px;">
+          <span style="font-size:20px;">📊</span> Summary
+        </div>
+        <div style="font-size:15px; line-height:1.8; color:var(--text);">
+          <div style="margin-bottom:8px;">
+            <span style="font-size:18px;">${incomeChange >= 0 ? '✅' : '📉'}</span> 
+            <strong>Income ${incomeChange >= 0 ? 'increased' : 'decreased'}:</strong><br>
+            <span style="font-size:17px; font-weight:700; color:${incomeChange >= 0 ? 'var(--success)' : 'var(--danger)'};">
+              ${fmt(Math.abs(incomeChange))}
+            </span>
+            <span style="color:var(--text-muted);"> (${Math.abs(incomeChangePercent).toFixed(1)}%)</span>
+          </div>
+          <div>
+            <span style="font-size:18px;">${netChange >= 0 ? '✅' : '⚠️'}</span> 
+            <strong>Net profit ${netChange >= 0 ? 'improved' : 'declined'}:</strong><br>
+            <span style="font-size:17px; font-weight:700; color:${netChange >= 0 ? 'var(--success)' : 'var(--danger)'};">
+              ${fmt(Math.abs(netChange))}
+            </span>
+            <span style="color:var(--text-muted);"> (${Math.abs(netChangePercent).toFixed(1)}%)</span>
+          </div>
         </div>
       </div>
       
