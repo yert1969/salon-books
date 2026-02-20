@@ -1915,52 +1915,102 @@ async function runMonthCompareReport() {
   if (!out) return;
   
   out.innerHTML = `
-    <table class="report-table" style="font-size:13px;">
-      <thead>
-        <tr>
-          <th style="text-align:left;">Metric</th>
-          <th style="text-align:right;">${monthName(state.selectedMonth)} ${state.selectedYear}</th>
-          <th style="text-align:right;">${monthName(state.compareMonth)} ${state.compareYear}</th>
-          <th style="text-align:right;">Change</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td style="font-weight:600;">Income</td>
-          <td style="text-align:right; color:var(--success);">${fmt(currentTotalIncome)}</td>
-          <td style="text-align:right; color:var(--success);">${fmt(compareTotalIncome)}</td>
-          <td style="text-align:right; color:${incomeChange >= 0 ? 'var(--success)' : 'var(--danger)'}; font-weight:600;">
-            ${incomeChange >= 0 ? '+' : ''}${fmt(incomeChange)}<br>
-            <span style="font-size:11px;">(${incomeChangePercent >= 0 ? '+' : ''}${incomeChangePercent.toFixed(1)}%)</span>
-          </td>
-        </tr>
-        <tr>
-          <td style="font-weight:600;">Expenses</td>
-          <td style="text-align:right; color:var(--danger);">${fmt(currentTotalExpense + currentMonthlyExpenseTotal)}</td>
-          <td style="text-align:right; color:var(--danger);">${fmt(compareTotalExpense + compareMonthlyExpenseTotal)}</td>
-          <td style="text-align:right; color:${expenseChange <= 0 ? 'var(--success)' : 'var(--danger)'}; font-weight:600;">
-            ${expenseChange >= 0 ? '+' : ''}${fmt(expenseChange)}<br>
-            <span style="font-size:11px;">(${expenseChangePercent >= 0 ? '+' : ''}${expenseChangePercent.toFixed(1)}%)</span>
-          </td>
-        </tr>
-        <tr style="border-top:2px solid var(--border); font-weight:600;">
-          <td>Net Profit</td>
-          <td style="text-align:right; color:${currentNet >= 0 ? 'var(--success)' : 'var(--danger)'};">${fmt(currentNet)}</td>
-          <td style="text-align:right; color:${compareNet >= 0 ? 'var(--success)' : 'var(--danger)'};">${fmt(compareNet)}</td>
-          <td style="text-align:right; color:${netChange >= 0 ? 'var(--success)' : 'var(--danger)'}; font-weight:600;">
-            ${netChange >= 0 ? '+' : ''}${fmt(netChange)}<br>
-            <span style="font-size:11px;">(${netChangePercent >= 0 ? '+' : ''}${netChangePercent.toFixed(1)}%)</span>
-          </td>
-        </tr>
-      </tbody>
-    </table>
-    
-    <div style="margin-top:16px; padding:12px; background:var(--bg-secondary); border-radius:8px;">
-      <div style="font-size:14px; font-weight:600; margin-bottom:8px;">Summary</div>
-      <div style="font-size:13px; color:var(--text-muted);">
-        ${incomeChange >= 0 ? '📈' : '📉'} Income ${incomeChange >= 0 ? 'increased' : 'decreased'} by ${fmt(Math.abs(incomeChange))} (${Math.abs(incomeChangePercent).toFixed(1)}%)<br>
-        ${netChange >= 0 ? '✅' : '⚠️'} Net profit ${netChange >= 0 ? 'improved' : 'declined'} by ${fmt(Math.abs(netChange))} (${Math.abs(netChangePercent).toFixed(1)}%)
+    <!-- Mobile-Optimized Comparison Cards -->
+    <div style="display:flex; flex-direction:column; gap:16px;">
+      
+      <!-- Income Card -->
+      <div style="background:var(--bg-secondary); border-radius:12px; padding:16px; border-left:4px solid var(--success);">
+        <div style="font-weight:700; font-size:16px; margin-bottom:12px; color:var(--text);">💰 Income</div>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:12px;">
+          <div>
+            <div style="font-size:12px; color:var(--text-muted); margin-bottom:4px;">${monthName(state.selectedMonth)} ${state.selectedYear}</div>
+            <div style="font-size:20px; font-weight:700; color:var(--success);">${fmt(currentTotalIncome)}</div>
+          </div>
+          <div>
+            <div style="font-size:12px; color:var(--text-muted); margin-bottom:4px;">${monthName(state.compareMonth)} ${state.compareYear}</div>
+            <div style="font-size:20px; font-weight:700; color:var(--success);">${fmt(compareTotalIncome)}</div>
+          </div>
+        </div>
+        <div style="padding-top:12px; border-top:1px solid var(--border);">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <span style="font-size:14px; color:var(--text-muted);">Change:</span>
+            <div style="text-align:right;">
+              <div style="font-size:18px; font-weight:700; color:${incomeChange >= 0 ? 'var(--success)' : 'var(--danger)'};">
+                ${incomeChange >= 0 ? '+' : ''}${fmt(incomeChange)}
+              </div>
+              <div style="font-size:13px; color:${incomeChange >= 0 ? 'var(--success)' : 'var(--danger)'};">
+                ${incomeChangePercent >= 0 ? '+' : ''}${incomeChangePercent.toFixed(1)}%
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
+      
+      <!-- Expenses Card -->
+      <div style="background:var(--bg-secondary); border-radius:12px; padding:16px; border-left:4px solid var(--danger);">
+        <div style="font-weight:700; font-size:16px; margin-bottom:12px; color:var(--text);">💸 Expenses</div>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:12px;">
+          <div>
+            <div style="font-size:12px; color:var(--text-muted); margin-bottom:4px;">${monthName(state.selectedMonth)} ${state.selectedYear}</div>
+            <div style="font-size:20px; font-weight:700; color:var(--danger);">${fmt(currentTotalExpense + currentMonthlyExpenseTotal)}</div>
+          </div>
+          <div>
+            <div style="font-size:12px; color:var(--text-muted); margin-bottom:4px;">${monthName(state.compareMonth)} ${state.compareYear}</div>
+            <div style="font-size:20px; font-weight:700; color:var(--danger);">${fmt(compareTotalExpense + compareMonthlyExpenseTotal)}</div>
+          </div>
+        </div>
+        <div style="padding-top:12px; border-top:1px solid var(--border);">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <span style="font-size:14px; color:var(--text-muted);">Change:</span>
+            <div style="text-align:right;">
+              <div style="font-size:18px; font-weight:700; color:${expenseChange <= 0 ? 'var(--success)' : 'var(--danger)'};">
+                ${expenseChange >= 0 ? '+' : ''}${fmt(expenseChange)}
+              </div>
+              <div style="font-size:13px; color:${expenseChange <= 0 ? 'var(--success)' : 'var(--danger)'};">
+                ${expenseChangePercent >= 0 ? '+' : ''}${expenseChangePercent.toFixed(1)}%
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      <!-- Net Profit Card -->
+      <div style="background:var(--bg-secondary); border-radius:12px; padding:16px; border-left:4px solid ${netChange >= 0 ? 'var(--success)' : 'var(--danger)'};">
+        <div style="font-weight:700; font-size:16px; margin-bottom:12px; color:var(--text);">📊 Net Profit</div>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:12px;">
+          <div>
+            <div style="font-size:12px; color:var(--text-muted); margin-bottom:4px;">${monthName(state.selectedMonth)} ${state.selectedYear}</div>
+            <div style="font-size:20px; font-weight:700; color:${currentNet >= 0 ? 'var(--success)' : 'var(--danger)'};">${fmt(currentNet)}</div>
+          </div>
+          <div>
+            <div style="font-size:12px; color:var(--text-muted); margin-bottom:4px;">${monthName(state.compareMonth)} ${state.compareYear}</div>
+            <div style="font-size:20px; font-weight:700; color:${compareNet >= 0 ? 'var(--success)' : 'var(--danger)'};">${fmt(compareNet)}</div>
+          </div>
+        </div>
+        <div style="padding-top:12px; border-top:1px solid var(--border);">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <span style="font-size:14px; color:var(--text-muted);">Change:</span>
+            <div style="text-align:right;">
+              <div style="font-size:18px; font-weight:700; color:${netChange >= 0 ? 'var(--success)' : 'var(--danger)'};">
+                ${netChange >= 0 ? '+' : ''}${fmt(netChange)}
+              </div>
+              <div style="font-size:13px; color:${netChange >= 0 ? 'var(--success)' : 'var(--danger)'};">
+                ${netChangePercent >= 0 ? '+' : ''}${netChangePercent.toFixed(1)}%
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      <!-- Summary Card -->
+      <div style="background:var(--primary); color:white; border-radius:12px; padding:16px;">
+        <div style="font-weight:700; font-size:15px; margin-bottom:8px;">📈 Summary</div>
+        <div style="font-size:14px; line-height:1.6; opacity:0.95;">
+          ${incomeChange >= 0 ? '✅' : '⚠️'} Income ${incomeChange >= 0 ? 'increased' : 'decreased'} by <strong>${fmt(Math.abs(incomeChange))}</strong> (${Math.abs(incomeChangePercent).toFixed(1)}%)<br>
+          ${netChange >= 0 ? '✅' : '⚠️'} Net profit ${netChange >= 0 ? 'improved' : 'declined'} by <strong>${fmt(Math.abs(netChange))}</strong> (${Math.abs(netChangePercent).toFixed(1)}%)
+        </div>
+      </div>
+      
     </div>
   `;
 }
@@ -2000,64 +2050,139 @@ async function runDateRangeCompareReport() {
   if (!out) return;
   
   out.innerHTML = `
-    <table class="report-table" style="font-size:12px;">
-      <thead>
-        <tr>
-          <th style="text-align:left;">Metric</th>
-          <th style="text-align:right;">Period 1</th>
-          <th style="text-align:right;">Period 2</th>
-          <th style="text-align:right;">Change</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr style="font-size:11px; color:var(--text-muted);">
-          <td>Date Range</td>
-          <td style="text-align:right;">${new Date(state.range1Start).toLocaleDateString('en-US', {month:'short', day:'numeric'})} - ${new Date(state.range1End).toLocaleDateString('en-US', {month:'short', day:'numeric'})}</td>
-          <td style="text-align:right;">${new Date(state.range2Start).toLocaleDateString('en-US', {month:'short', day:'numeric'})} - ${new Date(state.range2End).toLocaleDateString('en-US', {month:'short', day:'numeric'})}</td>
-          <td></td>
-        </tr>
-        <tr>
-          <td style="font-weight:600;">Income</td>
-          <td style="text-align:right; color:var(--success);">${fmt(range1.income)}</td>
-          <td style="text-align:right; color:var(--success);">${fmt(range2.income)}</td>
-          <td style="text-align:right; color:${incomeChange >= 0 ? 'var(--success)' : 'var(--danger)'}; font-weight:600;">
-            ${incomeChange >= 0 ? '+' : ''}${fmt(incomeChange)}<br>
-            <span style="font-size:10px;">(${incomeChangePercent >= 0 ? '+' : ''}${incomeChangePercent.toFixed(1)}%)</span>
-          </td>
-        </tr>
-        <tr>
-          <td style="font-weight:600;">Expenses</td>
-          <td style="text-align:right; color:var(--danger);">${fmt(range1.expense)}</td>
-          <td style="text-align:right; color:var(--danger);">${fmt(range2.expense)}</td>
-          <td style="text-align:right; color:${expenseChange <= 0 ? 'var(--success)' : 'var(--danger)'}; font-weight:600;">
-            ${expenseChange >= 0 ? '+' : ''}${fmt(expenseChange)}<br>
-            <span style="font-size:10px;">(${expenseChangePercent >= 0 ? '+' : ''}${expenseChangePercent.toFixed(1)}%)</span>
-          </td>
-        </tr>
-        <tr style="border-top:2px solid var(--border); font-weight:600;">
-          <td>Net Profit</td>
-          <td style="text-align:right; color:${range1.net >= 0 ? 'var(--success)' : 'var(--danger)'};">${fmt(range1.net)}</td>
-          <td style="text-align:right; color:${range2.net >= 0 ? 'var(--success)' : 'var(--danger)'};">${fmt(range2.net)}</td>
-          <td style="text-align:right; color:${netChange >= 0 ? 'var(--success)' : 'var(--danger)'}; font-weight:600;">
-            ${netChange >= 0 ? '+' : ''}${fmt(netChange)}<br>
-            <span style="font-size:10px;">(${netChangePercent >= 0 ? '+' : ''}${netChangePercent.toFixed(1)}%)</span>
-          </td>
-        </tr>
-        <tr style="font-size:11px; color:var(--text-muted);">
-          <td>Transactions</td>
-          <td style="text-align:right;">${range1.transactionCount}</td>
-          <td style="text-align:right;">${range2.transactionCount}</td>
-          <td style="text-align:right;">${range1.transactionCount - range2.transactionCount >= 0 ? '+' : ''}${range1.transactionCount - range2.transactionCount}</td>
-        </tr>
-      </tbody>
-    </table>
-    
-    <div style="margin-top:16px; padding:12px; background:var(--bg-secondary); border-radius:8px;">
-      <div style="font-size:14px; font-weight:600; margin-bottom:8px;">Summary</div>
-      <div style="font-size:13px; color:var(--text-muted);">
-        ${incomeChange >= 0 ? '📈' : '📉'} Income ${incomeChange >= 0 ? 'increased' : 'decreased'} by ${fmt(Math.abs(incomeChange))} (${Math.abs(incomeChangePercent).toFixed(1)}%)<br>
-        ${netChange >= 0 ? '✅' : '⚠️'} Net profit ${netChange >= 0 ? 'improved' : 'declined'} by ${fmt(Math.abs(netChange))} (${Math.abs(netChangePercent).toFixed(1)}%)
+    <!-- Mobile-Optimized Comparison Cards -->
+    <div style="display:flex; flex-direction:column; gap:16px;">
+      
+      <!-- Date Ranges Header -->
+      <div style="display:grid; grid-template-columns:1fr auto 1fr; gap:8px; padding:12px; background:var(--bg-secondary); border-radius:8px; font-size:13px;">
+        <div>
+          <div style="font-weight:600; color:var(--text); margin-bottom:4px;">Period 1</div>
+          <div style="color:var(--text-muted);">${new Date(state.range1Start).toLocaleDateString('en-US', {month:'short', day:'numeric', year:'numeric'})} - ${new Date(state.range1End).toLocaleDateString('en-US', {month:'short', day:'numeric', year:'numeric'})}</div>
+        </div>
+        <div style="display:flex; align-items:center; justify-content:center; font-size:18px; color:var(--text-muted); font-weight:600;">VS</div>
+        <div>
+          <div style="font-weight:600; color:var(--text); margin-bottom:4px;">Period 2</div>
+          <div style="color:var(--text-muted);">${new Date(state.range2Start).toLocaleDateString('en-US', {month:'short', day:'numeric', year:'numeric'})} - ${new Date(state.range2End).toLocaleDateString('en-US', {month:'short', day:'numeric', year:'numeric'})}</div>
+        </div>
       </div>
+      
+      <!-- Income Card -->
+      <div style="background:var(--bg-secondary); border-radius:12px; padding:16px; border-left:4px solid var(--success);">
+        <div style="font-weight:700; font-size:16px; margin-bottom:12px; color:var(--text);">💰 Income</div>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:12px;">
+          <div>
+            <div style="font-size:12px; color:var(--text-muted); margin-bottom:4px;">Period 1</div>
+            <div style="font-size:20px; font-weight:700; color:var(--success);">${fmt(range1.income)}</div>
+          </div>
+          <div>
+            <div style="font-size:12px; color:var(--text-muted); margin-bottom:4px;">Period 2</div>
+            <div style="font-size:20px; font-weight:700; color:var(--success);">${fmt(range2.income)}</div>
+          </div>
+        </div>
+        <div style="padding-top:12px; border-top:1px solid var(--border);">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <span style="font-size:14px; color:var(--text-muted);">Change:</span>
+            <div style="text-align:right;">
+              <div style="font-size:18px; font-weight:700; color:${incomeChange >= 0 ? 'var(--success)' : 'var(--danger)'};">
+                ${incomeChange >= 0 ? '+' : ''}${fmt(incomeChange)}
+              </div>
+              <div style="font-size:13px; color:${incomeChange >= 0 ? 'var(--success)' : 'var(--danger)'};">
+                ${incomeChangePercent >= 0 ? '+' : ''}${incomeChangePercent.toFixed(1)}%
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      <!-- Expenses Card -->
+      <div style="background:var(--bg-secondary); border-radius:12px; padding:16px; border-left:4px solid var(--danger);">
+        <div style="font-weight:700; font-size:16px; margin-bottom:12px; color:var(--text);">💸 Expenses</div>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:12px;">
+          <div>
+            <div style="font-size:12px; color:var(--text-muted); margin-bottom:4px;">Period 1</div>
+            <div style="font-size:20px; font-weight:700; color:var(--danger);">${fmt(range1.expense)}</div>
+          </div>
+          <div>
+            <div style="font-size:12px; color:var(--text-muted); margin-bottom:4px;">Period 2</div>
+            <div style="font-size:20px; font-weight:700; color:var(--danger);">${fmt(range2.expense)}</div>
+          </div>
+        </div>
+        <div style="padding-top:12px; border-top:1px solid var(--border);">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <span style="font-size:14px; color:var(--text-muted);">Change:</span>
+            <div style="text-align:right;">
+              <div style="font-size:18px; font-weight:700; color:${expenseChange <= 0 ? 'var(--success)' : 'var(--danger)'};">
+                ${expenseChange >= 0 ? '+' : ''}${fmt(expenseChange)}
+              </div>
+              <div style="font-size:13px; color:${expenseChange <= 0 ? 'var(--success)' : 'var(--danger)'};">
+                ${expenseChangePercent >= 0 ? '+' : ''}${expenseChangePercent.toFixed(1)}%
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      <!-- Net Profit Card -->
+      <div style="background:var(--bg-secondary); border-radius:12px; padding:16px; border-left:4px solid ${netChange >= 0 ? 'var(--success)' : 'var(--danger)'};">
+        <div style="font-weight:700; font-size:16px; margin-bottom:12px; color:var(--text);">📊 Net Profit</div>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:12px;">
+          <div>
+            <div style="font-size:12px; color:var(--text-muted); margin-bottom:4px;">Period 1</div>
+            <div style="font-size:20px; font-weight:700; color:${range1.net >= 0 ? 'var(--success)' : 'var(--danger)'};">${fmt(range1.net)}</div>
+          </div>
+          <div>
+            <div style="font-size:12px; color:var(--text-muted); margin-bottom:4px;">Period 2</div>
+            <div style="font-size:20px; font-weight:700; color:${range2.net >= 0 ? 'var(--success)' : 'var(--danger)'};">${fmt(range2.net)}</div>
+          </div>
+        </div>
+        <div style="padding-top:12px; border-top:1px solid var(--border);">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <span style="font-size:14px; color:var(--text-muted);">Change:</span>
+            <div style="text-align:right;">
+              <div style="font-size:18px; font-weight:700; color:${netChange >= 0 ? 'var(--success)' : 'var(--danger)'};">
+                ${netChange >= 0 ? '+' : ''}${fmt(netChange)}
+              </div>
+              <div style="font-size:13px; color:${netChange >= 0 ? 'var(--success)' : 'var(--danger)'};">
+                ${netChangePercent >= 0 ? '+' : ''}${netChangePercent.toFixed(1)}%
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      <!-- Transaction Count Card -->
+      <div style="background:var(--bg-secondary); border-radius:12px; padding:16px;">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <div style="font-size:14px; color:var(--text-muted);">Total Transactions:</div>
+          <div style="display:flex; align-items:center; gap:12px;">
+            <div>
+              <div style="font-size:11px; color:var(--text-muted);">Period 1</div>
+              <div style="font-size:18px; font-weight:700; color:var(--text);">${range1.transactionCount}</div>
+            </div>
+            <div style="color:var(--text-muted); font-size:14px;">→</div>
+            <div>
+              <div style="font-size:11px; color:var(--text-muted);">Period 2</div>
+              <div style="font-size:18px; font-weight:700; color:var(--text);">${range2.transactionCount}</div>
+            </div>
+            <div>
+              <div style="font-size:11px; color:var(--text-muted);">Change</div>
+              <div style="font-size:18px; font-weight:700; color:${range1.transactionCount - range2.transactionCount >= 0 ? 'var(--success)' : 'var(--danger)'};">
+                ${range1.transactionCount - range2.transactionCount >= 0 ? '+' : ''}${range1.transactionCount - range2.transactionCount}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      <!-- Summary Card -->
+      <div style="background:var(--primary); color:white; border-radius:12px; padding:16px;">
+        <div style="font-weight:700; font-size:15px; margin-bottom:8px;">📈 Summary</div>
+        <div style="font-size:14px; line-height:1.6; opacity:0.95;">
+          ${incomeChange >= 0 ? '✅' : '⚠️'} Income ${incomeChange >= 0 ? 'increased' : 'decreased'} by <strong>${fmt(Math.abs(incomeChange))}</strong> (${Math.abs(incomeChangePercent).toFixed(1)}%)<br>
+          ${netChange >= 0 ? '✅' : '⚠️'} Net profit ${netChange >= 0 ? 'improved' : 'declined'} by <strong>${fmt(Math.abs(netChange))}</strong> (${Math.abs(netChangePercent).toFixed(1)}%)
+        </div>
+      </div>
+      
     </div>
   `;
 }
