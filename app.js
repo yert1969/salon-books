@@ -1295,6 +1295,8 @@ async function renderReportsView() {
     { id: 'daily',    label: 'Daily' },
     { id: 'weekly',   label: 'Weekly' },
     { id: 'monthly',  label: 'Monthly' },
+    { id: 'month-compare', label: 'Month Compare' },
+    { id: 'date-compare', label: 'Date Range' },
     { id: 'annual',   label: 'Annual' },
     { id: 'yoy',      label: 'Year vs Year' },
     { id: 'category', label: 'By Category' },
@@ -1362,6 +1364,126 @@ async function renderReportInner() {
         <div class="report-body" id="report-output"></div>
       `;
       await runMonthlyReport();
+      break;
+    }
+
+    case 'month-compare': {
+      // Initialize comparison state if needed
+      if (!state.compareMonth) {
+        state.compareMonth = monthNow;
+        state.compareYear = yearNow - 1; // Default to same month last year
+      }
+      
+      const monthOpts = Array.from({length:12},(_,i)=> i+1);
+      const currentMonthOpts = monthOpts.map(m => 
+        `<option value="${m}" ${m===state.selectedMonth?'selected':''}>${monthName(m)}</option>`).join('');
+      const compareMonthOpts = monthOpts.map(m => 
+        `<option value="${m}" ${m===state.compareMonth?'selected':''}>${monthName(m)}</option>`).join('');
+      
+      el.innerHTML = `
+        <div class="report-body" style="padding:16px;">
+          <h4 style="margin-bottom:16px; text-align:center;">Month Comparison</h4>
+          
+          <div style="display:grid; grid-template-columns:1fr auto 1fr; gap:12px; align-items:center; margin-bottom:16px;">
+            <!-- Current Period -->
+            <div>
+              <div style="font-weight:600; font-size:14px; margin-bottom:8px; text-align:center;">Current</div>
+              <select class="report-select" id="r-month-curr" onchange="state.selectedMonth=parseInt(this.value); renderReportsView()">
+                ${currentMonthOpts}
+              </select>
+              <input type="number" class="report-input" id="r-year-curr" value="${state.selectedYear}" min="2020" max="2099" 
+                onchange="state.selectedYear=parseInt(this.value); renderReportsView()" inputmode="numeric" style="margin-top:4px;">
+            </div>
+            
+            <!-- VS -->
+            <div style="font-size:18px; font-weight:600; color:var(--text-muted);">VS</div>
+            
+            <!-- Compare Period -->
+            <div>
+              <div style="font-weight:600; font-size:14px; margin-bottom:8px; text-align:center;">Compare</div>
+              <select class="report-select" id="r-month-comp" onchange="state.compareMonth=parseInt(this.value); renderReportsView()">
+                ${compareMonthOpts}
+              </select>
+              <input type="number" class="report-input" id="r-year-comp" value="${state.compareYear}" min="2020" max="2099" 
+                onchange="state.compareYear=parseInt(this.value); renderReportsView()" inputmode="numeric" style="margin-top:4px;">
+            </div>
+          </div>
+          
+          <!-- Quick Presets -->
+          <div style="display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap;">
+            <button class="btn-secondary" style="flex:1; font-size:12px; padding:8px;" 
+              onclick="state.compareMonth=state.selectedMonth; state.compareYear=state.selectedYear-1; renderReportsView()">
+              Same Month Last Year
+            </button>
+            <button class="btn-secondary" style="flex:1; font-size:12px; padding:8px;" 
+              onclick="state.compareMonth=(state.selectedMonth > 1 ? state.selectedMonth-1 : 12); state.compareYear=(state.selectedMonth > 1 ? state.selectedYear : state.selectedYear-1); renderReportsView()">
+              Previous Month
+            </button>
+          </div>
+          
+          <button class="btn-primary" style="width:100%;" onclick="runMonthCompareReport()">Compare</button>
+          
+          <div id="report-output" style="margin-top:16px;"></div>
+        </div>
+      `;
+      await runMonthCompareReport();
+      break;
+    }
+
+    case 'date-compare': {
+      // Initialize date range state if needed
+      if (!state.range1Start) {
+        state.range1Start = `${yearNow}-01-01`;
+        state.range1End = `${yearNow}-03-31`;
+        state.range2Start = `${yearNow-1}-01-01`;
+        state.range2End = `${yearNow-1}-03-31`;
+      }
+      
+      el.innerHTML = `
+        <div class="report-body" style="padding:16px;">
+          <h4 style="margin-bottom:16px; text-align:center;">Date Range Comparison</h4>
+          
+          <div style="display:grid; grid-template-columns:1fr auto 1fr; gap:12px; margin-bottom:16px;">
+            <!-- Period 1 -->
+            <div>
+              <div style="font-weight:600; font-size:14px; margin-bottom:8px;">Period 1</div>
+              <input type="date" class="report-input" value="${state.range1Start}" 
+                onchange="state.range1Start=this.value; renderReportsView()" style="font-size:13px;">
+              <input type="date" class="report-input" value="${state.range1End}" 
+                onchange="state.range1End=this.value; renderReportsView()" style="font-size:13px; margin-top:4px;">
+            </div>
+            
+            <!-- VS -->
+            <div style="display:flex; align-items:center; font-size:18px; font-weight:600; color:var(--text-muted);">VS</div>
+            
+            <!-- Period 2 -->
+            <div>
+              <div style="font-weight:600; font-size:14px; margin-bottom:8px;">Period 2</div>
+              <input type="date" class="report-input" value="${state.range2Start}" 
+                onchange="state.range2Start=this.value; renderReportsView()" style="font-size:13px;">
+              <input type="date" class="report-input" value="${state.range2End}" 
+                onchange="state.range2End=this.value; renderReportsView()" style="font-size:13px; margin-top:4px;">
+            </div>
+          </div>
+          
+          <!-- Quick Presets -->
+          <div style="display:flex; gap:6px; margin-bottom:16px; flex-wrap:wrap;">
+            <button class="btn-secondary" style="flex:1; font-size:11px; padding:6px;" 
+              onclick="const y=${yearNow}; state.range1Start=y+'-01-01'; state.range1End=y+'-03-31'; state.range2Start=(y-1)+'-01-01'; state.range2End=(y-1)+'-03-31'; renderReportsView()">
+              Q1 YoY
+            </button>
+            <button class="btn-secondary" style="flex:1; font-size:11px; padding:6px;" 
+              onclick="const y=${yearNow}; state.range1Start=y+'-01-01'; state.range1End=y+'-12-31'; state.range2Start=(y-1)+'-01-01'; state.range2End=(y-1)+'-12-31'; renderReportsView()">
+              Full Year
+            </button>
+          </div>
+          
+          <button class="btn-primary" style="width:100%;" onclick="runDateRangeCompareReport()">Compare</button>
+          
+          <div id="report-output" style="margin-top:16px;"></div>
+        </div>
+      `;
+      await runDateRangeCompareReport();
       break;
     }
 
@@ -1710,6 +1832,204 @@ async function runMonthlyReport() {
       drawPie('pie-monthly-exp', expEntries.map(([k])=>k), expEntries.map(([,v])=>v));
   } else {
     }
+}
+
+// ---- Month Compare Report ----
+async function runMonthCompareReport() {
+  const allTxns = await db.transactions.toArray();
+  
+  // Current period
+  const currentTxns = allTxns.filter(t => {
+    const [y, m] = t.date.split('-');
+    return parseInt(y) === state.selectedYear && parseInt(m) === state.selectedMonth;
+  });
+  
+  const currentIncome = currentTxns.filter(t => t.type === 'INCOME');
+  const currentExpenses = currentTxns.filter(t => t.type === 'EXPENSE');
+  const currentTotalIncome = currentIncome.reduce((s, t) => s + (t.serviceAmount||0) + (t.tipAmount||0), 0);
+  const currentTotalExpense = currentExpenses.reduce((s, t) => s + (t.amount||0), 0);
+  
+  const allMonthlyExpenses = await db.monthlyExpenses.toArray();
+  const currentMonthlyExpenses = allMonthlyExpenses.filter(e => 
+    e.year === state.selectedYear && e.month === state.selectedMonth
+  );
+  const currentMonthlyExpenseTotal = currentMonthlyExpenses.reduce((s, e) => s + (e.amount||0), 0);
+  const currentNet = currentTotalIncome - currentTotalExpense - currentMonthlyExpenseTotal;
+  
+  // Comparison period
+  const compareTxns = allTxns.filter(t => {
+    const [y, m] = t.date.split('-');
+    return parseInt(y) === state.compareYear && parseInt(m) === state.compareMonth;
+  });
+  
+  const compareIncome = compareTxns.filter(t => t.type === 'INCOME');
+  const compareExpenses = compareTxns.filter(t => t.type === 'EXPENSE');
+  const compareTotalIncome = compareIncome.reduce((s, t) => s + (t.serviceAmount||0) + (t.tipAmount||0), 0);
+  const compareTotalExpense = compareExpenses.reduce((s, t) => s + (t.amount||0), 0);
+  
+  const compareMonthlyExpenses = allMonthlyExpenses.filter(e => 
+    e.year === state.compareYear && e.month === state.compareMonth
+  );
+  const compareMonthlyExpenseTotal = compareMonthlyExpenses.reduce((s, e) => s + (e.amount||0), 0);
+  const compareNet = compareTotalIncome - compareTotalExpense - compareMonthlyExpenseTotal;
+  
+  // Calculate changes
+  const incomeChange = currentTotalIncome - compareTotalIncome;
+  const incomeChangePercent = compareTotalIncome !== 0 ? ((incomeChange / compareTotalIncome) * 100) : 0;
+  const expenseChange = (currentTotalExpense + currentMonthlyExpenseTotal) - (compareTotalExpense + compareMonthlyExpenseTotal);
+  const expenseChangePercent = (compareTotalExpense + compareMonthlyExpenseTotal) !== 0 ? ((expenseChange / (compareTotalExpense + compareMonthlyExpenseTotal)) * 100) : 0;
+  const netChange = currentNet - compareNet;
+  const netChangePercent = compareNet !== 0 ? ((netChange / compareNet) * 100) : 0;
+  
+  const out = document.getElementById('report-output');
+  if (!out) return;
+  
+  out.innerHTML = `
+    <table class="report-table" style="font-size:13px;">
+      <thead>
+        <tr>
+          <th style="text-align:left;">Metric</th>
+          <th style="text-align:right;">${monthName(state.selectedMonth)} ${state.selectedYear}</th>
+          <th style="text-align:right;">${monthName(state.compareMonth)} ${state.compareYear}</th>
+          <th style="text-align:right;">Change</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td style="font-weight:600;">Income</td>
+          <td style="text-align:right; color:var(--success);">${fmt(currentTotalIncome)}</td>
+          <td style="text-align:right; color:var(--success);">${fmt(compareTotalIncome)}</td>
+          <td style="text-align:right; color:${incomeChange >= 0 ? 'var(--success)' : 'var(--danger)'}; font-weight:600;">
+            ${incomeChange >= 0 ? '+' : ''}${fmt(incomeChange)}<br>
+            <span style="font-size:11px;">(${incomeChangePercent >= 0 ? '+' : ''}${incomeChangePercent.toFixed(1)}%)</span>
+          </td>
+        </tr>
+        <tr>
+          <td style="font-weight:600;">Expenses</td>
+          <td style="text-align:right; color:var(--danger);">${fmt(currentTotalExpense + currentMonthlyExpenseTotal)}</td>
+          <td style="text-align:right; color:var(--danger);">${fmt(compareTotalExpense + compareMonthlyExpenseTotal)}</td>
+          <td style="text-align:right; color:${expenseChange <= 0 ? 'var(--success)' : 'var(--danger)'}; font-weight:600;">
+            ${expenseChange >= 0 ? '+' : ''}${fmt(expenseChange)}<br>
+            <span style="font-size:11px;">(${expenseChangePercent >= 0 ? '+' : ''}${expenseChangePercent.toFixed(1)}%)</span>
+          </td>
+        </tr>
+        <tr style="border-top:2px solid var(--border); font-weight:600;">
+          <td>Net Profit</td>
+          <td style="text-align:right; color:${currentNet >= 0 ? 'var(--success)' : 'var(--danger)'};">${fmt(currentNet)}</td>
+          <td style="text-align:right; color:${compareNet >= 0 ? 'var(--success)' : 'var(--danger)'};">${fmt(compareNet)}</td>
+          <td style="text-align:right; color:${netChange >= 0 ? 'var(--success)' : 'var(--danger)'}; font-weight:600;">
+            ${netChange >= 0 ? '+' : ''}${fmt(netChange)}<br>
+            <span style="font-size:11px;">(${netChangePercent >= 0 ? '+' : ''}${netChangePercent.toFixed(1)}%)</span>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    
+    <div style="margin-top:16px; padding:12px; background:var(--bg-secondary); border-radius:8px;">
+      <div style="font-size:14px; font-weight:600; margin-bottom:8px;">Summary</div>
+      <div style="font-size:13px; color:var(--text-muted);">
+        ${incomeChange >= 0 ? '📈' : '📉'} Income ${incomeChange >= 0 ? 'increased' : 'decreased'} by ${fmt(Math.abs(incomeChange))} (${Math.abs(incomeChangePercent).toFixed(1)}%)<br>
+        ${netChange >= 0 ? '✅' : '⚠️'} Net profit ${netChange >= 0 ? 'improved' : 'declined'} by ${fmt(Math.abs(netChange))} (${Math.abs(netChangePercent).toFixed(1)}%)
+      </div>
+    </div>
+  `;
+}
+
+// ---- Date Range Compare Report ----
+async function runDateRangeCompareReport() {
+  const allTxns = await db.transactions.toArray();
+  
+  // Helper to calculate range stats
+  const calculateRangeStats = (startDate, endDate) => {
+    const txns = allTxns.filter(t => t.date >= startDate && t.date <= endDate);
+    const income = txns.filter(t => t.type === 'INCOME');
+    const expenses = txns.filter(t => t.type === 'EXPENSE');
+    const totalIncome = income.reduce((s, t) => s + (t.serviceAmount||0) + (t.tipAmount||0), 0);
+    const totalExpense = expenses.reduce((s, t) => s + (t.amount||0), 0);
+    
+    return {
+      income: totalIncome,
+      expense: totalExpense,
+      net: totalIncome - totalExpense,
+      transactionCount: txns.length
+    };
+  };
+  
+  const range1 = calculateRangeStats(state.range1Start, state.range1End);
+  const range2 = calculateRangeStats(state.range2Start, state.range2End);
+  
+  // Calculate changes
+  const incomeChange = range1.income - range2.income;
+  const incomeChangePercent = range2.income !== 0 ? ((incomeChange / range2.income) * 100) : 0;
+  const expenseChange = range1.expense - range2.expense;
+  const expenseChangePercent = range2.expense !== 0 ? ((expenseChange / range2.expense) * 100) : 0;
+  const netChange = range1.net - range2.net;
+  const netChangePercent = range2.net !== 0 ? ((netChange / range2.net) * 100) : 0;
+  
+  const out = document.getElementById('report-output');
+  if (!out) return;
+  
+  out.innerHTML = `
+    <table class="report-table" style="font-size:12px;">
+      <thead>
+        <tr>
+          <th style="text-align:left;">Metric</th>
+          <th style="text-align:right;">Period 1</th>
+          <th style="text-align:right;">Period 2</th>
+          <th style="text-align:right;">Change</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr style="font-size:11px; color:var(--text-muted);">
+          <td>Date Range</td>
+          <td style="text-align:right;">${new Date(state.range1Start).toLocaleDateString('en-US', {month:'short', day:'numeric'})} - ${new Date(state.range1End).toLocaleDateString('en-US', {month:'short', day:'numeric'})}</td>
+          <td style="text-align:right;">${new Date(state.range2Start).toLocaleDateString('en-US', {month:'short', day:'numeric'})} - ${new Date(state.range2End).toLocaleDateString('en-US', {month:'short', day:'numeric'})}</td>
+          <td></td>
+        </tr>
+        <tr>
+          <td style="font-weight:600;">Income</td>
+          <td style="text-align:right; color:var(--success);">${fmt(range1.income)}</td>
+          <td style="text-align:right; color:var(--success);">${fmt(range2.income)}</td>
+          <td style="text-align:right; color:${incomeChange >= 0 ? 'var(--success)' : 'var(--danger)'}; font-weight:600;">
+            ${incomeChange >= 0 ? '+' : ''}${fmt(incomeChange)}<br>
+            <span style="font-size:10px;">(${incomeChangePercent >= 0 ? '+' : ''}${incomeChangePercent.toFixed(1)}%)</span>
+          </td>
+        </tr>
+        <tr>
+          <td style="font-weight:600;">Expenses</td>
+          <td style="text-align:right; color:var(--danger);">${fmt(range1.expense)}</td>
+          <td style="text-align:right; color:var(--danger);">${fmt(range2.expense)}</td>
+          <td style="text-align:right; color:${expenseChange <= 0 ? 'var(--success)' : 'var(--danger)'}; font-weight:600;">
+            ${expenseChange >= 0 ? '+' : ''}${fmt(expenseChange)}<br>
+            <span style="font-size:10px;">(${expenseChangePercent >= 0 ? '+' : ''}${expenseChangePercent.toFixed(1)}%)</span>
+          </td>
+        </tr>
+        <tr style="border-top:2px solid var(--border); font-weight:600;">
+          <td>Net Profit</td>
+          <td style="text-align:right; color:${range1.net >= 0 ? 'var(--success)' : 'var(--danger)'};">${fmt(range1.net)}</td>
+          <td style="text-align:right; color:${range2.net >= 0 ? 'var(--success)' : 'var(--danger)'};">${fmt(range2.net)}</td>
+          <td style="text-align:right; color:${netChange >= 0 ? 'var(--success)' : 'var(--danger)'}; font-weight:600;">
+            ${netChange >= 0 ? '+' : ''}${fmt(netChange)}<br>
+            <span style="font-size:10px;">(${netChangePercent >= 0 ? '+' : ''}${netChangePercent.toFixed(1)}%)</span>
+          </td>
+        </tr>
+        <tr style="font-size:11px; color:var(--text-muted);">
+          <td>Transactions</td>
+          <td style="text-align:right;">${range1.transactionCount}</td>
+          <td style="text-align:right;">${range2.transactionCount}</td>
+          <td style="text-align:right;">${range1.transactionCount - range2.transactionCount >= 0 ? '+' : ''}${range1.transactionCount - range2.transactionCount}</td>
+        </tr>
+      </tbody>
+    </table>
+    
+    <div style="margin-top:16px; padding:12px; background:var(--bg-secondary); border-radius:8px;">
+      <div style="font-size:14px; font-weight:600; margin-bottom:8px;">Summary</div>
+      <div style="font-size:13px; color:var(--text-muted);">
+        ${incomeChange >= 0 ? '📈' : '📉'} Income ${incomeChange >= 0 ? 'increased' : 'decreased'} by ${fmt(Math.abs(incomeChange))} (${Math.abs(incomeChangePercent).toFixed(1)}%)<br>
+        ${netChange >= 0 ? '✅' : '⚠️'} Net profit ${netChange >= 0 ? 'improved' : 'declined'} by ${fmt(Math.abs(netChange))} (${Math.abs(netChangePercent).toFixed(1)}%)
+      </div>
+    </div>
+  `;
 }
 
 // ---- Annual Report ----
