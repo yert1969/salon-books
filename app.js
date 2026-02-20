@@ -287,11 +287,23 @@ const state = {
 // ----------------------------------------------------------------
 
 function todayStr() {
+  // Force local timezone by using date parts, not ISO string
   const d = new Date();
   const year = d.getFullYear();
   const month = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
+}
+
+// Helper to ensure date input always shows correct local date
+function ensureLocalDate(dateStr) {
+  if (!dateStr) return todayStr();
+  // If dateStr is valid YYYY-MM-DD, return as-is
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+    return dateStr;
+  }
+  // Otherwise return today
+  return todayStr();
 }
 
 function formatDateDisplay(dateStr) {
@@ -708,12 +720,15 @@ async function openAddTransactionModal(type) {
   const pmOptions = ['Cash','Card','Venmo','Zelle','Check','Other']
     .map(m => `<option>${m}</option>`).join('');
 
+  // TIMEZONE FIX: Ensure we always use a valid local date
+  const defaultDate = ensureLocalDate(state.selectedDate);
+
   openModal(`
     <h2 class="modal-title">+ Add ${isIncome ? 'Income' : 'Expense'}</h2>
 
     <div class="form-group">
       <label class="form-label">Date</label>
-      <input type="date" class="form-input" id="txn-date" value="${state.selectedDate}">
+      <input type="date" class="form-input" id="txn-date" value="${defaultDate}">
     </div>
 
     <div class="form-group">
@@ -764,7 +779,7 @@ async function openAddTransactionModal(type) {
 
 async function saveTransaction(type) {
   const isIncome = type === 'INCOME';
-  const date     = document.getElementById('txn-date').value;
+  let date       = document.getElementById('txn-date').value;
   const category = document.getElementById('txn-category').value;
   const amount   = parseFloat(document.getElementById('txn-amount').value) || 0;
   const payment  = document.getElementById('txn-payment').value;
@@ -772,6 +787,11 @@ async function saveTransaction(type) {
 
   if (!category) { alert('Please select a category.'); return; }
   if (amount <= 0) { alert('Please enter an amount greater than zero.'); return; }
+
+  // TIMEZONE FIX: Ensure date is valid local date string
+  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    date = state.selectedDate || todayStr();
+  }
 
   const record = { date, type, category, paymentMethod: payment, notes };
 
