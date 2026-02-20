@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chart.js Test</title>
+  <style>
+    body { font-family: sans-serif; max-width: 600px; margin: 50px auto; padding: 20px; }
+    #status { padding: 10px; margin: 10px 0; border-radius: 4px; }
+    .ok { background: #d4edda; color: #155724; }
+    .error { background: #f8d7da; color: #721c24; }
+    canvas { margin: 20px 0; }
+  </style>
+</head>
+<body>
+  <h1>Chart.js Test Page</h1>
+  <div id="status">Loading Chart.js...</div>
+  <canvas id="test-chart" width="400" height="400"></canvas>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script>
+    const status = document.getElementById('status');
+    
+    // Check if Chart.js loaded
+    if (typeof Chart === 'undefined') {
+      status.textContent = '❌ Chart.js failed to load';
+      status.className = 'error';
+    } else {
+      status.textContent = '✅ Chart.js loaded successfully';
+      status.className = 'ok';
+      
+      // Create a test chart
+      try {
+        const canvas = document.getElementById('test-chart');
+        const ctx = canvas.getContext('2d');
+        
+        new Chart(ctx, {
+          type: 'doughnut',
+          data: {
+            labels: ['Red', 'Blue', 'Yellow'],
+            datasets: [{
+              data: [300, 50, 100],
+              backgroundColor: ['#FF6384', '#36A2EB', '#FFCE56'],
+              borderColor: '#fff',
+              borderWidth: 2,
+            }]
+          },
+          options: {
+            responsive: true,
+            plugins: {
+              legend: { position: 'bottom' }
+            }
+          }
+        });
+        
+        status.textContent += ' | ✅ Chart rendered successfully';
+      } catch (err) {
+        status.textContent = '❌ Chart creation failed: ' + err.message;
+        status.className = 'error';
+        console.error(err);
+      }
+    }
+  </script>
+</body>
+</html>

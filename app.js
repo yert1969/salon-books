@@ -287,7 +287,11 @@ const state = {
 // ----------------------------------------------------------------
 
 function todayStr() {
-  return new Date().toISOString().split('T')[0];
+  const d = new Date();
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 }
 
 function formatDateDisplay(dateStr) {
@@ -581,7 +585,7 @@ async function renderDailyView() {
     <div class="daily-date-bar">
       <button class="date-nav-btn" onclick="changeDate(-1)">‹</button>
       <div class="current-date" onclick="openDatePicker()">${isToday ? 'Today' : formatDateDisplay(state.selectedDate)}</div>
-      <button class="date-nav-btn" onclick="changeDate(1)" ${isToday ? 'disabled style="opacity:0.3"' : ''}>›</button>
+      <button class="date-nav-btn" onclick="changeDate(1)">›</button>
     </div>
 
     <div class="summary-cards">
@@ -818,9 +822,21 @@ async function openEditTransactionModal(id) {
 
   const isIncome = t.type === 'INCOME';
   const catKey   = isIncome ? 'INCOME' : 'DAILY_EXPENSE';
-  const catOptions = (state.categories[catKey] || [])
+  const availableCategories = state.categories[catKey] || [];
+  
+  // Check if transaction's category exists in current categories
+  const categoryExists = availableCategories.includes(t.category);
+  
+  // Build category options
+  let catOptions = availableCategories
     .map(name => `<option value="${name}" ${name === t.category ? 'selected' : ''}>${name}</option>`)
     .join('');
+  
+  // If transaction has a category that's not in the list (legacy category), add it
+  if (t.category && !categoryExists) {
+    catOptions = `<option value="${t.category}" selected>${t.category} (legacy)</option>` + catOptions;
+  }
+  
   const pmOptions = ['Cash','Card','Venmo','Zelle','Check','Other']
     .map(m => `<option ${m === t.paymentMethod ? 'selected' : ''}>${m}</option>`).join('');
 
@@ -990,10 +1006,8 @@ async function renderMonthlyView() {
       .reduce((s, e) => s + (e.amount || 0), 0);
     
     // Same month last year
-    const sameMonthLastYear = state.selectedMonth;
-    const previousYear = state.selectedYear - 1;
     const lastYearExpenses = allExpenses
-      .filter(e => e.year === previousYear && e.month === sameMonthLastYear)
+      .filter(e => e.year === state.selectedYear - 1 && e.month === state.selectedMonth)
       .reduce((s, e) => s + (e.amount || 0), 0);
     
     const calcChange = (current, previous) => {
@@ -1027,7 +1041,7 @@ async function renderMonthlyView() {
           <div class="comparison-amount">${fmt(lastMonthExpenses)}</div>
         </div>
         <div class="comparison-card">
-          <div class="comparison-label">vs Last ${monthName(sameMonthLastYear)}</div>
+          <div class="comparison-label">vs Last Year</div>
           <div class="comparison-value">${formatChange(vsLastYear, lastYearExpenses)}</div>
           <div class="comparison-amount">${fmt(lastYearExpenses)}</div>
         </div>
@@ -2146,8 +2160,12 @@ async function renderSettingsView() {
         <button class="btn-secondary" style="width:100%;" onclick="triggerRestoreFilePicker()">
           ⬆ Restore from Backup File
         </button>
-        <div style="font-size:11px;color:var(--danger);margin-top:8px;text-align:center;">
-          Restore replaces all current data with the backup file.
+        <div style="background:#fff3cd;border:1px solid #ffc107;padding:10px;border-radius:6px;margin-top:12px;font-size:11px;color:#856404;line-height:1.4;">
+          <strong>⚠️ Important:</strong><br>
+          • Restore replaces ALL current data<br>
+          • Keep backup file until verified<br>
+          • Don't close app during restore<br>
+          • Large restores take 30-60 seconds
         </div>
       </div>
     </div>
@@ -2829,12 +2847,45 @@ async function importBackup(file) {
   );
   if (!confirmed) return;
 
+  // Show progress modal
+  openModal(`
+    <h2 class="modal-title">Restoring Backup...</h2>
+    <div style="text-align:center; padding:32px;">
+      <div style="font-size:48px; margin-bottom:16px;">🔄</div>
+      <div style="font-size:16px; margin-bottom:8px;" id="restore-progress-text">
+        Reading backup file...
+      </div>
+      <div style="width:100%; background:var(--border); border-radius:4px; height:8px; overflow:hidden; margin-top:16px;">
+        <div id="restore-progress-bar" style="width:0%; height:100%; background:var(--primary); transition:width 0.3s;"></div>
+      </div>
+      <div style="font-size:13px; color:var(--text-muted); margin-top:12px;">
+        Please don't close the app during restore
+      </div>
+    </div>
+  `);
+
+  // Helper to update progress
+  const updateProgress = (percent, message) => {
+    const bar = document.getElementById('restore-progress-bar');
+    const text = document.getElementById('restore-progress-text');
+    if (bar) bar.style.width = percent + '%';
+    if (text) text.textContent = message;
+  };
+
   try {
     const text = await file.text();
     const data = JSON.parse(text);
 
-    if (!data.transactions) { showToast('Invalid backup file'); return; }
+    // Validate backup file
+    if (!data.transactions) { 
+      closeModal();
+      showToast('Invalid backup file'); 
+      return; 
+    }
 
+    updateProgress(10, 'Validating backup...');
+
+    // Parse categories
     let catMap;
     if (Array.isArray(data.categories)) {
       catMap = { INCOME: [], DAILY_EXPENSE: [], MONTHLY_EXPENSE: [] };
@@ -2847,42 +2898,183 @@ async function importBackup(file) {
       catMap = _defaultCategoryMap();
     }
 
-    // Strip integer id fields (Firestore uses string IDs)
-    const strip = arr => arr.map(({ id, ...rest }) => rest);
+    updateProgress(20, 'Preparing data...');
 
-    await db.transaction('rw',
-      db.transactions, db.dailySummary, db.monthlyExpenses,
-      db.renters, db.rentPayments, db.settings,
-      async () => {
+    // Strip IDs (Firestore uses string IDs)
+    const strip = arr => arr.map(({ id, ...rest }) => rest);
+    
+    const transactionsToRestore = strip(data.transactions);
+    const dailySummaryToRestore = data.dailySummary ? strip(data.dailySummary) : [];
+    const monthlyExpensesToRestore = data.monthlyExpenses ? strip(data.monthlyExpenses) : [];
+    const rentersToRestore = data.renters ? strip(data.renters) : [];
+    const rentPaymentsToRestore = data.rentPayments ? strip(data.rentPayments) : [];
+    const settingsToRestore = data.settings || [];
+
+    // Calculate total for progress
+    const totalItems = transactionsToRestore.length + 
+                      dailySummaryToRestore.length + 
+                      monthlyExpensesToRestore.length + 
+                      rentersToRestore.length + 
+                      rentPaymentsToRestore.length;
+
+    updateProgress(30, 'Creating backup of current data...');
+
+    // SAFETY: Backup current data before deleting
+    let currentDataBackup = null;
+    try {
+      currentDataBackup = {
+        transactions: await db.transactions.toArray(),
+        dailySummary: await db.dailySummary.toArray(),
+        monthlyExpenses: await db.monthlyExpenses.toArray(),
+        renters: await db.renters.toArray(),
+        rentPayments: await db.rentPayments.toArray(),
+        settings: await db.settings.toArray(),
+        categories: { ...state.categories }
+      };
+    } catch (err) {
+      closeModal();
+      showToast('Failed to backup current data');
+      console.error(err);
+      return;
+    }
+
+    updateProgress(40, 'Deleting old data...');
+
+    // Clear all existing data
+    try {
+      await db.transactions.clear();
+      await db.dailySummary.clear();
+      await db.monthlyExpenses.clear();
+      await db.settings.clear();
+      await db.renters.clear();
+      await db.rentPayments.clear();
+    } catch (err) {
+      closeModal();
+      showToast('Failed to clear old data');
+      console.error(err);
+      return;
+    }
+
+    updateProgress(50, 'Restoring transactions...');
+
+    let restored = 0;
+
+    try {
+      // Restore transactions in chunks with progress
+      if (transactionsToRestore.length > 0) {
+        const CHUNK = 499;
+        for (let i = 0; i < transactionsToRestore.length; i += CHUNK) {
+          const chunk = transactionsToRestore.slice(i, i + CHUNK);
+          await db.transactions.bulkAdd(chunk);
+          restored += chunk.length;
+          const progress = 50 + ((restored / totalItems) * 30);
+          updateProgress(progress, `Restoring transactions... ${restored}/${transactionsToRestore.length}`);
+        }
+      }
+
+      updateProgress(80, 'Restoring other data...');
+
+      // Restore other data
+      if (dailySummaryToRestore.length > 0) {
+        await db.dailySummary.bulkAdd(dailySummaryToRestore);
+        restored += dailySummaryToRestore.length;
+      }
+      
+      if (monthlyExpensesToRestore.length > 0) {
+        await db.monthlyExpenses.bulkAdd(monthlyExpensesToRestore);
+        restored += monthlyExpensesToRestore.length;
+      }
+      
+      if (rentersToRestore.length > 0) {
+        await db.renters.bulkAdd(rentersToRestore);
+        restored += rentersToRestore.length;
+      }
+      
+      if (rentPaymentsToRestore.length > 0) {
+        await db.rentPayments.bulkAdd(rentPaymentsToRestore);
+        restored += rentPaymentsToRestore.length;
+      }
+
+      if (settingsToRestore.length > 0) {
+        await db.settings.bulkAdd(settingsToRestore);
+      }
+
+      updateProgress(90, 'Finalizing...');
+
+      // Update categories
+      state.categories = catMap;
+      await saveCategories();
+      await db.settings.put({ key: 'lastBackup', value: todayStr() });
+
+      // Update tab visibility
+      await updateRentersTabVisibility();
+
+      updateProgress(100, 'Complete!');
+
+      // Show success
+      setTimeout(() => {
+        closeModal();
+        showToast('Restore complete ✓');
+        navigate('daily');
+      }, 500);
+
+    } catch (err) {
+      // ROLLBACK: Restore from backup if restore failed
+      console.error('Restore failed, rolling back...', err);
+      updateProgress(50, 'Restore failed! Rolling back...');
+
+      try {
+        // Clear partial data
         await db.transactions.clear();
         await db.dailySummary.clear();
         await db.monthlyExpenses.clear();
         await db.settings.clear();
-        if (data.renters)      await db.renters.clear();
-        if (data.rentPayments) await db.rentPayments.clear();
+        await db.renters.clear();
+        await db.rentPayments.clear();
 
-        await db.transactions.bulkAdd(strip(data.transactions));
-        if (data.dailySummary?.length)    await db.dailySummary.bulkAdd(strip(data.dailySummary));
-        if (data.monthlyExpenses?.length) await db.monthlyExpenses.bulkAdd(strip(data.monthlyExpenses));
-        if (data.renters?.length)         await db.renters.bulkAdd(strip(data.renters));
-        if (data.rentPayments?.length)    await db.rentPayments.bulkAdd(strip(data.rentPayments));
+        // Restore from backup
+        if (currentDataBackup) {
+          if (currentDataBackup.transactions.length > 0) {
+            await db.transactions.bulkAdd(currentDataBackup.transactions.map(({ id, ...rest }) => rest));
+          }
+          if (currentDataBackup.dailySummary.length > 0) {
+            await db.dailySummary.bulkAdd(currentDataBackup.dailySummary.map(({ id, ...rest }) => rest));
+          }
+          if (currentDataBackup.monthlyExpenses.length > 0) {
+            await db.monthlyExpenses.bulkAdd(currentDataBackup.monthlyExpenses.map(({ id, ...rest }) => rest));
+          }
+          if (currentDataBackup.renters.length > 0) {
+            await db.renters.bulkAdd(currentDataBackup.renters.map(({ id, ...rest }) => rest));
+          }
+          if (currentDataBackup.rentPayments.length > 0) {
+            await db.rentPayments.bulkAdd(currentDataBackup.rentPayments.map(({ id, ...rest }) => rest));
+          }
+          if (currentDataBackup.settings.length > 0) {
+            await db.settings.bulkAdd(currentDataBackup.settings);
+          }
 
-        if (data.settings?.length) await db.settings.bulkAdd(data.settings);
+          state.categories = currentDataBackup.categories;
+          await saveCategories();
+        }
+
+        closeModal();
+        showToast('Restore failed - your original data has been preserved ✓');
+        navigate('daily');
+
+      } catch (rollbackErr) {
+        console.error('Rollback also failed!', rollbackErr);
+        closeModal();
+        showToast('⚠️ Critical error: Please export backup ASAP!');
       }
-    );
-
-    state.categories = catMap;
-    await saveCategories();
-    await db.settings.put({ key: 'lastBackup', value: todayStr() });
-
-    // Update tab visibility in case restored backup includes renters
-    await updateRentersTabVisibility();
-
-    showToast('Restore complete ✓');
-    navigate('daily');
+    }
 
   } catch (err) {
-    showToast('Restore failed — file may be corrupt');
+    closeModal();
+    if (err instanceof SyntaxError) {
+      showToast('Restore failed — file is not valid JSON');
+    } else {
+      showToast('Restore failed — file may be corrupt');
+    }
     console.error(err);
   }
 }
