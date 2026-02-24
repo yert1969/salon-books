@@ -1831,14 +1831,14 @@ async function runMonthlyReport() {
     <div class="report-section-title">${monthName(month)} ${year}</div>
     <div class="report-stat-grid">
       <div class="report-stat"><div class="report-stat-label">Total Income</div><div class="report-stat-value green">${fmt(totalIncome)}</div></div>
-      <div class="report-stat"><div class="report-stat-label">Net Profit</div><div class="report-stat-value plum">${fmt(net)}</div></div>
       <div class="report-stat"><div class="report-stat-label">Services</div><div class="report-stat-value green">${fmt(svcTotal)}</div></div>
-      <div class="report-stat"><div class="report-stat-label">Tips</div><div class="report-stat-value gold">${fmt(tipTotal)}</div></div>
+      <div class="report-stat"><div class="report-stat-label">Tips</div><div class="report-stat-value green">${fmt(tipTotal)}</div></div>
       ${rentTotal > 0 ? `<div class="report-stat"><div class="report-stat-label">Booth Rent</div><div class="report-stat-value green">${fmt(rentTotal)}</div></div>` : ''}
       <div class="report-stat"><div class="report-stat-label">Daily Exp</div><div class="report-stat-value red">${fmt(dExpTotal)}</div></div>
       <div class="report-stat"><div class="report-stat-label">Monthly Exp</div><div class="report-stat-value red">${fmt(mExpTotal)}</div></div>
       <div class="report-stat"><div class="report-stat-label">Clients</div><div class="report-stat-value">${totalClients}</div></div>
       <div class="report-stat"><div class="report-stat-label">Hours</div><div class="report-stat-value">${totalHours}</div></div>
+      <div class="report-stat"><div class="report-stat-label">Net Profit</div><div class="report-stat-value green">${fmt(net)}</div></div>
     </div>
 
     ${(svcTotal + tipTotal + rentTotal) > 0 ? `
