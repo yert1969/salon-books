@@ -409,6 +409,18 @@ async function saveCategories() {
 }
 
 function categoryOptions(type) {
+  // For expense types, combine both daily and monthly categories
+  if (type === 'DAILY_EXPENSE' || type === 'MONTHLY_EXPENSE') {
+    const allExpenseCategories = [
+      ...(state.categories.DAILY_EXPENSE || []),
+      ...(state.categories.MONTHLY_EXPENSE || [])
+    ];
+    return allExpenseCategories
+      .map(name => `<option value="${name}">${name}</option>`)
+      .join('');
+  }
+  
+  // For income, use income categories
   return (state.categories[type] || [])
     .map(name => `<option value="${name}">${name}</option>`)
     .join('');
@@ -1230,7 +1242,13 @@ async function openEditMonthlyExpenseModal(id) {
   await loadCategories();
   const e = await db.monthlyExpenses.get(id);
   if (!e) return;
-  const catOptions = (state.categories.MONTHLY_EXPENSE || [])
+  
+  // Get all expense categories (both daily and monthly)
+  const allExpenseCategories = [
+    ...(state.categories.DAILY_EXPENSE || []),
+    ...(state.categories.MONTHLY_EXPENSE || [])
+  ];
+  const catOptions = allExpenseCategories
     .map(name => `<option value="${name}" ${name === e.category ? 'selected' : ''}>${name}</option>`)
     .join('');
 
@@ -1801,6 +1819,7 @@ async function runMonthlyReport() {
   const renters     = await db.renters.where('status').equals('active').toArray();
   const expectedRent = renters.reduce((s,r)=>s+(r.weeklyRate||0),0) * 4;
 
+  // Net profit calculation: Services + Tips + Booth Rent (income from renters) - Expenses
   const net       = svcTotal + tipTotal + rentTotal - totalExp;
 
   const monthSums    = sums.filter(s => s.date && s.date.startsWith(monthStr));
@@ -2444,16 +2463,18 @@ const _chartInstances = {};
 
 // Salon-brand colour palette for pie slices
 const PIE_COLORS = [
-  '#C9A84C', // gold
-  '#6B1A2A', // plum
-  '#7BCB8A', // green
-  '#C96B6B', // red/rose
-  '#6B9BC9', // blue
-  '#C96BA8', // pink
-  '#8BC96B', // lime
-  '#C9956B', // amber
-  '#6BC9C9', // teal
-  '#A86BC9', // purple
+  '#E74C3C', // Red
+  '#3498DB', // Blue
+  '#F39C12', // Orange
+  '#9B59B6', // Purple
+  '#1ABC9C', // Turquoise
+  '#E67E22', // Dark Orange
+  '#34495E', // Dark Gray-Blue
+  '#16A085', // Dark Turquoise
+  '#D35400', // Burnt Orange
+  '#8E44AD', // Dark Purple
+  '#27AE60', // Green
+  '#2980B9', // Dark Blue
 ];
 
 /**
