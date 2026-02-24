@@ -390,7 +390,22 @@ async function loadCategories() {
 }
 
 async function saveCategories() {
+  // Save locally
   await db.settings.put({ key: 'categories', value: JSON.stringify(state.categories) });
+  
+  // Sync to Firebase if user is logged in
+  if (firebaseAuth && firebaseAuth.currentUser) {
+    try {
+      await firestore.collection('users')
+        .doc(firebaseAuth.currentUser.uid)
+        .collection('settings')
+        .doc('categories')
+        .set(state.categories);
+      console.log('Categories synced to Firebase');
+    } catch (err) {
+      console.error('Failed to sync categories to Firebase:', err);
+    }
+  }
 }
 
 function categoryOptions(type) {
