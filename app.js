@@ -1829,16 +1829,68 @@ async function runMonthlyReport() {
 
   document.getElementById('report-output').innerHTML = `
     <div class="report-section-title">${monthName(month)} ${year}</div>
-    <div class="report-stat-grid">
-      <div class="report-stat"><div class="report-stat-label">Total Income</div><div class="report-stat-value green">${fmt(totalIncome)}</div></div>
-      <div class="report-stat"><div class="report-stat-label">Services</div><div class="report-stat-value green">${fmt(svcTotal)}</div></div>
-      <div class="report-stat"><div class="report-stat-label">Tips</div><div class="report-stat-value green">${fmt(tipTotal)}</div></div>
-      ${rentTotal > 0 ? `<div class="report-stat"><div class="report-stat-label">Booth Rent</div><div class="report-stat-value green">${fmt(rentTotal)}</div></div>` : ''}
-      <div class="report-stat"><div class="report-stat-label">Daily Exp</div><div class="report-stat-value red">${fmt(dExpTotal)}</div></div>
-      <div class="report-stat"><div class="report-stat-label">Monthly Exp</div><div class="report-stat-value red">${fmt(mExpTotal)}</div></div>
-      <div class="report-stat"><div class="report-stat-label">Clients</div><div class="report-stat-value">${totalClients}</div></div>
-      <div class="report-stat"><div class="report-stat-label">Hours</div><div class="report-stat-value">${totalHours}</div></div>
-      <div class="report-stat"><div class="report-stat-label">Net Profit</div><div class="report-stat-value green">${fmt(net)}</div></div>
+    
+    <div class="report-white-card" style="padding:20px;">
+      <div style="font-weight:700; font-size:15px; color:var(--plum); margin-bottom:16px; text-align:center;">Monthly Calculation</div>
+      
+      <!-- Income Section -->
+      <div class="report-stat" style="background:rgba(123, 203, 138, 0.1); border-radius:6px; padding:12px; margin-bottom:6px;">
+        <div class="report-stat-label">Services</div>
+        <div class="report-stat-value green">${fmt(svcTotal)}</div>
+      </div>
+      
+      <div class="report-stat" style="background:rgba(123, 203, 138, 0.1); border-radius:6px; padding:12px; margin-bottom:6px;">
+        <div class="report-stat-label"><span style="color:var(--success); font-size:18px; margin-right:4px;">+</span> Tips</div>
+        <div class="report-stat-value green">${fmt(tipTotal)}</div>
+      </div>
+      
+      ${rentTotal > 0 ? `
+      <div class="report-stat" style="background:rgba(123, 203, 138, 0.1); border-radius:6px; padding:12px; margin-bottom:6px;">
+        <div class="report-stat-label"><span style="color:var(--success); font-size:18px; margin-right:4px;">+</span> Booth Rent</div>
+        <div class="report-stat-value green">${fmt(rentTotal)}</div>
+      </div>
+      ` : ''}
+      
+      <div style="border-top:2px solid var(--success); margin:10px 0; padding-top:10px;">
+        <div class="report-stat" style="background:rgba(123, 203, 138, 0.2); border-radius:6px; padding:14px; border:2px solid var(--success);">
+          <div class="report-stat-label" style="font-weight:700;"><span style="color:var(--success); font-size:20px; margin-right:4px;">=</span> Total Income</div>
+          <div class="report-stat-value green" style="font-size:22px; font-weight:800;">${fmt(totalIncome)}</div>
+        </div>
+      </div>
+      
+      <!-- Expense Section -->
+      <div style="margin-top:20px;">
+        <div class="report-stat" style="background:rgba(193, 56, 56, 0.1); border-radius:6px; padding:12px; margin-bottom:6px;">
+          <div class="report-stat-label"><span style="color:var(--danger); font-size:18px; margin-right:4px;">−</span> Daily Exp</div>
+          <div class="report-stat-value red">${fmt(dExpTotal)}</div>
+        </div>
+        
+        <div class="report-stat" style="background:rgba(193, 56, 56, 0.1); border-radius:6px; padding:12px; margin-bottom:6px;">
+          <div class="report-stat-label"><span style="color:var(--danger); font-size:18px; margin-right:4px;">−</span> Monthly Exp</div>
+          <div class="report-stat-value red">${fmt(mExpTotal)}</div>
+        </div>
+        
+        <div style="border-top:3px solid var(--success); margin:10px 0; padding-top:10px;">
+          <div class="report-stat" style="background:rgba(123, 203, 138, 0.25); border-radius:6px; padding:16px; border:3px solid var(--success);">
+            <div class="report-stat-label" style="font-weight:700; font-size:16px;"><span style="color:var(--success); font-size:22px; margin-right:4px;">=</span> Net Profit</div>
+            <div class="report-stat-value green" style="font-size:26px; font-weight:800;">${fmt(net)}</div>
+          </div>
+        </div>
+      </div>
+      
+      <!-- Stats -->
+      <div style="margin-top:20px; padding-top:16px; border-top:1px solid var(--border);">
+        <div class="report-stat-grid" style="grid-template-columns:1fr 1fr; gap:12px;">
+          <div class="report-stat">
+            <div class="report-stat-label">Clients</div>
+            <div class="report-stat-value">${totalClients}</div>
+          </div>
+          <div class="report-stat">
+            <div class="report-stat-label">Hours</div>
+            <div class="report-stat-value">${totalHours}</div>
+          </div>
+        </div>
+      </div>
     </div>
 
     ${(svcTotal + tipTotal + rentTotal) > 0 ? `
