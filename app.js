@@ -370,6 +370,33 @@ function _defaultCategoryMap() {
 
 async function loadCategories() {
   try {
+    // If logged in, try loading from Firebase first
+    if (firebaseAuth && firebaseAuth.currentUser) {
+      try {
+        const doc = await firestore.collection('users')
+          .doc(firebaseAuth.currentUser.uid)
+          .collection('settings')
+          .doc('categories')
+          .get();
+        
+        if (doc.exists) {
+          const firestoreCategories = doc.data();
+          console.log('Loaded categories from Firebase');
+          state.categories = {
+            INCOME:          firestoreCategories.INCOME?.length          ? firestoreCategories.INCOME          : _defaultCategoryMap().INCOME,
+            DAILY_EXPENSE:   firestoreCategories.DAILY_EXPENSE?.length   ? firestoreCategories.DAILY_EXPENSE   : _defaultCategoryMap().DAILY_EXPENSE,
+            MONTHLY_EXPENSE: firestoreCategories.MONTHLY_EXPENSE?.length ? firestoreCategories.MONTHLY_EXPENSE : _defaultCategoryMap().MONTHLY_EXPENSE,
+          };
+          // Save to local storage as backup
+          await db.settings.put({ key: 'categories', value: JSON.stringify(state.categories) });
+          return;
+        }
+      } catch (err) {
+        console.log('Firebase categories not available, using local');
+      }
+    }
+    
+    // Fallback to local storage
     const saved = await db.settings.get('categories');
     if (saved?.value) {
       const parsed = JSON.parse(saved.value);
