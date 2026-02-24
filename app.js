@@ -1821,6 +1821,7 @@ async function runMonthlyReport() {
 
   // Net profit calculation: Services + Tips + Booth Rent (income from renters) - Expenses
   const net       = svcTotal + tipTotal + rentTotal - totalExp;
+  const totalIncome = svcTotal + tipTotal + rentTotal;
 
   const monthSums    = sums.filter(s => s.date && s.date.startsWith(monthStr));
   const totalClients = monthSums.reduce((s,d)=>s+(d.clientsSeen||0),0);
@@ -1829,12 +1830,13 @@ async function runMonthlyReport() {
   document.getElementById('report-output').innerHTML = `
     <div class="report-section-title">${monthName(month)} ${year}</div>
     <div class="report-stat-grid">
+      <div class="report-stat"><div class="report-stat-label">Total Income</div><div class="report-stat-value green">${fmt(totalIncome)}</div></div>
+      <div class="report-stat"><div class="report-stat-label">Net Profit</div><div class="report-stat-value plum">${fmt(net)}</div></div>
       <div class="report-stat"><div class="report-stat-label">Services</div><div class="report-stat-value green">${fmt(svcTotal)}</div></div>
       <div class="report-stat"><div class="report-stat-label">Tips</div><div class="report-stat-value gold">${fmt(tipTotal)}</div></div>
-      <div class="report-stat"><div class="report-stat-label">Booth Rent</div><div class="report-stat-value green">${fmt(rentTotal)}</div></div>
+      ${rentTotal > 0 ? `<div class="report-stat"><div class="report-stat-label">Booth Rent</div><div class="report-stat-value green">${fmt(rentTotal)}</div></div>` : ''}
       <div class="report-stat"><div class="report-stat-label">Daily Exp</div><div class="report-stat-value red">${fmt(dExpTotal)}</div></div>
       <div class="report-stat"><div class="report-stat-label">Monthly Exp</div><div class="report-stat-value red">${fmt(mExpTotal)}</div></div>
-      <div class="report-stat"><div class="report-stat-label">Net Profit</div><div class="report-stat-value plum">${fmt(net)}</div></div>
       <div class="report-stat"><div class="report-stat-label">Clients</div><div class="report-stat-value">${totalClients}</div></div>
       <div class="report-stat"><div class="report-stat-label">Hours</div><div class="report-stat-value">${totalHours}</div></div>
     </div>
