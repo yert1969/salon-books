@@ -371,55 +371,73 @@ function _defaultCategoryMap() {
 // This avoids race conditions with Firebase listeners
 
 async function loadCategories() {
+  console.log('🔍 loadCategories() started');
   try {
     // If logged in, try loading from Firebase first
     if (auth && auth.currentUser) {
+      console.log('✓ User logged in:', auth.currentUser.uid);
       try {
+        console.log('📥 Fetching categories from Firebase...');
         const doc = await firestore.collection('users')
           .doc(auth.currentUser.uid)
           .collection('settings')
           .doc('categories')
           .get();
         
+        console.log('Firebase doc exists?', doc.exists);
+        
         if (doc.exists) {
           const firestoreCategories = doc.data();
+          console.log('📦 Firebase data:', JSON.stringify(firestoreCategories));
+          console.log('Firebase has EXPENSE?', !!firestoreCategories.EXPENSE);
+          console.log('Firebase has DAILY_EXPENSE?', !!firestoreCategories.DAILY_EXPENSE);
+          console.log('Firebase has MONTHLY_EXPENSE?', !!firestoreCategories.MONTHLY_EXPENSE);
           
           // Support both old and new formats
           if (firestoreCategories.EXPENSE) {
+            console.log('✓ Using NEW format from Firebase');
+            console.log('EXPENSE count:', firestoreCategories.EXPENSE?.length);
             // New unified format
             state.categories = {
               INCOME: firestoreCategories.INCOME?.length ? firestoreCategories.INCOME : _defaultCategoryMap().INCOME,
               EXPENSE: firestoreCategories.EXPENSE?.length ? firestoreCategories.EXPENSE : _defaultCategoryMap().EXPENSE,
             };
           } else if (firestoreCategories.DAILY_EXPENSE || firestoreCategories.MONTHLY_EXPENSE) {
-            // Old format - merge DAILY_EXPENSE and MONTHLY_EXPENSE
+            console.log('⚠️ Using OLD format from Firebase - migrating locally only');
+            // Old format - merge DAILY_EXPENSE and MONTHLY_EXPENSE locally
+            // Don't auto-save - only user actions should save to Firebase
             const dailyExpenses = firestoreCategories.DAILY_EXPENSE || [];
             const monthlyExpenses = firestoreCategories.MONTHLY_EXPENSE || [];
             const mergedExpenses = [...new Set([...dailyExpenses, ...monthlyExpenses])];
+            console.log('Merged count:', mergedExpenses.length);
             
             state.categories = {
               INCOME: firestoreCategories.INCOME?.length ? firestoreCategories.INCOME : _defaultCategoryMap().INCOME,
               EXPENSE: mergedExpenses.length > 0 ? mergedExpenses : _defaultCategoryMap().EXPENSE,
             };
-            
-            // Save merged format to Firebase (migration)
-            await saveCategories();
           } else {
+            console.log('⚠️ Firebase has no recognized format - using defaults locally');
             // Firebase document exists but has no recognizable fields - use defaults locally
             state.categories = _defaultCategoryMap();
           }
           
+          console.log('✓ Set state.categories - INCOME:', state.categories.INCOME?.length, 'EXPENSE:', state.categories.EXPENSE?.length);
+          
           // Save to local storage as backup
           await db.settings.put({ key: 'categories', value: JSON.stringify(state.categories) });
+          console.log('✓ Saved to local storage');
           return;
         } else {
+          console.log('⚠️ No Firebase document - using defaults locally');
           // No Firebase document - use defaults locally, DON'T save to Firebase
-          console.log('No categories in Firebase yet - using defaults locally');
           state.categories = _defaultCategoryMap();
         }
       } catch (err) {
-        console.log('Firebase categories not available, using local');
+        console.error('❌ Firebase error:', err);
+        console.log('Falling through to local storage...');
       }
+    } else {
+      console.log('⚠️ No user logged in');
     }
     
     // Fallback to local storage
