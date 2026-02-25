@@ -270,7 +270,7 @@ async function signOutUser() {
 // ----------------------------------------------------------------
 
 const state = {
-  currentView:       'daily',
+  currentView:       'entries',
   selectedDate:      todayStr(),
   selectedMonth:     new Date().getMonth() + 1,
   selectedYear:      new Date().getFullYear(),
@@ -279,7 +279,8 @@ const state = {
   pinEnabled:        false,
   rentersWeekStart:  null,
   showRentersTab:    false,  // Updated by updateRentersTabVisibility() on boot
-  categories:        { INCOME: [], DAILY_EXPENSE: [], MONTHLY_EXPENSE: [] },
+  entriesViewMode:   'daily', // 'daily', 'monthly', or 'all'
+  categories:        { INCOME: [], EXPENSE: [] },
 };
 
 // ----------------------------------------------------------------
@@ -354,18 +355,67 @@ function _defaultCategoryMap() {
   return {
     INCOME: [
       'Haircut', 'Color', 'Highlights', 'Blowout', 'Treatment',
-      'Nails', 'Waxing', 'Retail Product', 'Other Service',
+      'Nails', 'Waxing', 'Retail Product', 'Other',
     ],
-    DAILY_EXPENSE: [
+    EXPENSE: [
       'Supplies', 'Products', 'Tools/Equipment', 'Advertising',
-      'Education', 'Meals', 'Employee Pay', 'Misc Daily',
-    ],
-    MONTHLY_EXPENSE: [
-      'Rent', 'Electric', 'Water', 'Gas', 'Insurance',
-      'Cleaning Service', 'Booking Software', 'Phone',
-      'Marketing', 'Misc Monthly',
+      'Education', 'Meals', 'Employee Pay', 'Rent', 'Electric', 
+      'Water', 'Gas', 'Insurance', 'Cleaning Service', 
+      'Booking Software', 'Phone', 'Marketing', 'Other',
     ],
   };
+}
+
+// Real-time category sync listener
+let categoryUnsubscribe = null;
+
+function setupCategoryListener() {
+  if (!firebaseAuth || !firebaseAuth.currentUser) return;
+  
+  // Unsubscribe from previous listener if exists
+  if (categoryUnsubscribe) {
+    categoryUnsubscribe();
+  }
+  
+  // Listen for category changes in Firebase
+  categoryUnsubscribe = firestore.collection('users')
+    .doc(firebaseAuth.currentUser.uid)
+    .collection('settings')
+    .doc('categories')
+    .onSnapshot((doc) => {
+      if (doc.exists) {
+        const firestoreCategories = doc.data();
+        console.log('Categories updated in Firebase, syncing...');
+        
+        // Support both formats
+        if (firestoreCategories.EXPENSE) {
+          state.categories = {
+            INCOME: firestoreCategories.INCOME || _defaultCategoryMap().INCOME,
+            EXPENSE: firestoreCategories.EXPENSE || _defaultCategoryMap().EXPENSE
+          };
+        } else {
+          // Merge old format
+          const dailyExpenses = firestoreCategories.DAILY_EXPENSE || [];
+          const monthlyExpenses = firestoreCategories.MONTHLY_EXPENSE || [];
+          const mergedExpenses = [...new Set([...dailyExpenses, ...monthlyExpenses])];
+          
+          state.categories = {
+            INCOME: firestoreCategories.INCOME || _defaultCategoryMap().INCOME,
+            EXPENSE: mergedExpenses.length > 0 ? mergedExpenses : _defaultCategoryMap().EXPENSE
+          };
+        }
+        
+        // Save to local storage
+        db.settings.put({ key: 'categories', value: JSON.stringify(state.categories) });
+        
+        // Reload current view if on a category-dependent screen
+        if (['daily', 'monthly', 'settings'].includes(state.currentView)) {
+          navigate(state.currentView);
+        }
+      }
+    }, (error) => {
+      console.error('Category listener error:', error);
+    });
 }
 
 async function loadCategories() {
@@ -382,13 +432,34 @@ async function loadCategories() {
         if (doc.exists) {
           const firestoreCategories = doc.data();
           console.log('Loaded categories from Firebase');
-          state.categories = {
-            INCOME:          firestoreCategories.INCOME?.length          ? firestoreCategories.INCOME          : _defaultCategoryMap().INCOME,
-            DAILY_EXPENSE:   firestoreCategories.DAILY_EXPENSE?.length   ? firestoreCategories.DAILY_EXPENSE   : _defaultCategoryMap().DAILY_EXPENSE,
-            MONTHLY_EXPENSE: firestoreCategories.MONTHLY_EXPENSE?.length ? firestoreCategories.MONTHLY_EXPENSE : _defaultCategoryMap().MONTHLY_EXPENSE,
-          };
+          
+          // Support both old and new formats
+          if (firestoreCategories.EXPENSE) {
+            // New unified format
+            state.categories = {
+              INCOME: firestoreCategories.INCOME?.length ? firestoreCategories.INCOME : _defaultCategoryMap().INCOME,
+              EXPENSE: firestoreCategories.EXPENSE?.length ? firestoreCategories.EXPENSE : _defaultCategoryMap().EXPENSE,
+            };
+          } else {
+            // Old format - merge DAILY_EXPENSE and MONTHLY_EXPENSE
+            const dailyExpenses = firestoreCategories.DAILY_EXPENSE || [];
+            const monthlyExpenses = firestoreCategories.MONTHLY_EXPENSE || [];
+            const mergedExpenses = [...new Set([...dailyExpenses, ...monthlyExpenses])];
+            
+            state.categories = {
+              INCOME: firestoreCategories.INCOME?.length ? firestoreCategories.INCOME : _defaultCategoryMap().INCOME,
+              EXPENSE: mergedExpenses.length > 0 ? mergedExpenses : _defaultCategoryMap().EXPENSE,
+            };
+            
+            // Save merged format back to Firebase
+            await saveCategories();
+          }
+          
           // Save to local storage as backup
           await db.settings.put({ key: 'categories', value: JSON.stringify(state.categories) });
+          
+          // Set up real-time listener
+          setupCategoryListener();
           return;
         }
       } catch (err) {
@@ -400,11 +471,24 @@ async function loadCategories() {
     const saved = await db.settings.get('categories');
     if (saved?.value) {
       const parsed = JSON.parse(saved.value);
-      state.categories = {
-        INCOME:          parsed.INCOME?.length          ? parsed.INCOME          : _defaultCategoryMap().INCOME,
-        DAILY_EXPENSE:   parsed.DAILY_EXPENSE?.length   ? parsed.DAILY_EXPENSE   : _defaultCategoryMap().DAILY_EXPENSE,
-        MONTHLY_EXPENSE: parsed.MONTHLY_EXPENSE?.length ? parsed.MONTHLY_EXPENSE : _defaultCategoryMap().MONTHLY_EXPENSE,
-      };
+      
+      // Support both formats
+      if (parsed.EXPENSE) {
+        state.categories = {
+          INCOME: parsed.INCOME?.length ? parsed.INCOME : _defaultCategoryMap().INCOME,
+          EXPENSE: parsed.EXPENSE?.length ? parsed.EXPENSE : _defaultCategoryMap().EXPENSE,
+        };
+      } else {
+        // Merge old format
+        const dailyExpenses = parsed.DAILY_EXPENSE || [];
+        const monthlyExpenses = parsed.MONTHLY_EXPENSE || [];
+        const mergedExpenses = [...new Set([...dailyExpenses, ...monthlyExpenses])];
+        
+        state.categories = {
+          INCOME: parsed.INCOME?.length ? parsed.INCOME : _defaultCategoryMap().INCOME,
+          EXPENSE: mergedExpenses.length > 0 ? mergedExpenses : _defaultCategoryMap().EXPENSE,
+        };
+      }
     } else {
       state.categories = _defaultCategoryMap();
       await saveCategories();
@@ -510,7 +594,7 @@ function navigate(view) {
   state.currentView = view;
   
   // Update all nav buttons
-  ['daily', 'monthly', 'renters', 'reports', 'settings'].forEach(v => {
+  ['entries', 'renters', 'reports', 'settings'].forEach(v => {
     const btn = document.getElementById('nav-' + v);
     if (btn) {
       btn.classList.toggle('active', v === view);
@@ -527,8 +611,7 @@ function navigate(view) {
   }
   
   const titles = {
-    daily:    'Daily Log',
-    monthly:  'Monthly Expenses',
+    entries:  'Entries',
     renters:  'Booth Renters',
     reports:  'Reports',
     settings: 'Settings',
@@ -536,8 +619,7 @@ function navigate(view) {
   document.getElementById('view-title').textContent = titles[view] || '';
   
   const views = {
-    daily:    () => safeRender(renderDailyView, 'Daily Log'),
-    monthly:  () => safeRender(renderMonthlyView, 'Monthly Expenses'),
+    entries:  () => safeRender(renderEntriesView, 'Entries'),
     renters:  () => safeRender(renderRentersView, 'Booth Renters'),
     reports:  () => safeRender(renderReportsView, 'Reports'),
     settings: () => safeRender(renderSettingsView, 'Settings'),
@@ -548,6 +630,431 @@ function navigate(view) {
 // ----------------------------------------------------------------
 // 9. DAILY VIEW
 // ----------------------------------------------------------------
+
+// ----------------------------------------------------------------
+// ENTRIES VIEW (Unified Income/Expense Entry)
+// ----------------------------------------------------------------
+
+async function renderEntriesView() {
+  const content = document.getElementById('app-content');
+  const hdr = document.getElementById('header-actions');
+  hdr.innerHTML = '';
+  
+  const viewMode = state.entriesViewMode || 'daily';
+  
+  content.innerHTML = `
+    <div class="mobile-tabs" style="display:flex; gap:8px; margin-bottom:20px; border-bottom:2px solid var(--border); padding-bottom:0;">
+      <button class="mobile-tab ${viewMode === 'daily' ? 'active' : ''}" onclick="switchEntriesView('daily')" style="flex:1; padding:12px; background:none; border:none; border-bottom:3px solid ${viewMode === 'daily' ? 'var(--plum)' : 'transparent'}; font-size:14px; font-weight:${viewMode === 'daily' ? '600' : '500'}; color:${viewMode === 'daily' ? 'var(--plum)' : 'var(--text-muted)'}; margin-bottom:-2px;">
+        Daily
+      </button>
+      <button class="mobile-tab ${viewMode === 'monthly' ? 'active' : ''}" onclick="switchEntriesView('monthly')" style="flex:1; padding:12px; background:none; border:none; border-bottom:3px solid ${viewMode === 'monthly' ? 'var(--plum)' : 'transparent'}; font-size:14px; font-weight:${viewMode === 'monthly' ? '600' : '500'}; color:${viewMode === 'monthly' ? 'var(--plum)' : 'var(--text-muted)'}; margin-bottom:-2px;">
+        Monthly
+      </button>
+      <button class="mobile-tab ${viewMode === 'all' ? 'active' : ''}" onclick="switchEntriesView('all')" style="flex:1; padding:12px; background:none; border:none; border-bottom:3px solid ${viewMode === 'all' ? 'var(--plum)' : 'transparent'}; font-size:14px; font-weight:${viewMode === 'all' ? '600' : '500'}; color:${viewMode === 'all' ? 'var(--plum)' : 'var(--text-muted)'}; margin-bottom:-2px;">
+        All
+      </button>
+    </div>
+    
+    <div class="card" style="margin-bottom:20px;">
+      <h3 style="font-size:16px; margin-bottom:16px; font-weight:600;">Add Transaction</h3>
+      
+      <div class="form-group">
+        <label class="form-label" style="font-size:13px; margin-bottom:8px; display:block; font-weight:500;">Type</label>
+        <div style="display:flex; gap:16px;">
+          <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+            <input type="radio" name="entry-type" value="INCOME" checked onchange="updateEntryForm()" style="width:20px; height:20px;">
+            <span style="font-size:14px;">Income</span>
+          </label>
+          <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+            <input type="radio" name="entry-type" value="EXPENSE" onchange="updateEntryForm()" style="width:20px; height:20px;">
+            <span style="font-size:14px;">Expense</span>
+          </label>
+        </div>
+      </div>
+      
+      <div class="form-group hidden" id="frequency-section">
+        <label class="form-label" style="font-size:13px; margin-bottom:8px; display:block; font-weight:500;">Frequency</label>
+        <div style="display:flex; gap:16px;">
+          <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+            <input type="radio" name="entry-frequency" value="DAILY" checked onchange="updateEntryForm()" style="width:20px; height:20px;">
+            <span style="font-size:14px;">Daily</span>
+          </label>
+          <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+            <input type="radio" name="entry-frequency" value="MONTHLY" onchange="updateEntryForm()" style="width:20px; height:20px;">
+            <span style="font-size:14px;">Monthly</span>
+          </label>
+        </div>
+      </div>
+      
+      <div class="form-group">
+        <label class="form-label" style="font-size:13px; margin-bottom:8px; display:block; font-weight:500;">Category</label>
+        <select id="entry-category" class="form-select" style="width:100%; padding:12px; font-size:14px;"></select>
+      </div>
+      
+      <div class="form-group">
+        <label class="form-label" style="font-size:13px; margin-bottom:8px; display:block; font-weight:500;">Amount</label>
+        <input type="number" id="entry-amount" class="form-input" step="0.01" placeholder="0.00" style="width:100%; padding:12px; font-size:16px;">
+      </div>
+      
+      <div class="form-group" id="date-section">
+        <label class="form-label" style="font-size:13px; margin-bottom:8px; display:block; font-weight:500;">Date</label>
+        <input type="date" id="entry-date" class="form-input" value="${state.selectedDate}" style="width:100%; padding:12px; font-size:14px;">
+      </div>
+      
+      <div class="form-group hidden" id="month-section">
+        <label class="form-label" style="font-size:13px; margin-bottom:8px; display:block; font-weight:500;">Month</label>
+        <select id="entry-month" class="form-select" style="width:100%; padding:12px; font-size:14px;">
+          ${Array.from({length:12}, (_,i) => i+1).map(m => 
+            `<option value="${m}" ${m === state.selectedMonth ? 'selected' : ''}>${monthName(m)}</option>`
+          ).join('')}
+        </select>
+      </div>
+      
+      <div class="form-group hidden" id="year-section">
+        <label class="form-label" style="font-size:13px; margin-bottom:8px; display:block; font-weight:500;">Year</label>
+        <select id="entry-year" class="form-select" style="width:100%; padding:12px; font-size:14px;">
+          ${[2023,2024,2025,2026,2027].map(y => 
+            `<option value="${y}" ${y === state.selectedYear ? 'selected' : ''}>${y}</option>`
+          ).join('')}
+        </select>
+      </div>
+      
+      <div class="form-group">
+        <label class="form-label" style="font-size:13px; margin-bottom:8px; display:block; font-weight:500;">Notes (optional)</label>
+        <input type="text" id="entry-notes" class="form-input" placeholder="Add notes..." style="width:100%; padding:12px; font-size:14px;">
+      </div>
+      
+      <button class="btn-primary" onclick="saveEntryTransaction()" style="width:100%; padding:14px; font-size:15px; font-weight:600; margin-top:8px;">
+        Add Entry
+      </button>
+    </div>
+    
+    <div id="entries-content"></div>
+  `;
+  
+  updateEntryForm();
+  await renderEntriesContent();
+}
+
+function updateEntryForm() {
+  const type = document.querySelector('input[name="entry-type"]:checked')?.value || 'INCOME';
+  const frequency = document.querySelector('input[name="entry-frequency"]:checked')?.value || 'DAILY';
+  
+  const frequencySection = document.getElementById('frequency-section');
+  const dateSection = document.getElementById('date-section');
+  const monthSection = document.getElementById('month-section');
+  const yearSection = document.getElementById('year-section');
+  const categorySelect = document.getElementById('entry-category');
+  
+  // Show/hide frequency for expenses only
+  if (type === 'EXPENSE') {
+    frequencySection?.classList.remove('hidden');
+  } else {
+    frequencySection?.classList.add('hidden');
+  }
+  
+  // Show date for income and daily expenses, show month/year for monthly expenses
+  if (type === 'EXPENSE' && frequency === 'MONTHLY') {
+    dateSection?.classList.add('hidden');
+    monthSection?.classList.remove('hidden');
+    yearSection?.classList.remove('hidden');
+  } else {
+    dateSection?.classList.remove('hidden');
+    monthSection?.classList.add('hidden');
+    yearSection?.classList.add('hidden');
+  }
+  
+  // Update category dropdown
+  if (categorySelect) {
+    const categories = type === 'INCOME' ? state.categories.INCOME : state.categories.EXPENSE;
+    categorySelect.innerHTML = categories.map(cat => `<option value="${cat}">${cat}</option>`).join('');
+  }
+}
+
+async function saveEntryTransaction() {
+  const type = document.querySelector('input[name="entry-type"]:checked')?.value;
+  const frequency = document.querySelector('input[name="entry-frequency"]:checked')?.value || 'DAILY';
+  const category = document.getElementById('entry-category')?.value;
+  const amount = parseFloat(document.getElementById('entry-amount')?.value);
+  const notes = document.getElementById('entry-notes')?.value.trim() || '';
+  
+  if (!amount || amount <= 0) {
+    showToast('Please enter a valid amount');
+    return;
+  }
+  
+  try {
+    if (type === 'INCOME') {
+      // Save as income transaction
+      const date = document.getElementById('entry-date').value;
+      const transaction = {
+        userId: firebaseAuth.currentUser.uid,
+        date: date,
+        type: 'INCOME',
+        category: category,
+        serviceAmount: amount,
+        tipAmount: 0,
+        notes: notes,
+        createdAt: firebase.firestore.Timestamp.now()
+      };
+      
+      const docRef = await firestore.collection('users').doc(firebaseAuth.currentUser.uid).collection('transactions').add(transaction);
+      await db.transactions.add({ id: docRef.id, ...transaction });
+      
+    } else if (frequency === 'DAILY') {
+      // Save as daily expense transaction
+      const date = document.getElementById('entry-date').value;
+      const transaction = {
+        userId: firebaseAuth.currentUser.uid,
+        date: date,
+        type: 'EXPENSE',
+        category: category,
+        amount: amount,
+        notes: notes,
+        createdAt: firebase.firestore.Timestamp.now()
+      };
+      
+      const docRef = await firestore.collection('users').doc(firebaseAuth.currentUser.uid).collection('transactions').add(transaction);
+      await db.transactions.add({ id: docRef.id, ...transaction });
+      
+    } else {
+      // Save as monthly expense
+      const month = parseInt(document.getElementById('entry-month').value);
+      const year = parseInt(document.getElementById('entry-year').value);
+      
+      const expense = {
+        userId: firebaseAuth.currentUser.uid,
+        year: year,
+        month: month,
+        category: category,
+        amount: amount,
+        notes: notes,
+        createdAt: firebase.firestore.Timestamp.now()
+      };
+      
+      const docRef = await firestore.collection('users').doc(firebaseAuth.currentUser.uid).collection('monthlyExpenses').add(expense);
+      await db.monthlyExpenses.add({ id: docRef.id, ...expense });
+    }
+    
+    // Clear form
+    document.getElementById('entry-amount').value = '';
+    document.getElementById('entry-notes').value = '';
+    
+    showToast('Entry added');
+    await renderEntriesContent();
+    
+  } catch (error) {
+    console.error('Error saving entry:', error);
+    showToast('Error saving entry');
+  }
+}
+
+async function renderEntriesContent() {
+  const viewMode = state.entriesViewMode || 'daily';
+  const entriesContent = document.getElementById('entries-content');
+  if (!entriesContent) return;
+  
+  if (viewMode === 'daily') {
+    await renderDailyEntries(entriesContent);
+  } else if (viewMode === 'monthly') {
+    await renderMonthlyEntries(entriesContent);
+  } else {
+    await renderAllEntries(entriesContent);
+  }
+}
+
+async function renderDailyEntries(container) {
+  const dateObj = new Date(state.selectedDate + 'T00:00:00');
+  const dateDisplay = dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  
+  container.innerHTML = `
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:16px; padding:12px; background:var(--cream); border-radius:8px;">
+      <button class="btn-secondary" onclick="changeEntriesDate(-1)" style="padding:10px 14px; font-size:13px;">←</button>
+      <input type="date" class="form-input" style="flex:1; padding:10px; font-size:13px;" value="${state.selectedDate}" onchange="state.selectedDate=this.value; renderEntriesContent()">
+      <button class="btn-secondary" onclick="changeEntriesDate(1)" style="padding:10px 14px; font-size:13px;">→</button>
+    </div>
+    <button class="btn-secondary" onclick="state.selectedDate=todayStr(); renderEntriesContent()" style="width:100%; margin-bottom:16px; padding:10px; font-size:13px;">Today</button>
+    <div id="daily-entries-list"></div>
+  `;
+  
+  const transactions = await db.transactions.where('date').equals(state.selectedDate).toArray();
+  const listEl = document.getElementById('daily-entries-list');
+  
+  if (transactions.length === 0) {
+    listEl.innerHTML = `
+      <div style="text-align:center; padding:40px 20px; color:var(--text-muted);">
+        <div style="font-size:48px; margin-bottom:12px; opacity:0.3;">📋</div>
+        <div style="font-size:14px;">No entries for ${dateDisplay}</div>
+      </div>
+    `;
+    return;
+  }
+  
+  transactions.sort((a, b) => {
+    const aTime = a.createdAt?.toDate?.() || new Date(0);
+    const bTime = b.createdAt?.toDate?.() || new Date(0);
+    return bTime - aTime;
+  });
+  
+  listEl.innerHTML = transactions.map(t => {
+    const isIncome = t.type === 'INCOME';
+    const amount = isIncome ? (t.serviceAmount || 0) + (t.tipAmount || 0) : (t.amount || 0);
+    const icon = isIncome ? '💰' : '💸';
+    const amountClass = isIncome ? 'positive' : 'negative';
+    const sign = isIncome ? '+' : '-';
+    
+    return `
+      <div class="card" style="margin-bottom:12px; padding:14px;">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:12px;">
+          <div style="display:flex; align-items:center; flex:1;">
+            <span style="font-size:24px; margin-right:12px;">${icon}</span>
+            <div>
+              <div style="font-size:15px; font-weight:600; margin-bottom:2px;">${t.category}</div>
+              <div style="font-size:12px; color:var(--text-muted);">${isIncome ? 'Income' : 'Daily Expense'}</div>
+            </div>
+          </div>
+          <span class="summary-amount ${amountClass}" style="font-size:18px; font-weight:700;">${sign}${fmt(amount)}</span>
+        </div>
+        <div style="display:flex; gap:8px;">
+          <button class="btn-secondary" onclick="deleteDailyEntry('${t.id}')" style="flex:1; padding:8px; font-size:13px;">Delete</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+async function renderMonthlyEntries(container) {
+  const monthDisplay = `${monthName(state.selectedMonth)} ${state.selectedYear}`;
+  
+  container.innerHTML = `
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:16px; padding:12px; background:var(--cream); border-radius:8px;">
+      <button class="btn-secondary" onclick="changeEntriesMonth(-1)" style="padding:10px 14px; font-size:13px;">←</button>
+      <div style="flex:1; text-align:center; font-size:14px; font-weight:600;">${monthDisplay}</div>
+      <button class="btn-secondary" onclick="changeEntriesMonth(1)" style="padding:10px 14px; font-size:13px;">→</button>
+    </div>
+    <button class="btn-secondary" onclick="goToCurrentEntriesMonth()" style="width:100%; margin-bottom:16px; padding:10px; font-size:13px;">Current Month</button>
+    <div id="monthly-entries-list"></div>
+  `;
+  
+  const expenses = await db.monthlyExpenses
+    .where('year').equals(state.selectedYear)
+    .and(e => e.month === state.selectedMonth)
+    .toArray();
+  
+  const listEl = document.getElementById('monthly-entries-list');
+  
+  if (expenses.length === 0) {
+    listEl.innerHTML = `
+      <div style="text-align:center; padding:40px 20px; color:var(--text-muted);">
+        <div style="font-size:48px; margin-bottom:12px; opacity:0.3;">📋</div>
+        <div style="font-size:14px;">No monthly expenses for ${monthDisplay}</div>
+      </div>
+    `;
+    return;
+  }
+  
+  expenses.sort((a, b) => a.category.localeCompare(b.category));
+  
+  listEl.innerHTML = expenses.map(e => {
+    return `
+      <div class="card" style="margin-bottom:12px; padding:14px;">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:12px;">
+          <div style="display:flex; align-items:center; flex:1;">
+            <span style="font-size:24px; margin-right:12px;">🏠</span>
+            <div>
+              <div style="font-size:15px; font-weight:600; margin-bottom:2px;">${e.category}</div>
+              <div style="font-size:12px; color:var(--text-muted);">Monthly Expense</div>
+            </div>
+          </div>
+          <span class="summary-amount negative" style="font-size:18px; font-weight:700;">-${fmt(e.amount)}</span>
+        </div>
+        <div style="display:flex; gap:8px;">
+          <button class="btn-secondary" onclick="deleteMonthlyExpenseEntry('${e.id}')" style="flex:1; padding:8px; font-size:13px;">Delete</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+async function renderAllEntries(container) {
+  container.innerHTML = `
+    <div style="text-align:center; padding:40px 20px; color:var(--text-muted);">
+      <div style="font-size:48px; margin-bottom:16px; opacity:0.3;">📋</div>
+      <div style="font-size:14px;">All entries view coming soon</div>
+    </div>
+  `;
+}
+
+function switchEntriesView(mode) {
+  state.entriesViewMode = mode;
+  renderEntriesView();
+}
+
+function changeEntriesDate(days) {
+  state.selectedDate = addDays(state.selectedDate, days);
+  renderEntriesContent();
+}
+
+function changeEntriesMonth(months) {
+  let newMonth = state.selectedMonth + months;
+  let newYear = state.selectedYear;
+  
+  if (newMonth > 12) {
+    newMonth = 1;
+    newYear++;
+  } else if (newMonth < 1) {
+    newMonth = 12;
+    newYear--;
+  }
+  
+  state.selectedMonth = newMonth;
+  state.selectedYear = newYear;
+  renderEntriesContent();
+}
+
+function goToCurrentEntriesMonth() {
+  const now = new Date();
+  state.selectedMonth = now.getMonth() + 1;
+  state.selectedYear = now.getFullYear();
+  renderEntriesContent();
+}
+
+async function deleteDailyEntry(id) {
+  const transaction = await db.transactions.get(id);
+  if (!transaction) return;
+  
+  const isIncome = transaction.type === 'INCOME';
+  const amount = isIncome ? (transaction.serviceAmount || 0) + (transaction.tipAmount || 0) : (transaction.amount || 0);
+  
+  if (!confirm(`Delete ${transaction.category} (${fmt(amount)})?`)) return;
+  
+  try {
+    await firestore.collection('users').doc(firebaseAuth.currentUser.uid).collection('transactions').doc(id).delete();
+    await db.transactions.delete(id);
+    showToast('Deleted');
+    renderEntriesContent();
+  } catch (err) {
+    console.error('Delete error:', err);
+    showToast('Error deleting');
+  }
+}
+
+async function deleteMonthlyExpenseEntry(id) {
+  const e = await db.monthlyExpenses.get(id);
+  if (!e) return;
+  
+  if (!confirm(`Delete ${e.category} (${fmt(e.amount)})?`)) return;
+  
+  try {
+    await firestore.collection('users').doc(firebaseAuth.currentUser.uid).collection('monthlyExpenses').doc(id).delete();
+    await db.monthlyExpenses.delete(id);
+    showToast('Deleted');
+    renderEntriesContent();
+  } catch (err) {
+    console.error('Delete error:', err);
+    showToast('Error deleting');
+  }
+}
 
 async function renderDailyView() {
   const content = document.getElementById('app-content');
@@ -3093,7 +3600,7 @@ async function checkPin() {
       
           
       // Call navigate to update tab visibility and render the view
-      navigate('daily');
+      navigate('entries');
       
           
       // Give renderDailyView a moment to complete
@@ -3659,7 +4166,7 @@ async function importBackup(file) {
       setTimeout(() => {
         closeModal();
         showToast('Restore complete ✓');
-        navigate('daily');
+        navigate('entries');
       }, 500);
 
     } catch (err) {
@@ -3703,7 +4210,7 @@ async function importBackup(file) {
 
         closeModal();
         showToast('Restore failed - your original data has been preserved ✓');
-        navigate('daily');
+        navigate('entries');
 
       } catch (rollbackErr) {
         console.error('Rollback also failed!', rollbackErr);
@@ -3815,7 +4322,7 @@ async function bootApp() {
     initPINPad();
   } else {
     document.getElementById('app').classList.remove('hidden');
-    navigate('daily');
+    navigate('entries');
   }
 }
 
