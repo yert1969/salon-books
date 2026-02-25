@@ -504,12 +504,14 @@ function categoryOptions(type) {
       ...(state.categories.MONTHLY_EXPENSE || [])
     ];
     return allExpenseCategories
+      .sort()  // Sort alphabetically
       .map(name => `<option value="${name}">${name}</option>`)
       .join('');
   }
   
   // For income, use income categories
   return (state.categories[type] || [])
+    .sort()  // Sort alphabetically
     .map(name => `<option value="${name}">${name}</option>`)
     .join('');
 }
@@ -3523,22 +3525,23 @@ async function saveBusinessName() {
 }
 
 function loadCategoryChips() {
-  // Income categories
+  // Income categories - sorted alphabetically
   const incomeEl = document.getElementById('income-cats');
   if (incomeEl) {
-    incomeEl.innerHTML = (state.categories.INCOME || []).map(name =>
+    const sortedIncome = [...(state.categories.INCOME || [])].sort();
+    incomeEl.innerHTML = sortedIncome.map(name =>
       `<span class="category-chip">${name}
         <button class="chip-delete" onclick="deleteCategory('INCOME','${name.replace(/'/g,"\\'")}')">×</button>
       </span>`
     ).join('');
   }
   
-  // Unified expense categories
+  // Unified expense categories - sorted alphabetically
   const expenseEl = document.getElementById('all-exp-cats');
   if (expenseEl) {
-    const allExpenses = state.categories.EXPENSE || [];
+    const sortedExpenses = [...(state.categories.EXPENSE || [])].sort();
     
-    expenseEl.innerHTML = allExpenses.map(name => {
+    expenseEl.innerHTML = sortedExpenses.map(name => {
       return `<span class="category-chip">${name}
         <button class="chip-delete" onclick="deleteCategory('EXPENSE','${name.replace(/'/g,"\\'")}')">×</button>
       </span>`;
