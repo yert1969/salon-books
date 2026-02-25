@@ -936,40 +936,94 @@ async function renderMonthlyEntries(container) {
     <div id="monthly-entries-list"></div>
   `;
   
-  const expenses = await db.monthlyExpenses
-    .where('year').equals(state.selectedYear)
-    .and(e => e.month === state.selectedMonth)
+  // Get all daily transactions for this month
+  const year = state.selectedYear;
+  const month = state.selectedMonth;
+  const startDate = `${year}-${String(month).padStart(2, '0')}-01`;
+  const endDate = month === 12 
+    ? `${year + 1}-01-01` 
+    : `${year}-${String(month + 1).padStart(2, '0')}-01`;
+  
+  const dailyTransactions = await db.transactions
+    .where('date')
+    .between(startDate, endDate, true, false)
+    .toArray();
+  
+  // Get monthly expenses for this month
+  const monthlyExpenses = await db.monthlyExpenses
+    .where('year').equals(year)
+    .and(e => e.month === month)
     .toArray();
   
   const listEl = document.getElementById('monthly-entries-list');
   
-  if (expenses.length === 0) {
+  if (dailyTransactions.length === 0 && monthlyExpenses.length === 0) {
     listEl.innerHTML = `
       <div style="text-align:center; padding:40px 20px; color:var(--text-muted);">
         <div style="font-size:48px; margin-bottom:12px; opacity:0.3;">📋</div>
-        <div style="font-size:14px;">No monthly expenses for ${monthDisplay}</div>
+        <div style="font-size:14px;">No entries for ${monthDisplay}</div>
       </div>
     `;
     return;
   }
   
-  expenses.sort((a, b) => a.category.localeCompare(b.category));
+  // Combine and sort all entries
+  const allEntries = [];
   
-  listEl.innerHTML = expenses.map(e => {
+  // Add daily transactions
+  dailyTransactions.forEach(t => {
+    const isIncome = t.type === 'INCOME';
+    const amount = isIncome ? (t.serviceAmount || 0) + (t.tipAmount || 0) : (t.amount || 0);
+    allEntries.push({
+      id: t.id,
+      date: t.date,
+      type: isIncome ? 'income' : 'daily-expense',
+      category: t.category,
+      amount: amount,
+      isIncome: isIncome,
+      sortDate: t.date,
+      createdAt: t.createdAt
+    });
+  });
+  
+  // Add monthly expenses (show at top of month)
+  monthlyExpenses.forEach(e => {
+    allEntries.push({
+      id: e.id,
+      date: `${year}-${String(month).padStart(2, '0')}-01`,
+      type: 'monthly-expense',
+      category: e.category,
+      amount: e.amount,
+      isIncome: false,
+      sortDate: `${year}-${String(month).padStart(2, '0')}-00`, // Sort before daily entries
+      createdAt: e.createdAt
+    });
+  });
+  
+  // Sort by date (newest first)
+  allEntries.sort((a, b) => b.sortDate.localeCompare(a.sortDate));
+  
+  listEl.innerHTML = allEntries.map(entry => {
+    const icon = entry.type === 'income' ? '💰' : entry.type === 'monthly-expense' ? '🏠' : '💸';
+    const amountClass = entry.isIncome ? 'positive' : 'negative';
+    const sign = entry.isIncome ? '+' : '-';
+    const typeLabel = entry.type === 'income' ? 'Income' : entry.type === 'monthly-expense' ? 'Monthly Expense' : 'Daily Expense';
+    const dateDisplay = new Date(entry.date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    
     return `
       <div class="card" style="margin-bottom:12px; padding:14px;">
         <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:12px;">
           <div style="display:flex; align-items:center; flex:1;">
-            <span style="font-size:24px; margin-right:12px;">🏠</span>
+            <span style="font-size:24px; margin-right:12px;">${icon}</span>
             <div>
-              <div style="font-size:15px; font-weight:600; margin-bottom:2px;">${e.category}</div>
-              <div style="font-size:12px; color:var(--text-muted);">Monthly Expense</div>
+              <div style="font-size:15px; font-weight:600; margin-bottom:2px;">${entry.category}</div>
+              <div style="font-size:12px; color:var(--text-muted);">${typeLabel} • ${dateDisplay}</div>
             </div>
           </div>
-          <span class="summary-amount negative" style="font-size:18px; font-weight:700;">-${fmt(e.amount)}</span>
+          <span class="summary-amount ${amountClass}" style="font-size:18px; font-weight:700;">${sign}${fmt(entry.amount)}</span>
         </div>
         <div style="display:flex; gap:8px;">
-          <button class="btn-secondary" onclick="deleteMonthlyExpenseEntry('${e.id}')" style="flex:1; padding:8px; font-size:13px;">Delete</button>
+          <button class="btn-secondary" onclick="${entry.type === 'monthly-expense' ? 'deleteMonthlyExpenseEntry' : 'deleteDailyEntry'}('${entry.id}')" style="flex:1; padding:8px; font-size:13px;">Delete</button>
         </div>
       </div>
     `;
@@ -978,11 +1032,111 @@ async function renderMonthlyEntries(container) {
 
 async function renderAllEntries(container) {
   container.innerHTML = `
-    <div style="text-align:center; padding:40px 20px; color:var(--text-muted);">
-      <div style="font-size:48px; margin-bottom:16px; opacity:0.3;">📋</div>
-      <div style="font-size:14px;">All entries view coming soon</div>
+    <div style="margin-bottom:16px; padding:12px; background:var(--cream); border-radius:8px; text-align:center;">
+      <div style="font-size:14px; font-weight:600; color:var(--text);">All Transactions</div>
+      <div style="font-size:12px; color:var(--text-muted); margin-top:4px;">Showing most recent 50</div>
     </div>
+    <div id="all-entries-list"></div>
   `;
+  
+  // Get all daily transactions (last 50)
+  const dailyTransactions = await db.transactions
+    .orderBy('date')
+    .reverse()
+    .limit(50)
+    .toArray();
+  
+  // Get all monthly expenses
+  const monthlyExpenses = await db.monthlyExpenses
+    .toArray();
+  
+  const listEl = document.getElementById('all-entries-list');
+  
+  if (dailyTransactions.length === 0 && monthlyExpenses.length === 0) {
+    listEl.innerHTML = `
+      <div style="text-align:center; padding:40px 20px; color:var(--text-muted);">
+        <div style="font-size:48px; margin-bottom:12px; opacity:0.3;">📋</div>
+        <div style="font-size:14px;">No transactions yet</div>
+      </div>
+    `;
+    return;
+  }
+  
+  // Combine all entries
+  const allEntries = [];
+  
+  // Add daily transactions
+  dailyTransactions.forEach(t => {
+    const isIncome = t.type === 'INCOME';
+    const amount = isIncome ? (t.serviceAmount || 0) + (t.tipAmount || 0) : (t.amount || 0);
+    allEntries.push({
+      id: t.id,
+      date: t.date,
+      type: isIncome ? 'income' : 'daily-expense',
+      category: t.category,
+      amount: amount,
+      isIncome: isIncome,
+      sortDate: t.date,
+      createdAt: t.createdAt
+    });
+  });
+  
+  // Add monthly expenses
+  monthlyExpenses.forEach(e => {
+    const dateStr = `${e.year}-${String(e.month).padStart(2, '0')}-01`;
+    allEntries.push({
+      id: e.id,
+      date: dateStr,
+      type: 'monthly-expense',
+      category: e.category,
+      amount: e.amount,
+      isIncome: false,
+      sortDate: dateStr,
+      monthYear: `${monthName(e.month)} ${e.year}`,
+      createdAt: e.createdAt
+    });
+  });
+  
+  // Sort by date (newest first)
+  allEntries.sort((a, b) => {
+    const dateCompare = b.sortDate.localeCompare(a.sortDate);
+    if (dateCompare !== 0) return dateCompare;
+    // If same date, sort by createdAt
+    const aTime = a.createdAt?.toDate?.() || new Date(0);
+    const bTime = b.createdAt?.toDate?.() || new Date(0);
+    return bTime - aTime;
+  });
+  
+  // Take only first 50
+  const displayEntries = allEntries.slice(0, 50);
+  
+  listEl.innerHTML = displayEntries.map(entry => {
+    const icon = entry.type === 'income' ? '💰' : entry.type === 'monthly-expense' ? '🏠' : '💸';
+    const amountClass = entry.isIncome ? 'positive' : 'negative';
+    const sign = entry.isIncome ? '+' : '-';
+    const typeLabel = entry.type === 'income' ? 'Income' : entry.type === 'monthly-expense' ? 'Monthly Expense' : 'Daily Expense';
+    const dateDisplay = entry.type === 'monthly-expense' 
+      ? entry.monthYear
+      : new Date(entry.date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    
+    return `
+      <div class="card" style="margin-bottom:12px; padding:14px;">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:12px;">
+          <div style="display:flex; align-items:center; flex:1;">
+            <span style="font-size:24px; margin-right:12px;">${icon}</span>
+            <div>
+              <div style="font-size:15px; font-weight:600; margin-bottom:2px;">${entry.category}</div>
+              <div style="font-size:12px; color:var(--text-muted);">${typeLabel} • ${dateDisplay}</div>
+            </div>
+          </div>
+          <span class="summary-amount ${amountClass}" style="font-size:18px; font-weight:700;">${sign}${fmt(entry.amount)}</span>
+        </div>
+        <div style="display:flex; gap:8px;">
+          <button class="btn-secondary" onclick="${entry.type === 'monthly-expense' ? 'deleteMonthlyExpenseEntry' : 'deleteDailyEntry'}('${entry.id}')" style="flex:1; padding:8px; font-size:13px;">Delete</button>
+        </div>
+      </div>
+    `;
+  }).join('');
 }
 
 function switchEntriesView(mode) {
