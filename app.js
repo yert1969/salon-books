@@ -904,8 +904,9 @@ async function renderDailyEntries(container) {
     const sign = isIncome ? '+' : '-';
     
     return `
-      <div class="card" style="margin-bottom:12px; padding:14px;">
-        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:12px;">
+      <div class="card" style="margin-bottom:12px; padding:14px; position:relative;">
+        <button onclick="deleteDailyEntry('${t.id}')" style="position:absolute; left:14px; top:50%; transform:translateY(-50%); background:none; border:none; font-size:20px; color:#C13838; cursor:pointer; padding:0; width:24px; height:24px; display:flex; align-items:center; justify-content:center;">✕</button>
+        <div style="display:flex; align-items:center; justify-content:space-between; padding-left:32px;">
           <div style="display:flex; align-items:center; flex:1;">
             <span style="font-size:24px; margin-right:12px;">${icon}</span>
             <div>
@@ -914,9 +915,6 @@ async function renderDailyEntries(container) {
             </div>
           </div>
           <span class="summary-amount ${amountClass}" style="font-size:18px; font-weight:700;">${sign}${fmt(amount)}</span>
-        </div>
-        <div style="display:flex; gap:8px;">
-          <button class="btn-secondary" onclick="deleteDailyEntry('${t.id}')" style="flex:1; padding:8px; font-size:13px;">Delete</button>
         </div>
       </div>
     `;
@@ -941,19 +939,30 @@ async function renderMonthlyEntries(container) {
   const month = state.selectedMonth;
   const startDate = `${year}-${String(month).padStart(2, '0')}-01`;
   const lastDay = new Date(year, month, 0).getDate();
-  const endDate = `${year}-${String(month).padStart(2, '0')}-${lastDay}`;
+  const endDate = `${year}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+  
+  console.log('=== MONTHLY VIEW DEBUG ===');
+  console.log('Year:', year, 'Month:', month);
+  console.log('Start date:', startDate);
+  console.log('End date:', endDate);
+  console.log('Last day:', lastDay);
   
   // Get all transactions and filter by month
   const allTransactions = await db.transactions.toArray();
+  console.log('Total transactions in DB:', allTransactions.length);
+  console.log('Sample dates:', allTransactions.slice(0, 5).map(t => t.date));
+  
   const dailyTransactions = allTransactions.filter(t => 
     t.date >= startDate && t.date <= endDate
   );
+  console.log('Filtered transactions for', monthDisplay, ':', dailyTransactions.length);
   
   // Get monthly expenses for this month
   const monthlyExpenses = await db.monthlyExpenses
     .where('year').equals(year)
     .and(e => e.month === month)
     .toArray();
+  console.log('Monthly expenses:', monthlyExpenses.length);
   
   const listEl = document.getElementById('monthly-entries-list');
   
@@ -962,6 +971,9 @@ async function renderMonthlyEntries(container) {
       <div style="text-align:center; padding:40px 20px; color:var(--text-muted);">
         <div style="font-size:48px; margin-bottom:12px; opacity:0.3;">📋</div>
         <div style="font-size:14px;">No entries for ${monthDisplay}</div>
+        <div style="font-size:11px; color:var(--text-muted); margin-top:8px;">
+          Looking for dates: ${startDate} to ${endDate}
+        </div>
       </div>
     `;
     return;
@@ -1011,8 +1023,9 @@ async function renderMonthlyEntries(container) {
     const dateDisplay = new Date(entry.date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
     
     return `
-      <div class="card" style="margin-bottom:12px; padding:14px;">
-        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:12px;">
+      <div class="card" style="margin-bottom:12px; padding:14px; position:relative;">
+        <button onclick="${entry.type === 'monthly-expense' ? 'deleteMonthlyExpenseEntry' : 'deleteDailyEntry'}('${entry.id}')" style="position:absolute; left:14px; top:50%; transform:translateY(-50%); background:none; border:none; font-size:20px; color:#C13838; cursor:pointer; padding:0; width:24px; height:24px; display:flex; align-items:center; justify-content:center;">✕</button>
+        <div style="display:flex; align-items:center; justify-content:space-between; padding-left:32px;">
           <div style="display:flex; align-items:center; flex:1;">
             <span style="font-size:24px; margin-right:12px;">${icon}</span>
             <div>
@@ -1021,9 +1034,6 @@ async function renderMonthlyEntries(container) {
             </div>
           </div>
           <span class="summary-amount ${amountClass}" style="font-size:18px; font-weight:700;">${sign}${fmt(entry.amount)}</span>
-        </div>
-        <div style="display:flex; gap:8px;">
-          <button class="btn-secondary" onclick="${entry.type === 'monthly-expense' ? 'deleteMonthlyExpenseEntry' : 'deleteDailyEntry'}('${entry.id}')" style="flex:1; padding:8px; font-size:13px;">Delete</button>
         </div>
       </div>
     `;
@@ -1115,8 +1125,9 @@ async function renderAllEntries(container) {
       : new Date(entry.date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
     
     return `
-      <div class="card" style="margin-bottom:12px; padding:14px;">
-        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:12px;">
+      <div class="card" style="margin-bottom:12px; padding:14px; position:relative;">
+        <button onclick="${entry.type === 'monthly-expense' ? 'deleteMonthlyExpenseEntry' : 'deleteDailyEntry'}('${entry.id}')" style="position:absolute; left:14px; top:50%; transform:translateY(-50%); background:none; border:none; font-size:20px; color:#C13838; cursor:pointer; padding:0; width:24px; height:24px; display:flex; align-items:center; justify-content:center;">✕</button>
+        <div style="display:flex; align-items:center; justify-content:space-between; padding-left:32px;">
           <div style="display:flex; align-items:center; flex:1;">
             <span style="font-size:24px; margin-right:12px;">${icon}</span>
             <div>
@@ -1125,9 +1136,6 @@ async function renderAllEntries(container) {
             </div>
           </div>
           <span class="summary-amount ${amountClass}" style="font-size:18px; font-weight:700;">${sign}${fmt(entry.amount)}</span>
-        </div>
-        <div style="display:flex; gap:8px;">
-          <button class="btn-secondary" onclick="${entry.type === 'monthly-expense' ? 'deleteMonthlyExpenseEntry' : 'deleteDailyEntry'}('${entry.id}')" style="flex:1; padding:8px; font-size:13px;">Delete</button>
         </div>
       </div>
     `;
