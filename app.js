@@ -3399,18 +3399,14 @@ function loadCategoryChips() {
     ).join('');
   }
   
-  // Combined expense categories (daily + monthly)
+  // Unified expense categories
   const expenseEl = document.getElementById('all-exp-cats');
   if (expenseEl) {
-    const dailyExpenses = state.categories.DAILY_EXPENSE || [];
-    const monthlyExpenses = state.categories.MONTHLY_EXPENSE || [];
-    const allExpenses = [...dailyExpenses, ...monthlyExpenses];
+    const allExpenses = state.categories.EXPENSE || [];
     
     expenseEl.innerHTML = allExpenses.map(name => {
-      // Determine which type this category belongs to
-      const type = dailyExpenses.includes(name) ? 'DAILY_EXPENSE' : 'MONTHLY_EXPENSE';
       return `<span class="category-chip">${name}
-        <button class="chip-delete" onclick="deleteCategory('${type}','${name.replace(/'/g,"\\'")}')">×</button>
+        <button class="chip-delete" onclick="deleteCategory('EXPENSE','${name.replace(/'/g,"\\'")}')">×</button>
       </span>`;
     }).join('');
   }
@@ -3419,24 +3415,23 @@ function loadCategoryChips() {
 async function addCategory(type) {
   const inputMap = { 
     INCOME: 'new-income-cat', 
-    EXPENSE: 'new-exp-cat',
-    DAILY_EXPENSE: 'new-dexp-cat', 
-    MONTHLY_EXPENSE: 'new-mexp-cat' 
+    EXPENSE: 'new-exp-cat'
   };
   const inputId = inputMap[type];
   const input   = document.getElementById(inputId);
   const name    = input?.value.trim();
   if (!name) return;
   
-  // For generic 'EXPENSE', default to DAILY_EXPENSE
-  const actualType = type === 'EXPENSE' ? 'DAILY_EXPENSE' : type;
+  if (!state.categories[type]) {
+    state.categories[type] = [];
+  }
   
-  if (state.categories[actualType].includes(name)) { 
+  if (state.categories[type].includes(name)) { 
     showToast('Already exists'); 
     return; 
   }
   
-  state.categories[actualType].push(name);
+  state.categories[type].push(name);
   await saveCategories();
   input.value = '';
   showToast(`"${name}" added ✓`);
