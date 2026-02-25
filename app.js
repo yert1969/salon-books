@@ -958,10 +958,10 @@ async function renderMonthlyEntries(container) {
   console.log('Filtered transactions for', monthDisplay, ':', dailyTransactions.length);
   
   // Get monthly expenses for this month
-  const monthlyExpenses = await db.monthlyExpenses
-    .where('year').equals(year)
-    .and(e => e.month === month)
-    .toArray();
+  const allMonthlyExpenses = await db.monthlyExpenses.toArray();
+  const monthlyExpenses = allMonthlyExpenses.filter(e => 
+    e.year === year && e.month === month
+  );
   console.log('Monthly expenses:', monthlyExpenses.length);
   
   const listEl = document.getElementById('monthly-entries-list');
