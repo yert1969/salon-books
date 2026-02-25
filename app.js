@@ -518,20 +518,27 @@ async function loadCategories() {
 }
 
 async function saveCategories() {
+  console.log('💾 Saving categories...');
+  console.log('INCOME count:', state.categories.INCOME?.length);
+  console.log('EXPENSE count:', state.categories.EXPENSE?.length);
+  console.log('EXPENSE array:', state.categories.EXPENSE);
+  
   // Save locally
   await db.settings.put({ key: 'categories', value: JSON.stringify(state.categories) });
+  console.log('✓ Saved to local DB');
   
   // Sync to Firebase if user is logged in
   if (auth && auth.currentUser) {
     try {
+      console.log('💾 Saving to Firebase:', state.categories);
       await firestore.collection('users')
         .doc(auth.currentUser.uid)
         .collection('settings')
         .doc('categories')
         .set(state.categories);
-      console.log('Categories synced to Firebase');
+      console.log('✓ Categories synced to Firebase');
     } catch (err) {
-      console.error('Failed to sync categories to Firebase:', err);
+      console.error('❌ Failed to sync categories to Firebase:', err);
     }
   }
 }
@@ -3596,6 +3603,9 @@ async function addCategory(type) {
   const name    = input?.value.trim();
   if (!name) return;
   
+  console.log('➕ Adding category:', name, 'to', type);
+  console.log('Before - EXPENSE count:', state.categories.EXPENSE?.length);
+  
   if (!state.categories[type]) {
     state.categories[type] = [];
   }
@@ -3606,15 +3616,15 @@ async function addCategory(type) {
   }
   
   state.categories[type].push(name);
+  console.log('After push - EXPENSE count:', state.categories.EXPENSE?.length);
+  console.log('After push - EXPENSE array:', state.categories.EXPENSE);
+  
   await saveCategories();
   
   // Clear input and refresh UI
   input.value = '';
   loadCategoryChips();
-  showToast('Category added');
-  input.value = '';
   showToast(`"${name}" added ✓`);
-  loadCategoryChips();
 }
 
 async function deleteCategory(type, name) {
