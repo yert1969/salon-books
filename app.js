@@ -367,89 +367,22 @@ function _defaultCategoryMap() {
 }
 
 // Real-time category sync listener
-let categoryUnsubscribe = null;
-
-function setupCategoryListener() {
-  if (!auth || !auth.currentUser) return;
-  
-  // Unsubscribe from previous listener if exists
-  if (categoryUnsubscribe) {
-    categoryUnsubscribe();
-  }
-  
-  // Listen for category changes in Firebase
-  categoryUnsubscribe = firestore.collection('users')
-    .doc(auth.currentUser.uid)
-    .collection('settings')
-    .doc('categories')
-    .onSnapshot((doc) => {
-      if (doc.exists) {
-        const firestoreCategories = doc.data();
-        console.log('📡 Categories updated in Firebase, syncing...');
-        console.log('Current view:', state.currentView);
-        console.log('INCOME before:', state.categories.INCOME?.length);
-        console.log('EXPENSE before:', state.categories.EXPENSE?.length);
-        
-        // Support both formats
-        if (firestoreCategories.EXPENSE) {
-          state.categories = {
-            INCOME: firestoreCategories.INCOME || _defaultCategoryMap().INCOME,
-            EXPENSE: firestoreCategories.EXPENSE || _defaultCategoryMap().EXPENSE
-          };
-        } else {
-          // Merge old format
-          const dailyExpenses = firestoreCategories.DAILY_EXPENSE || [];
-          const monthlyExpenses = firestoreCategories.MONTHLY_EXPENSE || [];
-          const mergedExpenses = [...new Set([...dailyExpenses, ...monthlyExpenses])];
-          
-          state.categories = {
-            INCOME: firestoreCategories.INCOME || _defaultCategoryMap().INCOME,
-            EXPENSE: mergedExpenses.length > 0 ? mergedExpenses : _defaultCategoryMap().EXPENSE
-          };
-        }
-        
-        console.log('INCOME after:', state.categories.INCOME?.length);
-        console.log('EXPENSE after:', state.categories.EXPENSE?.length);
-        console.log('New EXPENSE categories:', state.categories.EXPENSE);
-        
-        // Save to local storage
-        db.settings.put({ key: 'categories', value: JSON.stringify(state.categories) });
-        
-        // Update UI based on current view
-        if (state.currentView === 'settings') {
-          console.log('Refreshing Settings page categories...');
-          // Just refresh the category chips without full navigation
-          loadCategoryChips();
-          console.log('✓ Category chips refreshed');
-        } else if (['entries', 'daily', 'monthly'].includes(state.currentView)) {
-          console.log('Refreshing view:', state.currentView);
-          // Refresh these views since they use categories
-          navigate(state.currentView);
-          console.log('✓ View refreshed');
-        } else {
-          console.log('Not refreshing - view is:', state.currentView);
-        }
-      }
-    }, (error) => {
-      console.error('Category listener error:', error);
-    });
-}
+// Categories are synced on app load/refresh, not in real-time
+// This avoids race conditions with Firebase listeners
 
 async function loadCategories() {
   try {
     // If logged in, try loading from Firebase first
     if (auth && auth.currentUser) {
       try {
-        console.log('📥 Loading categories from Firebase SERVER (not cache)...');
         const doc = await firestore.collection('users')
           .doc(auth.currentUser.uid)
           .collection('settings')
           .doc('categories')
-          .get({ source: 'server' });  // Force server fetch, bypass cache
+          .get();
         
         if (doc.exists) {
           const firestoreCategories = doc.data();
-          console.log('✓ Loaded from server - INCOME:', firestoreCategories.INCOME?.length, 'EXPENSE:', firestoreCategories.EXPENSE?.length);
           
           // Support both old and new formats
           if (firestoreCategories.EXPENSE) {
@@ -475,9 +408,6 @@ async function loadCategories() {
           
           // Save to local storage as backup
           await db.settings.put({ key: 'categories', value: JSON.stringify(state.categories) });
-          
-          // Set up real-time listener
-          setupCategoryListener();
           return;
         }
       } catch (err) {
@@ -519,33 +449,19 @@ async function loadCategories() {
 }
 
 async function saveCategories() {
-  console.log('💾 Saving categories...');
-  console.log('INCOME count:', state.categories.INCOME?.length);
-  console.log('EXPENSE count:', state.categories.EXPENSE?.length);
-  
-  // Make a deep copy so no modifications during save can affect it
-  const categoriesToSave = JSON.parse(JSON.stringify(state.categories));
-  console.log('📋 Made copy - INCOME:', categoriesToSave.INCOME?.length, 'EXPENSE:', categoriesToSave.EXPENSE?.length);
-  
   // Save locally
-  await db.settings.put({ key: 'categories', value: JSON.stringify(categoriesToSave) });
-  console.log('✓ Saved to local DB');
+  await db.settings.put({ key: 'categories', value: JSON.stringify(state.categories) });
   
   // Sync to Firebase if user is logged in
   if (auth && auth.currentUser) {
     try {
-      console.log('💾 Saving to Firebase...');
       await firestore.collection('users')
         .doc(auth.currentUser.uid)
         .collection('settings')
         .doc('categories')
-        .set(categoriesToSave);
-      console.log('✓ Categories synced to Firebase');
-      
-      // Wait for Firebase to propagate
-      await new Promise(resolve => setTimeout(resolve, 500));
+        .set(state.categories);
     } catch (err) {
-      console.error('❌ Failed to sync categories to Firebase:', err);
+      console.error('Failed to sync categories to Firebase:', err);
     }
   }
 }
@@ -3601,50 +3517,27 @@ function loadCategoryChips() {
 }
 
 async function addCategory(type) {
-  console.log('🔘 addCategory() called with type:', type);
-  
-  // DISABLE LISTENER IMMEDIATELY to prevent any interference
-  if (categoryUnsubscribe) {
-    console.log('🔇 Disabling listener before adding category...');
-    categoryUnsubscribe();
-    categoryUnsubscribe = null;
-  }
-  
   const inputMap = { 
     INCOME: 'new-income-cat', 
     EXPENSE: 'new-exp-cat'
   };
   const inputId = inputMap[type];
-  
   const input = document.getElementById(inputId);
   const name = input?.value.trim();
   
-  if (!name) {
-    console.log('❌ No name provided');
-    setupCategoryListener();
-    return;
-  }
+  if (!name) return;
   
   if (!state.categories[type]) {
     state.categories[type] = [];
   }
   
   if (state.categories[type].includes(name)) { 
-    console.log('❌ Already exists'); 
-    showToast('Already exists');
-    setupCategoryListener();
+    showToast('Already exists'); 
     return; 
   }
   
-  console.log('➕ Adding category:', name);
   state.categories[type].push(name);
-  console.log('After push - EXPENSE count:', state.categories.EXPENSE?.length);
-  
   await saveCategories();
-  
-  // Don't re-enable listener yet - force fresh reload from server
-  console.log('🔄 Force reloading categories from Firebase server...');
-  await loadCategories();  // This will re-enable the listener
   
   // Clear input and refresh UI
   input.value = '';
