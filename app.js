@@ -3615,30 +3615,47 @@ function loadCategoryChips() {
 }
 
 async function addCategory(type) {
+  console.log('🔘 addCategory() called with type:', type);
+  
   const inputMap = { 
     INCOME: 'new-income-cat', 
     EXPENSE: 'new-exp-cat'
   };
   const inputId = inputMap[type];
-  const input   = document.getElementById(inputId);
-  const name    = input?.value.trim();
-  if (!name) return;
+  console.log('Looking for input:', inputId);
+  
+  const input = document.getElementById(inputId);
+  console.log('Input element:', input);
+  console.log('Input value:', input?.value);
+  
+  const name = input?.value.trim();
+  console.log('Trimmed name:', name);
+  
+  if (!name) {
+    console.log('❌ No name provided, returning');
+    return;
+  }
   
   console.log('➕ Adding category:', name, 'to', type);
+  console.log('state.categories before:', JSON.parse(JSON.stringify(state.categories)));
   console.log('Before - EXPENSE count:', state.categories.EXPENSE?.length);
   
   if (!state.categories[type]) {
+    console.log('Creating new array for type:', type);
     state.categories[type] = [];
   }
   
   if (state.categories[type].includes(name)) { 
+    console.log('❌ Already exists'); 
     showToast('Already exists'); 
     return; 
   }
   
+  console.log('Pushing to array...');
   state.categories[type].push(name);
   console.log('After push - EXPENSE count:', state.categories.EXPENSE?.length);
   console.log('After push - EXPENSE array:', state.categories.EXPENSE);
+  console.log('state.categories after push:', JSON.parse(JSON.stringify(state.categories)));
   
   await saveCategories();
   
