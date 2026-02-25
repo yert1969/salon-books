@@ -385,7 +385,10 @@ function setupCategoryListener() {
     .onSnapshot((doc) => {
       if (doc.exists) {
         const firestoreCategories = doc.data();
-        console.log('Categories updated in Firebase, syncing...');
+        console.log('📡 Categories updated in Firebase, syncing...');
+        console.log('Current view:', state.currentView);
+        console.log('INCOME before:', state.categories.INCOME?.length);
+        console.log('EXPENSE before:', state.categories.EXPENSE?.length);
         
         // Support both formats
         if (firestoreCategories.EXPENSE) {
@@ -405,16 +408,26 @@ function setupCategoryListener() {
           };
         }
         
+        console.log('INCOME after:', state.categories.INCOME?.length);
+        console.log('EXPENSE after:', state.categories.EXPENSE?.length);
+        console.log('New EXPENSE categories:', state.categories.EXPENSE);
+        
         // Save to local storage
         db.settings.put({ key: 'categories', value: JSON.stringify(state.categories) });
         
         // Update UI based on current view
         if (state.currentView === 'settings') {
+          console.log('Refreshing Settings page categories...');
           // Just refresh the category chips without full navigation
           loadCategoryChips();
+          console.log('✓ Category chips refreshed');
         } else if (['entries', 'daily', 'monthly'].includes(state.currentView)) {
+          console.log('Refreshing view:', state.currentView);
           // Refresh these views since they use categories
           navigate(state.currentView);
+          console.log('✓ View refreshed');
+        } else {
+          console.log('Not refreshing - view is:', state.currentView);
         }
       }
     }, (error) => {
