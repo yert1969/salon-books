@@ -370,7 +370,7 @@ function _defaultCategoryMap() {
 let categoryUnsubscribe = null;
 
 function setupCategoryListener() {
-  if (!firebaseAuth || !firebaseAuth.currentUser) return;
+  if (!auth || !auth.currentUser) return;
   
   // Unsubscribe from previous listener if exists
   if (categoryUnsubscribe) {
@@ -379,7 +379,7 @@ function setupCategoryListener() {
   
   // Listen for category changes in Firebase
   categoryUnsubscribe = firestore.collection('users')
-    .doc(firebaseAuth.currentUser.uid)
+    .doc(auth.currentUser.uid)
     .collection('settings')
     .doc('categories')
     .onSnapshot((doc) => {
@@ -425,10 +425,10 @@ function setupCategoryListener() {
 async function loadCategories() {
   try {
     // If logged in, try loading from Firebase first
-    if (firebaseAuth && firebaseAuth.currentUser) {
+    if (auth && auth.currentUser) {
       try {
         const doc = await firestore.collection('users')
-          .doc(firebaseAuth.currentUser.uid)
+          .doc(auth.currentUser.uid)
           .collection('settings')
           .doc('categories')
           .get();
@@ -509,10 +509,10 @@ async function saveCategories() {
   await db.settings.put({ key: 'categories', value: JSON.stringify(state.categories) });
   
   // Sync to Firebase if user is logged in
-  if (firebaseAuth && firebaseAuth.currentUser) {
+  if (auth && auth.currentUser) {
     try {
       await firestore.collection('users')
-        .doc(firebaseAuth.currentUser.uid)
+        .doc(auth.currentUser.uid)
         .collection('settings')
         .doc('categories')
         .set(state.categories);
@@ -792,7 +792,7 @@ async function saveEntryTransaction() {
       // Save as income transaction
       const date = document.getElementById('entry-date').value;
       const transaction = {
-        userId: firebaseAuth.currentUser.uid,
+        userId: auth.currentUser.uid,
         date: date,
         type: 'INCOME',
         category: category,
@@ -802,14 +802,14 @@ async function saveEntryTransaction() {
         createdAt: firebase.firestore.Timestamp.now()
       };
       
-      const docRef = await firestore.collection('users').doc(firebaseAuth.currentUser.uid).collection('transactions').add(transaction);
+      const docRef = await firestore.collection('users').doc(auth.currentUser.uid).collection('transactions').add(transaction);
       await db.transactions.add({ id: docRef.id, ...transaction });
       
     } else if (frequency === 'DAILY') {
       // Save as daily expense transaction
       const date = document.getElementById('entry-date').value;
       const transaction = {
-        userId: firebaseAuth.currentUser.uid,
+        userId: auth.currentUser.uid,
         date: date,
         type: 'EXPENSE',
         category: category,
@@ -818,7 +818,7 @@ async function saveEntryTransaction() {
         createdAt: firebase.firestore.Timestamp.now()
       };
       
-      const docRef = await firestore.collection('users').doc(firebaseAuth.currentUser.uid).collection('transactions').add(transaction);
+      const docRef = await firestore.collection('users').doc(auth.currentUser.uid).collection('transactions').add(transaction);
       await db.transactions.add({ id: docRef.id, ...transaction });
       
     } else {
@@ -827,7 +827,7 @@ async function saveEntryTransaction() {
       const year = parseInt(document.getElementById('entry-year').value);
       
       const expense = {
-        userId: firebaseAuth.currentUser.uid,
+        userId: auth.currentUser.uid,
         year: year,
         month: month,
         category: category,
@@ -836,7 +836,7 @@ async function saveEntryTransaction() {
         createdAt: firebase.firestore.Timestamp.now()
       };
       
-      const docRef = await firestore.collection('users').doc(firebaseAuth.currentUser.uid).collection('monthlyExpenses').add(expense);
+      const docRef = await firestore.collection('users').doc(auth.currentUser.uid).collection('monthlyExpenses').add(expense);
       await db.monthlyExpenses.add({ id: docRef.id, ...expense });
     }
     
@@ -1190,7 +1190,7 @@ async function deleteDailyEntry(id) {
   if (!confirm(`Delete ${transaction.category} (${fmt(amount)})?`)) return;
   
   try {
-    await firestore.collection('users').doc(firebaseAuth.currentUser.uid).collection('transactions').doc(id).delete();
+    await firestore.collection('users').doc(auth.currentUser.uid).collection('transactions').doc(id).delete();
     await db.transactions.delete(id);
     showToast('Deleted');
     renderEntriesContent();
@@ -1207,7 +1207,7 @@ async function deleteMonthlyExpenseEntry(id) {
   if (!confirm(`Delete ${e.category} (${fmt(e.amount)})?`)) return;
   
   try {
-    await firestore.collection('users').doc(firebaseAuth.currentUser.uid).collection('monthlyExpenses').doc(id).delete();
+    await firestore.collection('users').doc(auth.currentUser.uid).collection('monthlyExpenses').doc(id).delete();
     await db.monthlyExpenses.delete(id);
     showToast('Deleted');
     renderEntriesContent();
