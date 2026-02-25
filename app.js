@@ -408,8 +408,12 @@ function setupCategoryListener() {
         // Save to local storage
         db.settings.put({ key: 'categories', value: JSON.stringify(state.categories) });
         
-        // Reload current view if on a category-dependent screen
-        if (['daily', 'monthly', 'settings'].includes(state.currentView)) {
+        // Update UI based on current view
+        if (state.currentView === 'settings') {
+          // Just refresh the category chips without full navigation
+          loadCategoryChips();
+        } else if (['entries', 'daily', 'monthly'].includes(state.currentView)) {
+          // Refresh these views since they use categories
           navigate(state.currentView);
         }
       }
@@ -3590,6 +3594,11 @@ async function addCategory(type) {
   
   state.categories[type].push(name);
   await saveCategories();
+  
+  // Clear input and refresh UI
+  input.value = '';
+  loadCategoryChips();
+  showToast('Category added');
   input.value = '';
   showToast(`"${name}" added ✓`);
   loadCategoryChips();
