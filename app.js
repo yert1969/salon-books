@@ -417,7 +417,6 @@ async function loadCategories() {
           console.log('No categories in Firebase yet - using defaults locally');
           state.categories = _defaultCategoryMap();
         }
-        }
       } catch (err) {
         console.log('Firebase categories not available, using local');
       }
