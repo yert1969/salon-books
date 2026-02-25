@@ -521,11 +521,10 @@ async function saveCategories() {
   console.log('💾 Saving categories...');
   console.log('INCOME count:', state.categories.INCOME?.length);
   console.log('EXPENSE count:', state.categories.EXPENSE?.length);
-  console.log('EXPENSE array:', state.categories.EXPENSE);
   
-  // Make a deep copy so listener can't overwrite while we save
+  // Make a deep copy so no modifications during save can affect it
   const categoriesToSave = JSON.parse(JSON.stringify(state.categories));
-  console.log('📋 Made copy to save:', categoriesToSave);
+  console.log('📋 Made copy - INCOME:', categoriesToSave.INCOME?.length, 'EXPENSE:', categoriesToSave.EXPENSE?.length);
   
   // Save locally
   await db.settings.put({ key: 'categories', value: JSON.stringify(categoriesToSave) });
@@ -534,36 +533,18 @@ async function saveCategories() {
   // Sync to Firebase if user is logged in
   if (auth && auth.currentUser) {
     try {
-      // Temporarily disable listener to prevent race condition
-      const wasListening = !!categoryUnsubscribe;
-      if (categoryUnsubscribe) {
-        console.log('🔇 Temporarily disabling listener during save...');
-        categoryUnsubscribe();
-        categoryUnsubscribe = null;
-      }
-      
-      console.log('💾 Saving to Firebase:', categoriesToSave);
+      console.log('💾 Saving to Firebase...');
       await firestore.collection('users')
         .doc(auth.currentUser.uid)
         .collection('settings')
         .doc('categories')
-        .set(categoriesToSave);  // Save the COPY, not state.categories
+        .set(categoriesToSave);
       console.log('✓ Categories synced to Firebase');
       
-      // Wait a moment for Firebase to propagate
+      // Wait for Firebase to propagate
       await new Promise(resolve => setTimeout(resolve, 500));
-      
-      // Re-enable listener
-      if (wasListening) {
-        console.log('🔊 Re-enabling listener...');
-        setupCategoryListener();
-      }
     } catch (err) {
       console.error('❌ Failed to sync categories to Firebase:', err);
-      // Re-enable listener even on error
-      if (categoryUnsubscribe === null) {
-        setupCategoryListener();
-      }
     }
   }
 }
@@ -3621,6 +3602,13 @@ function loadCategoryChips() {
 async function addCategory(type) {
   console.log('🔘 addCategory() called with type:', type);
   
+  // DISABLE LISTENER IMMEDIATELY to prevent any interference
+  if (categoryUnsubscribe) {
+    console.log('🔇 Disabling listener before adding category...');
+    categoryUnsubscribe();
+    categoryUnsubscribe = null;
+  }
+  
   const inputMap = { 
     INCOME: 'new-income-cat', 
     EXPENSE: 'new-exp-cat'
@@ -3636,12 +3624,12 @@ async function addCategory(type) {
   console.log('Trimmed name:', name);
   
   if (!name) {
-    console.log('❌ No name provided, returning');
+    console.log('❌ No name provided, re-enabling listener and returning');
+    setupCategoryListener();  // Re-enable before returning
     return;
   }
   
   console.log('➕ Adding category:', name, 'to', type);
-  console.log('state.categories before:', JSON.parse(JSON.stringify(state.categories)));
   console.log('Before - EXPENSE count:', state.categories.EXPENSE?.length);
   
   if (!state.categories[type]) {
@@ -3651,15 +3639,14 @@ async function addCategory(type) {
   
   if (state.categories[type].includes(name)) { 
     console.log('❌ Already exists'); 
-    showToast('Already exists'); 
+    showToast('Already exists');
+    setupCategoryListener();  // Re-enable before returning
     return; 
   }
   
   console.log('Pushing to array...');
   state.categories[type].push(name);
   console.log('After push - EXPENSE count:', state.categories.EXPENSE?.length);
-  console.log('After push - EXPENSE array:', state.categories.EXPENSE);
-  console.log('state.categories after push:', JSON.parse(JSON.stringify(state.categories)));
   
   await saveCategories();
   
@@ -3667,6 +3654,10 @@ async function addCategory(type) {
   input.value = '';
   loadCategoryChips();
   showToast(`"${name}" added ✓`);
+  
+  // Re-enable listener after everything is done
+  console.log('🔊 Re-enabling listener after add complete...');
+  setupCategoryListener();
 }
 
 async function deleteCategory(type, name) {
