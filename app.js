@@ -936,18 +936,18 @@ async function renderMonthlyEntries(container) {
     <div id="monthly-entries-list"></div>
   `;
   
-  // Get all daily transactions for this month
+  // Get date range for this month
   const year = state.selectedYear;
   const month = state.selectedMonth;
   const startDate = `${year}-${String(month).padStart(2, '0')}-01`;
-  const endDate = month === 12 
-    ? `${year + 1}-01-01` 
-    : `${year}-${String(month + 1).padStart(2, '0')}-01`;
+  const lastDay = new Date(year, month, 0).getDate();
+  const endDate = `${year}-${String(month).padStart(2, '0')}-${lastDay}`;
   
-  const dailyTransactions = await db.transactions
-    .where('date')
-    .between(startDate, endDate, true, false)
-    .toArray();
+  // Get all transactions and filter by month
+  const allTransactions = await db.transactions.toArray();
+  const dailyTransactions = allTransactions.filter(t => 
+    t.date >= startDate && t.date <= endDate
+  );
   
   // Get monthly expenses for this month
   const monthlyExpenses = await db.monthlyExpenses
@@ -1039,16 +1039,11 @@ async function renderAllEntries(container) {
     <div id="all-entries-list"></div>
   `;
   
-  // Get all daily transactions (last 50)
-  const dailyTransactions = await db.transactions
-    .orderBy('date')
-    .reverse()
-    .limit(50)
-    .toArray();
+  // Get all transactions
+  const dailyTransactions = await db.transactions.toArray();
   
   // Get all monthly expenses
-  const monthlyExpenses = await db.monthlyExpenses
-    .toArray();
+  const monthlyExpenses = await db.monthlyExpenses.toArray();
   
   const listEl = document.getElementById('all-entries-list');
   
