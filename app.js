@@ -746,7 +746,8 @@ function updateEntryForm() {
   // Update category dropdown
   if (categorySelect) {
     const categories = type === 'INCOME' ? state.categories.INCOME : state.categories.EXPENSE;
-    categorySelect.innerHTML = categories.map(cat => `<option value="${cat}">${cat}</option>`).join('');
+    const sortedCategories = [...categories].sort();  // Sort alphabetically
+    categorySelect.innerHTML = sortedCategories.map(cat => `<option value="${cat}">${cat}</option>`).join('');
   }
 }
 
