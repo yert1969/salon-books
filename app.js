@@ -445,13 +445,13 @@ async function loadCategories() {
         };
       }
     } else {
+      // No local storage either - use defaults locally, DON'T save to Firebase
       state.categories = _defaultCategoryMap();
-      await saveCategories();
     }
   } catch (e) {
     console.warn('loadCategories error:', e);
+    // On error, use defaults locally, DON'T save to Firebase
     state.categories = _defaultCategoryMap();
-    try { await saveCategories(); } catch (_) { /* best effort */ }
   }
 }
 
