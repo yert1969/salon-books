@@ -523,8 +523,12 @@ async function saveCategories() {
   console.log('EXPENSE count:', state.categories.EXPENSE?.length);
   console.log('EXPENSE array:', state.categories.EXPENSE);
   
+  // Make a deep copy so listener can't overwrite while we save
+  const categoriesToSave = JSON.parse(JSON.stringify(state.categories));
+  console.log('📋 Made copy to save:', categoriesToSave);
+  
   // Save locally
-  await db.settings.put({ key: 'categories', value: JSON.stringify(state.categories) });
+  await db.settings.put({ key: 'categories', value: JSON.stringify(categoriesToSave) });
   console.log('✓ Saved to local DB');
   
   // Sync to Firebase if user is logged in
@@ -538,12 +542,12 @@ async function saveCategories() {
         categoryUnsubscribe = null;
       }
       
-      console.log('💾 Saving to Firebase:', state.categories);
+      console.log('💾 Saving to Firebase:', categoriesToSave);
       await firestore.collection('users')
         .doc(auth.currentUser.uid)
         .collection('settings')
         .doc('categories')
-        .set(state.categories);
+        .set(categoriesToSave);  // Save the COPY, not state.categories
       console.log('✓ Categories synced to Firebase');
       
       // Wait a moment for Firebase to propagate
