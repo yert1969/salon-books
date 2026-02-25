@@ -440,15 +440,16 @@ async function loadCategories() {
     // If logged in, try loading from Firebase first
     if (auth && auth.currentUser) {
       try {
+        console.log('📥 Loading categories from Firebase SERVER (not cache)...');
         const doc = await firestore.collection('users')
           .doc(auth.currentUser.uid)
           .collection('settings')
           .doc('categories')
-          .get();
+          .get({ source: 'server' });  // Force server fetch, bypass cache
         
         if (doc.exists) {
           const firestoreCategories = doc.data();
-          console.log('Loaded categories from Firebase');
+          console.log('✓ Loaded from server - INCOME:', firestoreCategories.INCOME?.length, 'EXPENSE:', firestoreCategories.EXPENSE?.length);
           
           // Support both old and new formats
           if (firestoreCategories.EXPENSE) {
@@ -3614,50 +3615,41 @@ async function addCategory(type) {
     EXPENSE: 'new-exp-cat'
   };
   const inputId = inputMap[type];
-  console.log('Looking for input:', inputId);
   
   const input = document.getElementById(inputId);
-  console.log('Input element:', input);
-  console.log('Input value:', input?.value);
-  
   const name = input?.value.trim();
-  console.log('Trimmed name:', name);
   
   if (!name) {
-    console.log('❌ No name provided, re-enabling listener and returning');
-    setupCategoryListener();  // Re-enable before returning
+    console.log('❌ No name provided');
+    setupCategoryListener();
     return;
   }
   
-  console.log('➕ Adding category:', name, 'to', type);
-  console.log('Before - EXPENSE count:', state.categories.EXPENSE?.length);
-  
   if (!state.categories[type]) {
-    console.log('Creating new array for type:', type);
     state.categories[type] = [];
   }
   
   if (state.categories[type].includes(name)) { 
     console.log('❌ Already exists'); 
     showToast('Already exists');
-    setupCategoryListener();  // Re-enable before returning
+    setupCategoryListener();
     return; 
   }
   
-  console.log('Pushing to array...');
+  console.log('➕ Adding category:', name);
   state.categories[type].push(name);
   console.log('After push - EXPENSE count:', state.categories.EXPENSE?.length);
   
   await saveCategories();
   
+  // Don't re-enable listener yet - force fresh reload from server
+  console.log('🔄 Force reloading categories from Firebase server...');
+  await loadCategories();  // This will re-enable the listener
+  
   // Clear input and refresh UI
   input.value = '';
   loadCategoryChips();
   showToast(`"${name}" added ✓`);
-  
-  // Re-enable listener after everything is done
-  console.log('🔊 Re-enabling listener after add complete...');
-  setupCategoryListener();
 }
 
 async function deleteCategory(type, name) {
