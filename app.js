@@ -530,6 +530,14 @@ async function saveCategories() {
   // Sync to Firebase if user is logged in
   if (auth && auth.currentUser) {
     try {
+      // Temporarily disable listener to prevent race condition
+      const wasListening = !!categoryUnsubscribe;
+      if (categoryUnsubscribe) {
+        console.log('🔇 Temporarily disabling listener during save...');
+        categoryUnsubscribe();
+        categoryUnsubscribe = null;
+      }
+      
       console.log('💾 Saving to Firebase:', state.categories);
       await firestore.collection('users')
         .doc(auth.currentUser.uid)
@@ -537,8 +545,21 @@ async function saveCategories() {
         .doc('categories')
         .set(state.categories);
       console.log('✓ Categories synced to Firebase');
+      
+      // Wait a moment for Firebase to propagate
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      // Re-enable listener
+      if (wasListening) {
+        console.log('🔊 Re-enabling listener...');
+        setupCategoryListener();
+      }
     } catch (err) {
       console.error('❌ Failed to sync categories to Firebase:', err);
+      // Re-enable listener even on error
+      if (categoryUnsubscribe === null) {
+        setupCategoryListener();
+      }
     }
   }
 }
