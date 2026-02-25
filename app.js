@@ -391,7 +391,7 @@ async function loadCategories() {
               INCOME: firestoreCategories.INCOME?.length ? firestoreCategories.INCOME : _defaultCategoryMap().INCOME,
               EXPENSE: firestoreCategories.EXPENSE?.length ? firestoreCategories.EXPENSE : _defaultCategoryMap().EXPENSE,
             };
-          } else {
+          } else if (firestoreCategories.DAILY_EXPENSE || firestoreCategories.MONTHLY_EXPENSE) {
             // Old format - merge DAILY_EXPENSE and MONTHLY_EXPENSE
             const dailyExpenses = firestoreCategories.DAILY_EXPENSE || [];
             const monthlyExpenses = firestoreCategories.MONTHLY_EXPENSE || [];
@@ -402,13 +402,21 @@ async function loadCategories() {
               EXPENSE: mergedExpenses.length > 0 ? mergedExpenses : _defaultCategoryMap().EXPENSE,
             };
             
-            // Save merged format back to Firebase
+            // Save merged format to Firebase (migration)
             await saveCategories();
+          } else {
+            // Firebase document exists but has no recognizable fields - use defaults locally
+            state.categories = _defaultCategoryMap();
           }
           
           // Save to local storage as backup
           await db.settings.put({ key: 'categories', value: JSON.stringify(state.categories) });
           return;
+        } else {
+          // No Firebase document - use defaults locally, DON'T save to Firebase
+          console.log('No categories in Firebase yet - using defaults locally');
+          state.categories = _defaultCategoryMap();
+        }
         }
       } catch (err) {
         console.log('Firebase categories not available, using local');
