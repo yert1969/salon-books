@@ -196,6 +196,11 @@ const settingsTable = {
   // Dexie put({key, value}) → Firestore set at settings/{key}
   async put(obj) {
     const { key } = obj;
+    // Skip Firebase sync for categories - they're saved separately in clean format
+    if (key === 'categories') {
+      // Only save to local Dexie, not Firebase
+      return;
+    }
     await userCol('settings').doc(key).set(obj);
   },
 
