@@ -599,6 +599,7 @@ function navigate(view) {
   
   const views = {
     entries:  () => safeRender(renderEntriesView, 'Entries'),
+    insights: () => safeRender(renderInsightsView, 'Insights'),
     renters:  () => safeRender(renderRentersView, 'Booth Renters'),
     reports:  () => safeRender(renderReportsView, 'Reports'),
     settings: () => safeRender(renderSettingsView, 'Settings'),
@@ -609,6 +610,348 @@ function navigate(view) {
 // ----------------------------------------------------------------
 // 9. DAILY VIEW
 // ----------------------------------------------------------------
+
+// ----------------------------------------------------------------
+// INSIGHTS VIEW - Smart automatic insights from data
+// ----------------------------------------------------------------
+
+async function renderInsightsView() {
+  const content = document.getElementById('app-content');
+  const hdr = document.getElementById('header-actions');
+  hdr.innerHTML = '';
+  
+  content.innerHTML = `
+    <div style="padding:16px; padding-bottom:80px;">
+      <div style="text-align:center; margin-bottom:24px;">
+        <div style="font-size:32px; margin-bottom:8px;">💡</div>
+        <h2 style="font-size:20px; font-weight:600; margin:0;">Smart Insights</h2>
+        <p style="color:var(--text-muted); font-size:14px; margin-top:4px;">Automatic analysis of your business data</p>
+      </div>
+      
+      <div id="insights-loading" style="text-align:center; padding:40px; color:var(--text-muted);">
+        Analyzing your data...
+      </div>
+      <div id="insights-content"></div>
+    </div>
+  `;
+  
+  // Calculate and render insights
+  await calculateAndRenderInsights();
+}
+
+async function calculateAndRenderInsights() {
+  const container = document.getElementById('insights-content');
+  const loader = document.getElementById('insights-loading');
+  
+  try {
+    // Get all transactions
+    const allTransactions = await db.transactions.toArray();
+    const allSummaries = await db.dailySummary.toArray();
+    
+    if (allTransactions.length === 0) {
+      container.innerHTML = `
+        <div style="text-align:center; padding:40px; color:var(--text-muted);">
+          <div style="font-size:48px; margin-bottom:16px;">📊</div>
+          <p>Start adding transactions to see insights!</p>
+        </div>
+      `;
+      loader.style.display = 'none';
+      return;
+    }
+    
+    const insights = [];
+    const today = new Date();
+    const currentMonth = today.getMonth() + 1;
+    const currentYear = today.getFullYear();
+    
+    // Helper functions
+    const getDayName = (dateStr) => {
+      const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+      const date = new Date(dateStr + 'T00:00:00');
+      return days[date.getDay()];
+    };
+    
+    const fmt = (num) => `$${num.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+    
+    // 1. BEST DAY OF WEEK
+    const dayTotals = {};
+    allTransactions.filter(t => t.type === 'INCOME').forEach(t => {
+      const dayName = getDayName(t.date);
+      if (!dayTotals[dayName]) dayTotals[dayName] = {total: 0, count: 0};
+      dayTotals[dayName].total += (t.serviceAmount || 0) + (t.tipAmount || 0);
+      dayTotals[dayName].count++;
+    });
+    
+    let bestDay = null;
+    let bestDayAvg = 0;
+    Object.keys(dayTotals).forEach(day => {
+      const avg = dayTotals[day].total / dayTotals[day].count;
+      if (avg > bestDayAvg) {
+        bestDay = day;
+        bestDayAvg = avg;
+      }
+    });
+    
+    if (bestDay) {
+      insights.push({
+        icon: '📅',
+        title: 'Best Day of Week',
+        value: bestDay,
+        subtitle: `Averages ${fmt(bestDayAvg)} in income`,
+        color: 'var(--success)'
+      });
+    }
+    
+    // 2. THIS MONTH VS LAST MONTH
+    const thisMonthTxns = allTransactions.filter(t => {
+      const [y, m] = t.date.split('-');
+      return parseInt(y) === currentYear && parseInt(m) === currentMonth;
+    });
+    
+    const lastMonth = currentMonth === 1 ? 12 : currentMonth - 1;
+    const lastMonthYear = currentMonth === 1 ? currentYear - 1 : currentYear;
+    const lastMonthTxns = allTransactions.filter(t => {
+      const [y, m] = t.date.split('-');
+      return parseInt(y) === lastMonthYear && parseInt(m) === lastMonth;
+    });
+    
+    const thisMonthIncome = thisMonthTxns.filter(t => t.type === 'INCOME').reduce((s, t) => s + (t.serviceAmount || 0) + (t.tipAmount || 0), 0);
+    const lastMonthIncome = lastMonthTxns.filter(t => t.type === 'INCOME').reduce((s, t) => s + (t.serviceAmount || 0) + (t.tipAmount || 0), 0);
+    
+    if (lastMonthIncome > 0) {
+      const change = ((thisMonthIncome - lastMonthIncome) / lastMonthIncome) * 100;
+      const arrow = change > 0 ? '↑' : change < 0 ? '↓' : '→';
+      const color = change > 0 ? 'var(--success)' : change < 0 ? 'var(--danger)' : 'var(--text-muted)';
+      
+      insights.push({
+        icon: '📈',
+        title: 'This Month vs Last',
+        value: `${arrow} ${Math.abs(change).toFixed(0)}%`,
+        subtitle: `${fmt(thisMonthIncome)} vs ${fmt(lastMonthIncome)}`,
+        color: color
+      });
+    }
+    
+    // 3. AVERAGE TIP PERCENTAGE
+    const incomeTxns = allTransactions.filter(t => t.type === 'INCOME' && (t.serviceAmount || 0) > 0);
+    if (incomeTxns.length > 0) {
+      const totalService = incomeTxns.reduce((s, t) => s + (t.serviceAmount || 0), 0);
+      const totalTips = incomeTxns.reduce((s, t) => s + (t.tipAmount || 0), 0);
+      const avgTipPct = (totalTips / totalService) * 100;
+      
+      insights.push({
+        icon: '💰',
+        title: 'Average Tip Rate',
+        value: `${avgTipPct.toFixed(1)}%`,
+        subtitle: `${fmt(totalTips)} in total tips`,
+        color: 'var(--gold)'
+      });
+    }
+    
+    // 4. TOP 3 SERVICES BY REVENUE
+    const serviceRevenue = {};
+    allTransactions.filter(t => t.type === 'INCOME').forEach(t => {
+      if (!serviceRevenue[t.category]) serviceRevenue[t.category] = 0;
+      serviceRevenue[t.category] += (t.serviceAmount || 0) + (t.tipAmount || 0);
+    });
+    
+    const topServices = Object.entries(serviceRevenue)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3);
+    
+    if (topServices.length > 0) {
+      insights.push({
+        icon: '🏆',
+        title: 'Top Services',
+        value: topServices.map((s, i) => `${i + 1}. ${s[0]}`).join('\n'),
+        subtitle: topServices.map(s => fmt(s[1])).join(' | '),
+        color: 'var(--plum)',
+        multiline: true
+      });
+    }
+    
+    // 5. BUSIEST DAY (by client count)
+    const clientsByDay = {};
+    allSummaries.forEach(s => {
+      const dayName = getDayName(s.date);
+      if (!clientsByDay[dayName]) clientsByDay[dayName] = {total: 0, count: 0};
+      clientsByDay[dayName].total += s.clientsSeen || 0;
+      clientsByDay[dayName].count++;
+    });
+    
+    let busiestDay = null;
+    let busiestAvg = 0;
+    Object.keys(clientsByDay).forEach(day => {
+      const avg = clientsByDay[day].total / clientsByDay[day].count;
+      if (avg > busiestAvg) {
+        busiestDay = day;
+        busiestAvg = avg;
+      }
+    });
+    
+    if (busiestDay) {
+      insights.push({
+        icon: '👥',
+        title: 'Busiest Day',
+        value: busiestDay,
+        subtitle: `Avg ${busiestAvg.toFixed(1)} clients`,
+        color: 'var(--plum)'
+      });
+    }
+    
+    // 6. PROFIT MARGIN THIS MONTH
+    const thisMonthExpenses = thisMonthTxns.filter(t => t.type === 'EXPENSE').reduce((s, t) => s + (t.amount || 0), 0);
+    if (thisMonthIncome > 0) {
+      const profit = thisMonthIncome - thisMonthExpenses;
+      const margin = (profit / thisMonthIncome) * 100;
+      
+      insights.push({
+        icon: '💵',
+        title: 'Profit Margin (This Month)',
+        value: `${margin.toFixed(0)}%`,
+        subtitle: `${fmt(profit)} profit`,
+        color: margin > 50 ? 'var(--success)' : margin > 30 ? 'var(--gold)' : 'var(--text)'
+      });
+    }
+    
+    // 7. SERVICE TRENDING UP
+    const last30Days = allTransactions.filter(t => {
+      const txDate = new Date(t.date);
+      const daysAgo = (today - txDate) / (1000 * 60 * 60 * 24);
+      return daysAgo <= 30;
+    });
+    
+    const prev30Days = allTransactions.filter(t => {
+      const txDate = new Date(t.date);
+      const daysAgo = (today - txDate) / (1000 * 60 * 60 * 24);
+      return daysAgo > 30 && daysAgo <= 60;
+    });
+    
+    const recentByService = {};
+    const prevByService = {};
+    
+    last30Days.filter(t => t.type === 'INCOME').forEach(t => {
+      recentByService[t.category] = (recentByService[t.category] || 0) + 1;
+    });
+    
+    prev30Days.filter(t => t.type === 'INCOME').forEach(t => {
+      prevByService[t.category] = (prevByService[t.category] || 0) + 1;
+    });
+    
+    let trendingService = null;
+    let trendingGrowth = 0;
+    
+    Object.keys(recentByService).forEach(service => {
+      const recent = recentByService[service];
+      const prev = prevByService[service] || 0;
+      if (prev > 0) {
+        const growth = ((recent - prev) / prev) * 100;
+        if (growth > trendingGrowth) {
+          trendingService = service;
+          trendingGrowth = growth;
+        }
+      }
+    });
+    
+    if (trendingService && trendingGrowth > 10) {
+      insights.push({
+        icon: '📊',
+        title: 'Trending Service',
+        value: trendingService,
+        subtitle: `Up ${trendingGrowth.toFixed(0)}% last 30 days`,
+        color: 'var(--success)'
+      });
+    }
+    
+    // 8. AVERAGE PER CLIENT
+    const totalClients = allSummaries.reduce((s, d) => s + (d.clientsSeen || 0), 0);
+    const totalIncome = allTransactions.filter(t => t.type === 'INCOME').reduce((s, t) => s + (t.serviceAmount || 0) + (t.tipAmount || 0), 0);
+    
+    if (totalClients > 0) {
+      const avgPerClient = totalIncome / totalClients;
+      
+      insights.push({
+        icon: '💳',
+        title: 'Avg Per Client',
+        value: fmt(avgPerClient),
+        subtitle: `Based on ${totalClients} total clients`,
+        color: 'var(--plum)'
+      });
+    }
+    
+    // 9. THIS WEEK VS LAST WEEK
+    const getWeekStart = (date) => {
+      const d = new Date(date);
+      const day = d.getDay();
+      const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+      return new Date(d.setDate(diff)).toISOString().split('T')[0];
+    };
+    
+    const todayStr = today.toISOString().split('T')[0];
+    const thisWeekStart = getWeekStart(todayStr);
+    const lastWeekStart = addDays(thisWeekStart, -7);
+    
+    const thisWeekIncome = allTransactions.filter(t => {
+      return t.type === 'INCOME' && t.date >= thisWeekStart && t.date < addDays(thisWeekStart, 7);
+    }).reduce((s, t) => s + (t.serviceAmount || 0) + (t.tipAmount || 0), 0);
+    
+    const lastWeekIncome = allTransactions.filter(t => {
+      return t.type === 'INCOME' && t.date >= lastWeekStart && t.date < thisWeekStart;
+    }).reduce((s, t) => s + (t.serviceAmount || 0) + (t.tipAmount || 0), 0);
+    
+    if (lastWeekIncome > 0) {
+      const weekChange = ((thisWeekIncome - lastWeekIncome) / lastWeekIncome) * 100;
+      const arrow = weekChange > 0 ? '↑' : weekChange < 0 ? '↓' : '→';
+      const color = weekChange > 0 ? 'var(--success)' : weekChange < 0 ? 'var(--danger)' : 'var(--text-muted)';
+      
+      insights.push({
+        icon: '📆',
+        title: 'This Week vs Last',
+        value: `${arrow} ${Math.abs(weekChange).toFixed(0)}%`,
+        subtitle: `${fmt(thisWeekIncome)} vs ${fmt(lastWeekIncome)}`,
+        color: color
+      });
+    }
+    
+    // 10. EXPENSE ALERT
+    const avgMonthlyExpense = allTransactions.filter(t => t.type === 'EXPENSE').reduce((s, t) => s + (t.amount || 0), 0) / 12;
+    
+    if (thisMonthExpenses > avgMonthlyExpense * 1.3) {
+      insights.push({
+        icon: '⚠️',
+        title: 'Expense Alert',
+        value: 'Higher Than Usual',
+        subtitle: `${fmt(thisMonthExpenses)} vs ${fmt(avgMonthlyExpense)} avg`,
+        color: 'var(--danger)'
+      });
+    }
+    
+    // Render all insights
+    container.innerHTML = insights.map(insight => `
+      <div class="card" style="margin-bottom:16px; border-left:4px solid ${insight.color};">
+        <div style="display:flex; align-items:start; gap:12px;">
+          <div style="font-size:32px; line-height:1;">${insight.icon}</div>
+          <div style="flex:1;">
+            <div style="font-size:13px; color:var(--text-muted); font-weight:500; margin-bottom:4px;">${insight.title}</div>
+            <div style="font-size:${insight.multiline ? '14px' : '20px'}; font-weight:600; color:${insight.color}; margin-bottom:4px; ${insight.multiline ? 'white-space:pre-line;' : ''}">${insight.value}</div>
+            <div style="font-size:13px; color:var(--text-muted);">${insight.subtitle}</div>
+          </div>
+        </div>
+      </div>
+    `).join('');
+    
+    loader.style.display = 'none';
+    
+  } catch (error) {
+    console.error('Error calculating insights:', error);
+    container.innerHTML = `
+      <div style="text-align:center; padding:40px; color:var(--danger);">
+        Error calculating insights. Please try again.
+      </div>
+    `;
+    loader.style.display = 'none';
+  }
+}
 
 // ----------------------------------------------------------------
 // ENTRIES VIEW (Unified Income/Expense Entry)
