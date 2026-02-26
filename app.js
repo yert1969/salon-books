@@ -886,17 +886,17 @@ async function renderRecentTransactionsSimple() {
           return `
             <div style="display:flex; justify-content:space-between; align-items:center; padding:10px 0; border-bottom:1px solid var(--border-light);">
               <div style="flex:1;">
-                <div style="font-size:14px; font-weight:500; color:var(--text);">${t.category}</div>
-                ${t.notes ? `<div style="font-size:12px; color:var(--text-muted); margin-top:2px;">${t.notes}</div>` : ''}
+                <div style="font-size:15px; font-weight:500; color:var(--text);">${t.category}</div>
+                ${t.notes ? `<div style="font-size:13px; color:var(--text-muted); margin-top:2px;">${t.notes}</div>` : ''}
               </div>
-              <div style="text-align:right; display:flex; align-items:center; gap:8px;">
-                <div>
-                  <div style="font-size:14px; font-weight:600; color:${amountColor};">
+              <div style="text-align:right; display:flex; align-items:center; gap:4px;">
+                <div style="margin-right:8px;">
+                  <div style="font-size:15px; font-weight:600; color:${amountColor};">
                     ${isIncome && t.serviceAmount > 0 ? `$${t.serviceAmount.toFixed(2)}` : `$${amount.toFixed(2)}`}${tipText}
                   </div>
                 </div>
-                <button onclick="editTransaction('${t.id}')" style="background:none; border:none; color:var(--plum); font-size:20px; padding:4px; cursor:pointer;">✎</button>
-                <button onclick="deleteTransaction('${t.id}')" style="background:none; border:none; color:var(--danger); font-size:18px; padding:4px; cursor:pointer;">✕</button>
+                <button onclick="editTransaction('${t.id}')" style="background:none; border:none; color:var(--plum); font-size:28px; padding:8px 12px; cursor:pointer; min-width:44px; min-height:44px; display:flex; align-items:center; justify-content:center;">✎</button>
+                <button onclick="deleteTransaction('${t.id}')" style="background:none; border:none; color:var(--danger); font-size:24px; padding:8px 12px; cursor:pointer; min-width:44px; min-height:44px; display:flex; align-items:center; justify-content:center;">✕</button>
               </div>
             </div>
           `;
@@ -1050,17 +1050,17 @@ async function renderRecentTransactions() {
           return `
             <div style="display:flex; justify-content:space-between; align-items:center; padding:10px 0; border-bottom:1px solid var(--border-light);">
               <div style="flex:1;">
-                <div style="font-size:14px; font-weight:500; color:var(--text);">${t.category}</div>
-                ${t.notes ? `<div style="font-size:12px; color:var(--text-muted); margin-top:2px;">${t.notes}</div>` : ''}
+                <div style="font-size:15px; font-weight:500; color:var(--text);">${t.category}</div>
+                ${t.notes ? `<div style="font-size:13px; color:var(--text-muted); margin-top:2px;">${t.notes}</div>` : ''}
               </div>
-              <div style="text-align:right; display:flex; align-items:center; gap:8px;">
-                <div>
-                  <div style="font-size:14px; font-weight:600; color:${amountColor};">
+              <div style="text-align:right; display:flex; align-items:center; gap:4px;">
+                <div style="margin-right:8px;">
+                  <div style="font-size:15px; font-weight:600; color:${amountColor};">
                     ${isIncome && t.serviceAmount > 0 ? `$${t.serviceAmount.toFixed(2)}` : `$${amount.toFixed(2)}`}${tipText}
                   </div>
                 </div>
-                <button onclick="editTransaction('${t.id}')" style="background:none; border:none; color:var(--plum); font-size:20px; padding:4px; cursor:pointer;">✎</button>
-                <button onclick="deleteTransaction('${t.id}')" style="background:none; border:none; color:var(--danger); font-size:18px; padding:4px; cursor:pointer;">✕</button>
+                <button onclick="editTransaction('${t.id}')" style="background:none; border:none; color:var(--plum); font-size:28px; padding:8px 12px; cursor:pointer; min-width:44px; min-height:44px; display:flex; align-items:center; justify-content:center;">✎</button>
+                <button onclick="deleteTransaction('${t.id}')" style="background:none; border:none; color:var(--danger); font-size:24px; padding:8px 12px; cursor:pointer; min-width:44px; min-height:44px; display:flex; align-items:center; justify-content:center;">✕</button>
               </div>
             </div>
           `;
