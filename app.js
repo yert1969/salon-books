@@ -619,7 +619,44 @@ async function renderEntriesView() {
   const hdr = document.getElementById('header-actions');
   hdr.innerHTML = '';
   
+  const entriesTab = state.entriesTab || 'add';
+  
   content.innerHTML = `
+    <div class="mobile-tabs" style="display:flex; gap:8px; margin-bottom:20px; border-bottom:2px solid var(--border); padding-bottom:0;">
+      <button class="mobile-tab ${entriesTab === 'add' ? 'active' : ''}" onclick="switchEntriesTab('add')" style="flex:1; padding:12px; background:none; border:none; border-bottom:3px solid ${entriesTab === 'add' ? 'var(--plum)' : 'transparent'}; font-size:14px; font-weight:${entriesTab === 'add' ? '600' : '500'}; color:${entriesTab === 'add' ? 'var(--plum)' : 'var(--text-muted)'}; margin-bottom:-2px;">
+        Add Entry
+      </button>
+      <button class="mobile-tab ${entriesTab === 'search' ? 'active' : ''}" onclick="switchEntriesTab('search')" style="flex:1; padding:12px; background:none; border:none; border-bottom:3px solid ${entriesTab === 'search' ? 'var(--plum)' : 'transparent'}; font-size:14px; font-weight:${entriesTab === 'search' ? '600' : '500'}; color:${entriesTab === 'search' ? 'var(--plum)' : 'var(--text-muted)'}; margin-bottom:-2px;">
+        Browse & Search
+      </button>
+    </div>
+    
+    <div id="entries-tab-content"></div>
+  `;
+  
+  await renderEntriesTabContent();
+}
+
+function switchEntriesTab(tab) {
+  state.entriesTab = tab;
+  renderEntriesTabContent();
+}
+
+async function renderEntriesTabContent() {
+  const container = document.getElementById('entries-tab-content');
+  if (!container) return;
+  
+  const entriesTab = state.entriesTab || 'add';
+  
+  if (entriesTab === 'add') {
+    await renderAddEntryTab(container);
+  } else {
+    await renderSearchTab(container);
+  }
+}
+
+async function renderAddEntryTab(container) {
+  container.innerHTML = `
     <div class="card" style="margin-bottom:20px;">
       <h3 style="font-size:16px; margin-bottom:16px; font-weight:600;">Add Transaction</h3>
       
@@ -705,7 +742,19 @@ async function renderEntriesView() {
     </div>
     
     <div class="card">
-      <h3 style="font-size:16px; margin-bottom:16px; font-weight:600;">Transactions</h3>
+      <h3 style="font-size:16px; margin-bottom:16px; font-weight:600;">Recent (Last 30)</h3>
+      <div id="recent-transactions"></div>
+    </div>
+  `;
+  
+  updateEntryForm();
+  await renderRecentTransactionsSimple();
+}
+
+async function renderSearchTab(container) {
+  container.innerHTML = `
+    <div class="card">
+      <h3 style="font-size:16px; margin-bottom:16px; font-weight:600;">Search & Filter</h3>
       
       <div style="margin-bottom:16px;">
         <input type="text" id="transaction-search" class="form-input" placeholder="Search by category or notes..." 
@@ -724,31 +773,196 @@ async function renderEntriesView() {
           </select>
         </div>
         
-        <div style="display:flex; gap:8px; align-items:center;">
-          <input type="text" id="filter-amount" class="form-input" placeholder="Amount: 50 or >50 or <50 or 50-100" 
-            style="flex:1; padding:8px; font-size:13px;"
-            oninput="filterTransactions()">
+        <div style="display:flex; gap:8px; margin-bottom:8px;">
+          <select id="filter-amount-type" class="form-select" style="flex:1; padding:8px; font-size:13px;" onchange="updateAmountFilter()">
+            <option value="">No Amount Filter</option>
+            <option value="exact">Exact Amount</option>
+            <option value="gt">Greater Than</option>
+            <option value="lt">Less Than</option>
+            <option value="range">Between</option>
+          </select>
           
-          <button onclick="clearFilters()" class="btn-secondary" style="padding:8px 12px; font-size:13px; white-space:nowrap;">Clear</button>
+          <input type="number" id="filter-amount-value" class="form-input" placeholder="Amount" 
+            style="flex:1; padding:8px; font-size:13px;" step="0.01" 
+            oninput="filterTransactions()" disabled>
+          
+          <input type="number" id="filter-amount-value2" class="form-input" placeholder="Max" 
+            style="flex:1; padding:8px; font-size:13px; display:none;" step="0.01" 
+            oninput="filterTransactions()">
         </div>
+        
+        <button onclick="clearFilters()" class="btn-secondary" style="width:100%; padding:10px; font-size:13px;">Clear All Filters</button>
       </div>
       
-      <div id="recent-transactions"></div>
-      <div id="load-more-container"></div>
+      <div id="search-transactions"></div>
+      <div id="search-load-more-container"></div>
     </div>
   `;
   
-  updateEntryForm();
-  
-  // Initialize showing first 30 transactions
-  if (!state.transactionsToShow) {
-    state.transactionsToShow = 30;
-  }
-  
-  // Populate category filter
   populateCategoryFilter();
   
-  await renderRecentTransactions();
+  if (!state.searchTransactionsToShow) {
+    state.searchTransactionsToShow = 30;
+  }
+  
+  await renderSearchTransactions();
+}
+
+function updateAmountFilter() {
+  const amountType = document.getElementById('filter-amount-type')?.value;
+  const amountValue = document.getElementById('filter-amount-value');
+  const amountValue2 = document.getElementById('filter-amount-value2');
+  
+  if (amountType === 'range') {
+    amountValue.disabled = false;
+    amountValue.placeholder = 'Min';
+    amountValue2.style.display = 'block';
+  } else if (amountType) {
+    amountValue.disabled = false;
+    amountValue.placeholder = 'Amount';
+    amountValue2.style.display = 'none';
+  } else {
+    amountValue.disabled = true;
+    amountValue.placeholder = 'Amount';
+    amountValue2.style.display = 'none';
+  }
+  
+  filterTransactions();
+}
+
+async function renderSearchTransactions() {
+  const container = document.getElementById('search-transactions');
+  const loadMoreContainer = document.getElementById('search-load-more-container');
+  if (!container) return;
+  
+  // Get filter values
+  const searchText = document.getElementById('transaction-search')?.value.toLowerCase() || '';
+  const filterType = document.getElementById('filter-type')?.value || 'all';
+  const filterCategory = document.getElementById('filter-category')?.value || 'all';
+  const filterAmountType = document.getElementById('filter-amount-type')?.value || '';
+  const filterAmountValue = parseFloat(document.getElementById('filter-amount-value')?.value) || 0;
+  const filterAmountValue2 = parseFloat(document.getElementById('filter-amount-value2')?.value) || 0;
+  
+  // Get all transactions sorted by creation time (newest first)
+  let allTransactions = await db.transactions.toArray();
+  allTransactions.sort((a, b) => {
+    const aTime = a.createdAt?.toDate?.() || new Date(0);
+    const bTime = b.createdAt?.toDate?.() || new Date(0);
+    return bTime - aTime;
+  });
+  
+  // Apply filters
+  allTransactions = allTransactions.filter(t => {
+    // Type filter
+    if (filterType !== 'all' && t.type !== filterType) return false;
+    
+    // Category filter
+    if (filterCategory !== 'all' && t.category !== filterCategory) return false;
+    
+    // Search filter
+    if (searchText) {
+      const categoryMatch = t.category?.toLowerCase().includes(searchText);
+      const notesMatch = t.notes?.toLowerCase().includes(searchText);
+      if (!categoryMatch && !notesMatch) return false;
+    }
+    
+    // Amount filter
+    if (filterAmountType && filterAmountValue > 0) {
+      const isIncome = t.type === 'INCOME';
+      const amount = isIncome ? (t.serviceAmount || 0) + (t.tipAmount || 0) : (t.amount || 0);
+      
+      switch (filterAmountType) {
+        case 'exact':
+          if (Math.abs(amount - filterAmountValue) > 0.01) return false;
+          break;
+        case 'gt':
+          if (amount <= filterAmountValue) return false;
+          break;
+        case 'lt':
+          if (amount >= filterAmountValue) return false;
+          break;
+        case 'range':
+          if (filterAmountValue2 > 0) {
+            if (amount < filterAmountValue || amount > filterAmountValue2) return false;
+          }
+          break;
+      }
+    }
+    
+    return true;
+  });
+  
+  const toShow = state.searchTransactionsToShow || 30;
+  const transactions = allTransactions.slice(0, toShow);
+  const hasMore = allTransactions.length > toShow;
+  
+  if (transactions.length === 0) {
+    container.innerHTML = `
+      <div style="text-align:center; padding:20px; color:var(--text-muted); font-size:14px;">
+        ${searchText || filterType !== 'all' || filterCategory !== 'all' || filterAmountType ? 'No matching transactions' : 'No transactions yet'}
+      </div>
+    `;
+    if (loadMoreContainer) loadMoreContainer.innerHTML = '';
+    return;
+  }
+  
+  // Group by date
+  const groupedByDate = {};
+  const today = todayStr();
+  
+  transactions.forEach(t => {
+    if (!groupedByDate[t.date]) {
+      groupedByDate[t.date] = [];
+    }
+    groupedByDate[t.date].push(t);
+  });
+  
+  // Render grouped transactions
+  const dates = Object.keys(groupedByDate).sort((a, b) => b.localeCompare(a));
+  
+  container.innerHTML = dates.map(date => {
+    const dateObj = new Date(date + 'T00:00:00');
+    const dayOfWeek = dateObj.toLocaleDateString('en-US', { weekday: 'short' });
+    const monthDay = dateObj.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' });
+    const year = dateObj.toLocaleDateString('en-US', { year: '2-digit' });
+    
+    const dateLabel = date === today ? 'Today' : `${dayOfWeek}, ${monthDay}/${year}`;
+    
+    const txns = groupedByDate[date];
+    
+    return `
+      <div style="margin-bottom:16px;">
+        <div style="font-size:13px; font-weight:600; color:var(--text-muted); margin-bottom:8px; text-transform:uppercase; letter-spacing:0.5px;">
+          ${dateLabel}
+        </div>
+        ${txns.map(t => renderTransactionRow(t)).join('')}
+      </div>
+    `;
+  }).join('');
+  
+  // Show "Load More" button if there are more transactions
+  if (loadMoreContainer) {
+    if (hasMore) {
+      loadMoreContainer.innerHTML = `
+        <button class="btn-secondary" onclick="loadMoreSearchTransactions()" style="width:100%; margin-top:16px; padding:12px;">
+          Load More (${allTransactions.length - toShow} older)
+        </button>
+      `;
+    } else if (transactions.length > 0) {
+      loadMoreContainer.innerHTML = `
+        <div style="text-align:center; padding:16px; color:var(--text-muted); font-size:13px;">
+          ${allTransactions.length} ${allTransactions.length === 1 ? 'transaction' : 'transactions'} shown
+        </div>
+      `;
+    } else {
+      loadMoreContainer.innerHTML = '';
+    }
+  }
+}
+
+function loadMoreSearchTransactions() {
+  state.searchTransactionsToShow = (state.searchTransactionsToShow || 30) + 30;
+  renderSearchTransactions();
 }
 
 function populateCategoryFilter() {
@@ -767,20 +981,272 @@ function populateCategoryFilter() {
 }
 
 function clearFilters() {
-  document.getElementById('transaction-search').value = '';
-  document.getElementById('filter-type').value = 'all';
-  document.getElementById('filter-category').value = 'all';
-  document.getElementById('filter-amount').value = '';
-  state.transactionsToShow = 30; // Reset pagination
+  const searchInput = document.getElementById('transaction-search');
+  const typeFilter = document.getElementById('filter-type');
+  const categoryFilter = document.getElementById('filter-category');
+  const amountType = document.getElementById('filter-amount-type');
+  const amountValue = document.getElementById('filter-amount-value');
+  const amountValue2 = document.getElementById('filter-amount-value2');
+  
+  if (searchInput) searchInput.value = '';
+  if (typeFilter) typeFilter.value = 'all';
+  if (categoryFilter) categoryFilter.value = 'all';
+  if (amountType) amountType.value = '';
+  if (amountValue) {
+    amountValue.value = '';
+    amountValue.disabled = true;
+  }
+  if (amountValue2) {
+    amountValue2.value = '';
+    amountValue2.style.display = 'none';
+  }
+  
+  state.searchTransactionsToShow = 30;
   filterTransactions();
 }
 
 function filterTransactions() {
-  state.transactionsToShow = 30; // Reset to first page when filtering
-  renderRecentTransactions();
+  state.searchTransactionsToShow = 30; // Reset to first page when filtering
+  renderSearchTransactions();
 }
 
-async function renderRecentTransactions() {
+async function renderRecentTransactionsSimple() {
+  const container = document.getElementById('recent-transactions');
+  if (!container) return;
+  
+  // Get last 30 transactions sorted by creation time (newest first)
+  const allTransactions = await db.transactions.toArray();
+  allTransactions.sort((a, b) => {
+    const aTime = a.createdAt?.toDate?.() || new Date(0);
+    const bTime = b.createdAt?.toDate?.() || new Date(0);
+    return bTime - aTime;
+  });
+  
+  const recentTransactions = allTransactions.slice(0, 30);
+  
+  if (recentTransactions.length === 0) {
+    container.innerHTML = `
+      <div style="text-align:center; padding:20px; color:var(--text-muted); font-size:14px;">
+        No transactions yet
+      </div>
+    `;
+    return;
+  }
+  
+  // Group by date
+  const groupedByDate = {};
+  const today = todayStr();
+  
+  recentTransactions.forEach(t => {
+    if (!groupedByDate[t.date]) {
+      groupedByDate[t.date] = [];
+    }
+    groupedByDate[t.date].push(t);
+  });
+  
+  // Render grouped transactions
+  const dates = Object.keys(groupedByDate).sort((a, b) => b.localeCompare(a));
+  
+  container.innerHTML = dates.map(date => {
+    const dateObj = new Date(date + 'T00:00:00');
+    const dayOfWeek = dateObj.toLocaleDateString('en-US', { weekday: 'short' });
+    const monthDay = dateObj.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' });
+    const year = dateObj.toLocaleDateString('en-US', { year: '2-digit' });
+    
+    const dateLabel = date === today ? 'Today' : `${dayOfWeek}, ${monthDay}/${year}`;
+    
+    const transactions = groupedByDate[date];
+    
+    return `
+      <div style="margin-bottom:16px;">
+        <div style="font-size:13px; font-weight:600; color:var(--text-muted); margin-bottom:8px; text-transform:uppercase; letter-spacing:0.5px;">
+          ${dateLabel}
+        </div>
+        ${transactions.map(t => renderTransactionRow(t)).join('')}
+      </div>
+    `;
+  }).join('');
+}
+
+function renderTransactionRow(t) {
+  const isIncome = t.type === 'INCOME';
+  const amount = isIncome ? (t.serviceAmount || 0) + (t.tipAmount || 0) : (t.amount || 0);
+  const amountColor = isIncome ? 'var(--success)' : 'var(--danger)';
+  const tipText = isIncome && t.tipAmount > 0 ? ` + $${t.tipAmount.toFixed(2)} tip` : '';
+  
+  return `
+    <div style="display:flex; justify-content:space-between; align-items:center; padding:10px 0; border-bottom:1px solid var(--border-light);">
+      <div style="flex:1;">
+        <div style="font-size:14px; font-weight:500; color:var(--text);">${t.category}</div>
+        ${t.notes ? `<div style="font-size:12px; color:var(--text-muted); margin-top:2px;">${t.notes}</div>` : ''}
+      </div>
+      <div style="text-align:right; display:flex; align-items:center; gap:8px;">
+        <div>
+          <div style="font-size:14px; font-weight:600; color:${amountColor};">
+            ${isIncome && t.serviceAmount > 0 ? `$${t.serviceAmount.toFixed(2)}` : `$${amount.toFixed(2)}`}${tipText}
+          </div>
+        </div>
+        <button onclick="editTransaction('${t.id}')" style="background:none; border:none; color:var(--plum); font-size:20px; padding:4px; cursor:pointer;">✎</button>
+        <button onclick="deleteTransaction('${t.id}')" style="background:none; border:none; color:var(--danger); font-size:18px; padding:4px; cursor:pointer;">✕</button>
+      </div>
+    </div>
+  `;
+}
+
+async function editTransaction(id) {
+  const transaction = await db.transactions.get(id);
+  if (!transaction) {
+    showToast('Transaction not found');
+    return;
+  }
+  
+  // Switch to add tab and populate form
+  state.entriesTab = 'add';
+  await renderEntriesTabContent();
+  
+  // Populate form with transaction data
+  if (transaction.type === 'INCOME') {
+    document.querySelector('input[name="entry-type"][value="INCOME"]').checked = true;
+    document.getElementById('entry-amount').value = transaction.serviceAmount || 0;
+    document.getElementById('entry-tip').value = transaction.tipAmount || 0;
+    document.getElementById('entry-date').value = transaction.date;
+  } else {
+    document.querySelector('input[name="entry-type"][value="EXPENSE"]').checked = true;
+    // TODO: Handle daily vs monthly expenses
+    document.getElementById('entry-expense-amount').value = transaction.amount || 0;
+    document.getElementById('entry-date').value = transaction.date;
+  }
+  
+  document.getElementById('entry-category').value = transaction.category;
+  document.getElementById('entry-notes').value = transaction.notes || '';
+  
+  updateEntryForm();
+  
+  // Store the transaction ID being edited
+  state.editingTransactionId = id;
+  
+  // Change button text
+  const addButton = document.querySelector('.btn-primary');
+  if (addButton) {
+    addButton.textContent = 'Update Entry';
+    addButton.onclick = () => updateEntryTransaction();
+  }
+  
+  showToast('Editing transaction');
+  
+  // Scroll to top
+  window.scrollTo(0, 0);
+}
+
+async function deleteTransaction(id) {
+  if (!confirm('Delete this transaction?')) return;
+  
+  try {
+    // Delete from local DB
+    await db.transactions.delete(id);
+    
+    // Delete from Firestore
+    await firestore.collection('users').doc(auth.currentUser.uid)
+      .collection('transactions').doc(id).delete();
+    
+    showToast('Transaction deleted');
+    
+    // Refresh current view
+    if (state.entriesTab === 'add') {
+      await renderRecentTransactionsSimple();
+    } else {
+      await renderSearchTransactions();
+    }
+  } catch (error) {
+    console.error('Error deleting transaction:', error);
+    showToast('Error deleting transaction');
+  }
+}
+
+async function updateEntryTransaction() {
+  const id = state.editingTransactionId;
+  if (!id) {
+    showToast('Error: No transaction to update');
+    return;
+  }
+  
+  const type = document.querySelector('input[name="entry-type"]:checked')?.value;
+  const category = document.getElementById('entry-category')?.value;
+  const notes = document.getElementById('entry-notes')?.value.trim() || '';
+  
+  let serviceAmount = 0;
+  let tipAmount = 0;
+  let expenseAmount = 0;
+  let entryDate = '';
+  
+  if (type === 'INCOME') {
+    serviceAmount = parseFloat(document.getElementById('entry-amount')?.value) || 0;
+    tipAmount = parseFloat(document.getElementById('entry-tip')?.value) || 0;
+    
+    if (serviceAmount <= 0 && tipAmount <= 0) {
+      showToast('Please enter service amount or tip');
+      return;
+    }
+    
+    entryDate = document.getElementById('entry-date').value;
+  } else {
+    expenseAmount = parseFloat(document.getElementById('entry-expense-amount')?.value) || 0;
+    
+    if (expenseAmount <= 0) {
+      showToast('Please enter a valid amount');
+      return;
+    }
+    
+    entryDate = document.getElementById('entry-date').value;
+  }
+  
+  try {
+    const updatedTransaction = {
+      type: type,
+      category: category,
+      notes: notes,
+      date: entryDate
+    };
+    
+    if (type === 'INCOME') {
+      updatedTransaction.serviceAmount = serviceAmount;
+      updatedTransaction.tipAmount = tipAmount;
+    } else {
+      updatedTransaction.amount = expenseAmount;
+    }
+    
+    // Update in Firestore
+    await firestore.collection('users').doc(auth.currentUser.uid)
+      .collection('transactions').doc(id).update(updatedTransaction);
+    
+    // Update in local DB
+    await db.transactions.update(id, updatedTransaction);
+    
+    // Clear editing state
+    delete state.editingTransactionId;
+    
+    // Clear form
+    document.getElementById('entry-amount').value = '';
+    document.getElementById('entry-tip').value = '';
+    document.getElementById('entry-expense-amount').value = '';
+    document.getElementById('entry-notes').value = '';
+    document.getElementById('entry-date').value = todayStr();
+    
+    // Reset button
+    const addButton = document.querySelector('.btn-primary');
+    if (addButton) {
+      addButton.textContent = 'Add Entry';
+      addButton.onclick = () => saveEntryTransaction();
+    }
+    
+    showToast('Transaction updated ✓');
+    await renderRecentTransactionsSimple();
+    
+  } catch (error) {
+    console.error('Error updating transaction:', error);
+    showToast('Error updating transaction');
+  }
+}
   const container = document.getElementById('recent-transactions');
   const loadMoreContainer = document.getElementById('load-more-container');
   if (!container) return;
@@ -1120,8 +1586,8 @@ async function saveEntryTransaction() {
     
     showToast('Entry added ✓');
     
-    // Refresh recent transactions to show the new entry
-    await renderRecentTransactions();
+    // Refresh recent transactions on Add Entry tab
+    await renderRecentTransactionsSimple();
     
   } catch (error) {
     console.error('Error saving entry:', error);
