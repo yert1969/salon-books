@@ -619,21 +619,7 @@ async function renderEntriesView() {
   const hdr = document.getElementById('header-actions');
   hdr.innerHTML = '';
   
-  const viewMode = state.entriesViewMode || 'daily';
-  
   content.innerHTML = `
-    <div class="mobile-tabs" style="display:flex; gap:8px; margin-bottom:20px; border-bottom:2px solid var(--border); padding-bottom:0;">
-      <button class="mobile-tab ${viewMode === 'daily' ? 'active' : ''}" onclick="switchEntriesView('daily')" style="flex:1; padding:12px; background:none; border:none; border-bottom:3px solid ${viewMode === 'daily' ? 'var(--plum)' : 'transparent'}; font-size:14px; font-weight:${viewMode === 'daily' ? '600' : '500'}; color:${viewMode === 'daily' ? 'var(--plum)' : 'var(--text-muted)'}; margin-bottom:-2px;">
-        Daily
-      </button>
-      <button class="mobile-tab ${viewMode === 'monthly' ? 'active' : ''}" onclick="switchEntriesView('monthly')" style="flex:1; padding:12px; background:none; border:none; border-bottom:3px solid ${viewMode === 'monthly' ? 'var(--plum)' : 'transparent'}; font-size:14px; font-weight:${viewMode === 'monthly' ? '600' : '500'}; color:${viewMode === 'monthly' ? 'var(--plum)' : 'var(--text-muted)'}; margin-bottom:-2px;">
-        Monthly
-      </button>
-      <button class="mobile-tab ${viewMode === 'all' ? 'active' : ''}" onclick="switchEntriesView('all')" style="flex:1; padding:12px; background:none; border:none; border-bottom:3px solid ${viewMode === 'all' ? 'var(--plum)' : 'transparent'}; font-size:14px; font-weight:${viewMode === 'all' ? '600' : '500'}; color:${viewMode === 'all' ? 'var(--plum)' : 'var(--text-muted)'}; margin-bottom:-2px;">
-        All
-      </button>
-    </div>
-    
     <div class="card" style="margin-bottom:20px;">
       <h3 style="font-size:16px; margin-bottom:16px; font-weight:600;">Add Transaction</h3>
       
@@ -718,35 +704,26 @@ async function renderEntriesView() {
       </button>
     </div>
     
-    <div class="card" style="margin-bottom:20px;">
-      <h3 style="font-size:16px; margin-bottom:16px; font-weight:600;">Recent Transactions</h3>
-      <div id="recent-transactions"></div>
-    </div>
-    
     <div class="card">
-      <h3 style="font-size:16px; margin-bottom:16px; font-weight:600;">Browse All Entries</h3>
-      <div class="mobile-tabs" style="display:flex; gap:8px; margin-bottom:16px; border-bottom:2px solid var(--border); padding-bottom:0;">
-        <button class="mobile-tab ${viewMode === 'daily' ? 'active' : ''}" onclick="switchEntriesView('daily')" style="flex:1; padding:12px; background:none; border:none; border-bottom:3px solid ${viewMode === 'daily' ? 'var(--plum)' : 'transparent'}; font-size:14px; font-weight:${viewMode === 'daily' ? '600' : '500'}; color:${viewMode === 'daily' ? 'var(--plum)' : 'var(--text-muted)'}; margin-bottom:-2px;">
-          Daily
-        </button>
-        <button class="mobile-tab ${viewMode === 'monthly' ? 'active' : ''}" onclick="switchEntriesView('monthly')" style="flex:1; padding:12px; background:none; border:none; border-bottom:3px solid ${viewMode === 'monthly' ? 'var(--plum)' : 'transparent'}; font-size:14px; font-weight:${viewMode === 'monthly' ? '600' : '500'}; color:${viewMode === 'monthly' ? 'var(--plum)' : 'var(--text-muted)'}; margin-bottom:-2px;">
-          Monthly
-        </button>
-        <button class="mobile-tab ${viewMode === 'all' ? 'active' : ''}" onclick="switchEntriesView('all')" style="flex:1; padding:12px; background:none; border:none; border-bottom:3px solid ${viewMode === 'all' ? 'var(--plum)' : 'transparent'}; font-size:14px; font-weight:${viewMode === 'all' ? '600' : '500'}; color:${viewMode === 'all' ? 'var(--plum)' : 'var(--text-muted)'}; margin-bottom:-2px;">
-          All
-        </button>
-      </div>
-      <div id="entries-content"></div>
+      <h3 style="font-size:16px; margin-bottom:16px; font-weight:600;">Transactions</h3>
+      <div id="recent-transactions"></div>
+      <div id="load-more-container"></div>
     </div>
   `;
   
   updateEntryForm();
+  
+  // Initialize showing first 30 transactions
+  if (!state.transactionsToShow) {
+    state.transactionsToShow = 30;
+  }
+  
   await renderRecentTransactions();
-  await renderEntriesContent();
 }
 
 async function renderRecentTransactions() {
   const container = document.getElementById('recent-transactions');
+  const loadMoreContainer = document.getElementById('load-more-container');
   if (!container) return;
   
   // Get all transactions sorted by creation time (newest first)
@@ -757,15 +734,17 @@ async function renderRecentTransactions() {
     return bTime - aTime;
   });
   
-  // Take the most recent 15
-  const recentTransactions = allTransactions.slice(0, 15);
+  const toShow = state.transactionsToShow || 30;
+  const recentTransactions = allTransactions.slice(0, toShow);
+  const hasMore = allTransactions.length > toShow;
   
   if (recentTransactions.length === 0) {
     container.innerHTML = `
       <div style="text-align:center; padding:20px; color:var(--text-muted); font-size:14px;">
-        No recent transactions
+        No transactions yet
       </div>
     `;
+    if (loadMoreContainer) loadMoreContainer.innerHTML = '';
     return;
   }
   
@@ -821,6 +800,28 @@ async function renderRecentTransactions() {
       </div>
     `;
   }).join('');
+  
+  // Show "Load More" button if there are more transactions
+  if (loadMoreContainer) {
+    if (hasMore) {
+      loadMoreContainer.innerHTML = `
+        <button class="btn-secondary" onclick="loadMoreTransactions()" style="width:100%; margin-top:16px; padding:12px;">
+          Load More (${allTransactions.length - toShow} older)
+        </button>
+      `;
+    } else {
+      loadMoreContainer.innerHTML = `
+        <div style="text-align:center; padding:16px; color:var(--text-muted); font-size:13px;">
+          All transactions loaded
+        </div>
+      `;
+    }
+  }
+}
+
+function loadMoreTransactions() {
+  state.transactionsToShow = (state.transactionsToShow || 30) + 30;
+  renderRecentTransactions();
 }
 
 function updateEntryForm() {
