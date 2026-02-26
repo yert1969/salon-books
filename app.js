@@ -662,6 +662,8 @@ async function renderEntriesTabContent() {
 }
 
 async function renderAddEntryTab(container) {
+  const isEditing = !!state.editingTransactionId;
+  
   container.innerHTML = `
     <div class="card" style="margin-bottom:20px;">
       <h3 style="font-size:16px; margin-bottom:16px; font-weight:600;">Add Transaction</h3>
@@ -747,14 +749,20 @@ async function renderAddEntryTab(container) {
       </button>
     </div>
     
-    <div class="card">
-      <h3 style="font-size:16px; margin-bottom:16px; font-weight:600;">Recent (Last 30)</h3>
-      <div id="recent-transactions-simple"></div>
-    </div>
+    ${!isEditing ? `
+      <div class="card">
+        <h3 style="font-size:16px; margin-bottom:16px; font-weight:600;">Recent (Last 30)</h3>
+        <div id="recent-transactions-simple"></div>
+      </div>
+    ` : ''}
   `;
   
   updateEntryForm();
-  await renderRecentTransactionsSimple();
+  
+  // Only render recent transactions list if not editing
+  if (!isEditing) {
+    await renderRecentTransactionsSimple();
+  }
 }
 
 async function renderSearchTab(container) {
@@ -1197,31 +1205,10 @@ function cancelEdit() {
   // Hide edit banner
   hideEditBanner();
   
-  // Clear form
-  document.getElementById('entry-amount').value = '';
-  document.getElementById('entry-tip').value = '';
-  document.getElementById('entry-expense-amount').value = '';
-  document.getElementById('entry-notes').value = '';
-  document.getElementById('entry-date').value = todayStr();
-  
-  // Reset to income type default
-  document.querySelector('input[name="entry-type"][value="INCOME"]').checked = true;
-  updateEntryForm();
-  
-  // Remove cancel button and reset add button
-  const addButton = document.querySelector('.btn-primary');
-  if (addButton) {
-    addButton.textContent = 'Add Entry';
-    addButton.onclick = () => saveEntryTransaction();
-    
-    // Remove cancel button
-    const cancelButton = addButton.nextElementSibling;
-    if (cancelButton && cancelButton.textContent === 'Cancel Edit') {
-      cancelButton.remove();
-    }
-  }
-  
   showToast('Edit cancelled');
+  
+  // Re-render the Add Entry tab to show the list again
+  renderEntriesTabContent();
 }
 
 async function deleteTransaction(id) {
@@ -1314,28 +1301,10 @@ async function updateTransaction() {
     // Hide edit banner
     hideEditBanner();
     
-    // Clear form
-    document.getElementById('entry-amount').value = '';
-    document.getElementById('entry-tip').value = '';
-    document.getElementById('entry-expense-amount').value = '';
-    document.getElementById('entry-notes').value = '';
-    document.getElementById('entry-date').value = todayStr();
-    
-    // Reset button
-    const addButton = document.querySelector('.btn-primary');
-    if (addButton) {
-      addButton.textContent = 'Add Entry';
-      addButton.onclick = () => saveEntryTransaction();
-      
-      // Remove cancel button
-      const cancelButton = addButton.nextElementSibling;
-      if (cancelButton && cancelButton.textContent === 'Cancel Edit') {
-        cancelButton.remove();
-      }
-    }
-    
     showToast('Transaction updated ✓');
-    await renderRecentTransactionsSimple();
+    
+    // Re-render the Add Entry tab to show the list again
+    await renderEntriesTabContent();
     
   } catch (error) {
     console.error('Error updating transaction:', error);
