@@ -670,14 +670,24 @@ async function renderEntriesView() {
         <select id="entry-category" class="form-select" style="width:100%; padding:12px; font-size:14px;"></select>
       </div>
       
-      <div class="form-group">
-        <label class="form-label" style="font-size:13px; margin-bottom:8px; display:block; font-weight:500;">Amount</label>
+      <div class="form-group" id="service-amount-section">
+        <label class="form-label" style="font-size:13px; margin-bottom:8px; display:block; font-weight:500;">Service Amount</label>
         <input type="number" id="entry-amount" class="form-input" step="0.01" placeholder="0.00" style="width:100%; padding:12px; font-size:16px;">
+      </div>
+      
+      <div class="form-group" id="tip-amount-section">
+        <label class="form-label" style="font-size:13px; margin-bottom:8px; display:block; font-weight:500;">Tip Amount (optional)</label>
+        <input type="number" id="entry-tip" class="form-input" step="0.01" placeholder="0.00" style="width:100%; padding:12px; font-size:16px;">
+      </div>
+      
+      <div class="form-group hidden" id="expense-amount-section">
+        <label class="form-label" style="font-size:13px; margin-bottom:8px; display:block; font-weight:500;">Amount</label>
+        <input type="number" id="entry-expense-amount" class="form-input" step="0.01" placeholder="0.00" style="width:100%; padding:12px; font-size:16px;">
       </div>
       
       <div class="form-group" id="date-section">
         <label class="form-label" style="font-size:13px; margin-bottom:8px; display:block; font-weight:500;">Date</label>
-        <input type="date" id="entry-date" class="form-input" value="${state.selectedDate}" style="width:100%; padding:12px; font-size:14px;">
+        <input type="date" id="entry-date" class="form-input" value="${todayStr()}" style="width:100%; padding:12px; font-size:14px;">
       </div>
       
       <div class="form-group hidden" id="month-section">
@@ -708,11 +718,109 @@ async function renderEntriesView() {
       </button>
     </div>
     
-    <div id="entries-content"></div>
+    <div class="card" style="margin-bottom:20px;">
+      <h3 style="font-size:16px; margin-bottom:16px; font-weight:600;">Recent Transactions</h3>
+      <div id="recent-transactions"></div>
+    </div>
+    
+    <div class="card">
+      <h3 style="font-size:16px; margin-bottom:16px; font-weight:600;">Browse All Entries</h3>
+      <div class="mobile-tabs" style="display:flex; gap:8px; margin-bottom:16px; border-bottom:2px solid var(--border); padding-bottom:0;">
+        <button class="mobile-tab ${viewMode === 'daily' ? 'active' : ''}" onclick="switchEntriesView('daily')" style="flex:1; padding:12px; background:none; border:none; border-bottom:3px solid ${viewMode === 'daily' ? 'var(--plum)' : 'transparent'}; font-size:14px; font-weight:${viewMode === 'daily' ? '600' : '500'}; color:${viewMode === 'daily' ? 'var(--plum)' : 'var(--text-muted)'}; margin-bottom:-2px;">
+          Daily
+        </button>
+        <button class="mobile-tab ${viewMode === 'monthly' ? 'active' : ''}" onclick="switchEntriesView('monthly')" style="flex:1; padding:12px; background:none; border:none; border-bottom:3px solid ${viewMode === 'monthly' ? 'var(--plum)' : 'transparent'}; font-size:14px; font-weight:${viewMode === 'monthly' ? '600' : '500'}; color:${viewMode === 'monthly' ? 'var(--plum)' : 'var(--text-muted)'}; margin-bottom:-2px;">
+          Monthly
+        </button>
+        <button class="mobile-tab ${viewMode === 'all' ? 'active' : ''}" onclick="switchEntriesView('all')" style="flex:1; padding:12px; background:none; border:none; border-bottom:3px solid ${viewMode === 'all' ? 'var(--plum)' : 'transparent'}; font-size:14px; font-weight:${viewMode === 'all' ? '600' : '500'}; color:${viewMode === 'all' ? 'var(--plum)' : 'var(--text-muted)'}; margin-bottom:-2px;">
+          All
+        </button>
+      </div>
+      <div id="entries-content"></div>
+    </div>
   `;
   
   updateEntryForm();
+  await renderRecentTransactions();
   await renderEntriesContent();
+}
+
+async function renderRecentTransactions() {
+  const container = document.getElementById('recent-transactions');
+  if (!container) return;
+  
+  // Get all transactions sorted by creation time (newest first)
+  const allTransactions = await db.transactions.toArray();
+  allTransactions.sort((a, b) => {
+    const aTime = a.createdAt?.toDate?.() || new Date(0);
+    const bTime = b.createdAt?.toDate?.() || new Date(0);
+    return bTime - aTime;
+  });
+  
+  // Take the most recent 15
+  const recentTransactions = allTransactions.slice(0, 15);
+  
+  if (recentTransactions.length === 0) {
+    container.innerHTML = `
+      <div style="text-align:center; padding:20px; color:var(--text-muted); font-size:14px;">
+        No recent transactions
+      </div>
+    `;
+    return;
+  }
+  
+  // Group by date
+  const groupedByDate = {};
+  const today = todayStr();
+  
+  recentTransactions.forEach(t => {
+    if (!groupedByDate[t.date]) {
+      groupedByDate[t.date] = [];
+    }
+    groupedByDate[t.date].push(t);
+  });
+  
+  // Render grouped transactions
+  const dates = Object.keys(groupedByDate).sort((a, b) => b.localeCompare(a));
+  
+  container.innerHTML = dates.map(date => {
+    const dateObj = new Date(date + 'T00:00:00');
+    const dayOfWeek = dateObj.toLocaleDateString('en-US', { weekday: 'short' });
+    const monthDay = dateObj.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' });
+    const year = dateObj.toLocaleDateString('en-US', { year: '2-digit' });
+    
+    const dateLabel = date === today ? 'Today' : `${dayOfWeek}, ${monthDay}/${year}`;
+    
+    const transactions = groupedByDate[date];
+    
+    return `
+      <div style="margin-bottom:16px;">
+        <div style="font-size:13px; font-weight:600; color:var(--text-muted); margin-bottom:8px; text-transform:uppercase; letter-spacing:0.5px;">
+          ${dateLabel}
+        </div>
+        ${transactions.map(t => {
+          const isIncome = t.type === 'INCOME';
+          const amount = isIncome ? (t.serviceAmount || 0) + (t.tipAmount || 0) : (t.amount || 0);
+          const amountColor = isIncome ? 'var(--success)' : 'var(--danger)';
+          const tipText = isIncome && t.tipAmount > 0 ? ` + $${t.tipAmount.toFixed(2)} tip` : '';
+          
+          return `
+            <div style="display:flex; justify-content:space-between; align-items:center; padding:10px 0; border-bottom:1px solid var(--border-light);">
+              <div>
+                <div style="font-size:14px; font-weight:500; color:var(--text);">${t.category}</div>
+                ${t.notes ? `<div style="font-size:12px; color:var(--text-muted); margin-top:2px;">${t.notes}</div>` : ''}
+              </div>
+              <div style="text-align:right;">
+                <div style="font-size:14px; font-weight:600; color:${amountColor};">
+                  ${isIncome && t.serviceAmount > 0 ? `$${t.serviceAmount.toFixed(2)}` : `$${amount.toFixed(2)}`}${tipText}
+                </div>
+              </div>
+            </div>
+          `;
+        }).join('')}
+      </div>
+    `;
+  }).join('');
 }
 
 function updateEntryForm() {
@@ -725,11 +833,23 @@ function updateEntryForm() {
   const yearSection = document.getElementById('year-section');
   const categorySelect = document.getElementById('entry-category');
   
+  const serviceAmountSection = document.getElementById('service-amount-section');
+  const tipAmountSection = document.getElementById('tip-amount-section');
+  const expenseAmountSection = document.getElementById('expense-amount-section');
+  
   // Show/hide frequency for expenses only
   if (type === 'EXPENSE') {
     frequencySection?.classList.remove('hidden');
+    // Show expense amount field, hide income fields
+    serviceAmountSection?.classList.add('hidden');
+    tipAmountSection?.classList.add('hidden');
+    expenseAmountSection?.classList.remove('hidden');
   } else {
     frequencySection?.classList.add('hidden');
+    // Show income fields (service + tip), hide expense field
+    serviceAmountSection?.classList.remove('hidden');
+    tipAmountSection?.classList.remove('hidden');
+    expenseAmountSection?.classList.add('hidden');
   }
   
   // Show date for income and daily expenses, show month/year for monthly expenses
@@ -755,25 +875,47 @@ async function saveEntryTransaction() {
   const type = document.querySelector('input[name="entry-type"]:checked')?.value;
   const frequency = document.querySelector('input[name="entry-frequency"]:checked')?.value || 'DAILY';
   const category = document.getElementById('entry-category')?.value;
-  const amount = parseFloat(document.getElementById('entry-amount')?.value);
   const notes = document.getElementById('entry-notes')?.value.trim() || '';
   
-  if (!amount || amount <= 0) {
-    showToast('Please enter a valid amount');
-    return;
+  let serviceAmount = 0;
+  let tipAmount = 0;
+  let expenseAmount = 0;
+  let entryDate = '';
+  
+  if (type === 'INCOME') {
+    serviceAmount = parseFloat(document.getElementById('entry-amount')?.value) || 0;
+    tipAmount = parseFloat(document.getElementById('entry-tip')?.value) || 0;
+    
+    if (serviceAmount <= 0 && tipAmount <= 0) {
+      showToast('Please enter service amount or tip');
+      return;
+    }
+    
+    entryDate = document.getElementById('entry-date').value;
+  } else {
+    expenseAmount = parseFloat(document.getElementById('entry-expense-amount')?.value) || 0;
+    
+    if (expenseAmount <= 0) {
+      showToast('Please enter a valid amount');
+      return;
+    }
+    
+    if (frequency === 'DAILY') {
+      entryDate = document.getElementById('entry-date').value;
+    }
   }
   
   try {
     if (type === 'INCOME') {
       // Save as income transaction
-      const date = document.getElementById('entry-date').value;
+      const date = entryDate;
       const transaction = {
         userId: auth.currentUser.uid,
         date: date,
         type: 'INCOME',
         category: category,
-        serviceAmount: amount,
-        tipAmount: 0,
+        serviceAmount: serviceAmount,
+        tipAmount: tipAmount,
         notes: notes,
         createdAt: firebase.firestore.Timestamp.now()
       };
@@ -781,21 +923,29 @@ async function saveEntryTransaction() {
       const docRef = await firestore.collection('users').doc(auth.currentUser.uid).collection('transactions').add(transaction);
       await db.transactions.add({ id: docRef.id, ...transaction });
       
+      // Switch to daily view showing the date where entry was added
+      state.entriesViewMode = 'daily';
+      state.selectedDate = date;
+      
     } else if (frequency === 'DAILY') {
       // Save as daily expense transaction
-      const date = document.getElementById('entry-date').value;
+      const date = entryDate;
       const transaction = {
         userId: auth.currentUser.uid,
         date: date,
         type: 'EXPENSE',
         category: category,
-        amount: amount,
+        amount: expenseAmount,
         notes: notes,
         createdAt: firebase.firestore.Timestamp.now()
       };
       
       const docRef = await firestore.collection('users').doc(auth.currentUser.uid).collection('transactions').add(transaction);
       await db.transactions.add({ id: docRef.id, ...transaction });
+      
+      // Switch to daily view showing the date where entry was added
+      state.entriesViewMode = 'daily';
+      state.selectedDate = date;
       
     } else {
       // Save as monthly expense
@@ -807,21 +957,30 @@ async function saveEntryTransaction() {
         year: year,
         month: month,
         category: category,
-        amount: amount,
+        amount: expenseAmount,
         notes: notes,
         createdAt: firebase.firestore.Timestamp.now()
       };
       
       const docRef = await firestore.collection('users').doc(auth.currentUser.uid).collection('monthlyExpenses').add(expense);
       await db.monthlyExpenses.add({ id: docRef.id, ...expense });
+      
+      // Switch to monthly view showing the month where entry was added
+      state.entriesViewMode = 'monthly';
+      state.selectedMonth = month;
+      state.selectedYear = year;
     }
     
-    // Clear form
+    // Clear form fields
     document.getElementById('entry-amount').value = '';
+    document.getElementById('entry-tip').value = '';
+    document.getElementById('entry-expense-amount').value = '';
     document.getElementById('entry-notes').value = '';
     
-    showToast('Entry added');
-    await renderEntriesContent();
+    showToast('Entry added ✓');
+    
+    // Refresh recent transactions to show the new entry
+    await renderRecentTransactions();
     
   } catch (error) {
     console.error('Error saving entry:', error);
@@ -2045,9 +2204,11 @@ async function renderReportInner() {
 
     case 'weekly': {
       el.innerHTML = `
-        <div class="report-controls">
+        <div class="report-controls" style="display:flex; gap:8px; align-items:center;">
+          <button class="report-btn" onclick="navigateWeek(-1)" style="padding:8px 12px;">◄</button>
           <input type="date" class="report-input" id="r-week-date" value="${state.selectedDate}"
-            placeholder="Pick any day in the week">
+            placeholder="Pick any day in the week" style="flex:1;">
+          <button class="report-btn" onclick="navigateWeek(1)" style="padding:8px 12px;">►</button>
           <button class="report-btn" onclick="runWeeklyReport()">View</button>
         </div>
         <div class="report-body" id="report-output"></div>
@@ -2339,6 +2500,22 @@ async function runDailyReport() {
 }
 
 // ---- Weekly Report ----
+function navigateWeek(direction) {
+  // direction: -1 for previous week, +1 for next week
+  const currentDate = document.getElementById('r-week-date')?.value || state.selectedDate;
+  const newDate = addDays(currentDate, direction * 7);
+  
+  // Update the date input
+  const dateInput = document.getElementById('r-week-date');
+  if (dateInput) {
+    dateInput.value = newDate;
+  }
+  
+  // Update state and run report
+  state.selectedDate = newDate;
+  runWeeklyReport();
+}
+
 async function runWeeklyReport() {
   const pickedDate = document.getElementById('r-week-date')?.value || state.selectedDate;
   const weekStart  = getWeekStart(pickedDate);
