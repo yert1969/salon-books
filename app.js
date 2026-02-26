@@ -642,10 +642,12 @@ function switchEntriesTab(tab) {
   
   // If switching away from Add Entry tab while editing, cancel the edit
   if (state.editingTransactionId && tab !== 'add') {
-    cancelEdit();
+    delete state.editingTransactionId;
+    hideEditBanner();
   }
   
-  renderEntriesTabContent();
+  // Re-render entire entries view to update tab underline
+  renderEntriesView();
 }
 
 async function renderEntriesTabContent() {
@@ -787,13 +789,19 @@ async function renderSearchTab(container) {
           </select>
         </div>
         
-        <div style="display:flex; gap:8px; align-items:center;">
-          <input type="text" id="filter-amount" class="form-input" placeholder="Amount: 50 or >50 or <50 or 50-100" 
-            style="flex:1; padding:8px; font-size:13px;"
-            oninput="filterTransactions()">
+        <div style="margin-bottom:8px;">
+          <select id="filter-amount-type" class="form-select" style="width:100%; padding:10px; font-size:14px; margin-bottom:8px;" onchange="updateAmountFilter()">
+            <option value="">No Amount Filter</option>
+            <option value="exact">Exact Amount</option>
+            <option value="gt">Greater Than</option>
+            <option value="lt">Less Than</option>
+            <option value="range">Between</option>
+          </select>
           
-          <button onclick="clearFilters()" class="btn-secondary" style="padding:8px 12px; font-size:13px; white-space:nowrap;">Clear</button>
+          <div id="amount-inputs-container"></div>
         </div>
+        
+        <button onclick="clearFilters()" class="btn-secondary" style="width:100%; padding:10px; font-size:13px;">Clear All Filters</button>
       </div>
       
       <div id="search-transactions"></div>
@@ -808,6 +816,36 @@ async function renderSearchTab(container) {
   }
   
   await renderRecentTransactions();
+}
+
+function updateAmountFilter() {
+  const amountType = document.getElementById('filter-amount-type')?.value;
+  const container = document.getElementById('amount-inputs-container');
+  
+  if (!container) return;
+  
+  if (amountType === 'range') {
+    container.innerHTML = `
+      <div style="display:flex; gap:8px;">
+        <input type="number" id="filter-amount-min" class="form-input" placeholder="Min" 
+          style="flex:1; padding:10px; font-size:14px;" step="0.01" 
+          oninput="filterTransactions()">
+        <input type="number" id="filter-amount-max" class="form-input" placeholder="Max" 
+          style="flex:1; padding:10px; font-size:14px;" step="0.01" 
+          oninput="filterTransactions()">
+      </div>
+    `;
+  } else if (amountType) {
+    container.innerHTML = `
+      <input type="number" id="filter-amount-value" class="form-input" placeholder="Amount" 
+        style="width:100%; padding:10px; font-size:14px;" step="0.01" 
+        oninput="filterTransactions()">
+    `;
+  } else {
+    container.innerHTML = '';
+  }
+  
+  filterTransactions();
 }
 
 function populateCategoryFilter() {
@@ -826,10 +864,18 @@ function populateCategoryFilter() {
 }
 
 function clearFilters() {
-  document.getElementById('transaction-search').value = '';
-  document.getElementById('filter-type').value = 'all';
-  document.getElementById('filter-category').value = 'all';
-  document.getElementById('filter-amount').value = '';
+  const searchInput = document.getElementById('transaction-search');
+  const typeFilter = document.getElementById('filter-type');
+  const categoryFilter = document.getElementById('filter-category');
+  const amountTypeFilter = document.getElementById('filter-amount-type');
+  const amountInputsContainer = document.getElementById('amount-inputs-container');
+  
+  if (searchInput) searchInput.value = '';
+  if (typeFilter) typeFilter.value = 'all';
+  if (categoryFilter) categoryFilter.value = 'all';
+  if (amountTypeFilter) amountTypeFilter.value = '';
+  if (amountInputsContainer) amountInputsContainer.innerHTML = '';
+  
   state.transactionsToShow = 30; // Reset pagination
   filterTransactions();
 }
@@ -929,33 +975,20 @@ async function renderRecentTransactions() {
   const searchText = document.getElementById('transaction-search')?.value.toLowerCase() || '';
   const filterType = document.getElementById('filter-type')?.value || 'all';
   const filterCategory = document.getElementById('filter-category')?.value || 'all';
-  const filterAmount = document.getElementById('filter-amount')?.value.trim() || '';
+  const filterAmountType = document.getElementById('filter-amount-type')?.value || '';
   
-  // Parse amount filter
+  // Get amount values based on filter type
   let amountFilter = null;
-  if (filterAmount) {
-    if (filterAmount.includes('-')) {
-      // Range: 50-100
-      const parts = filterAmount.split('-').map(p => parseFloat(p.trim()));
-      if (parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
-        amountFilter = { type: 'range', min: parts[0], max: parts[1] };
-      }
-    } else if (filterAmount.startsWith('>=')) {
-      const val = parseFloat(filterAmount.substring(2).trim());
-      if (!isNaN(val)) amountFilter = { type: 'gte', value: val };
-    } else if (filterAmount.startsWith('<=')) {
-      const val = parseFloat(filterAmount.substring(2).trim());
-      if (!isNaN(val)) amountFilter = { type: 'lte', value: val };
-    } else if (filterAmount.startsWith('>')) {
-      const val = parseFloat(filterAmount.substring(1).trim());
-      if (!isNaN(val)) amountFilter = { type: 'gt', value: val };
-    } else if (filterAmount.startsWith('<')) {
-      const val = parseFloat(filterAmount.substring(1).trim());
-      if (!isNaN(val)) amountFilter = { type: 'lt', value: val };
-    } else {
-      // Exact match
-      const val = parseFloat(filterAmount);
-      if (!isNaN(val)) amountFilter = { type: 'exact', value: val };
+  if (filterAmountType === 'range') {
+    const min = parseFloat(document.getElementById('filter-amount-min')?.value) || 0;
+    const max = parseFloat(document.getElementById('filter-amount-max')?.value) || 0;
+    if (min > 0 && max > 0) {
+      amountFilter = { type: 'range', min: min, max: max };
+    }
+  } else if (filterAmountType) {
+    const value = parseFloat(document.getElementById('filter-amount-value')?.value) || 0;
+    if (value > 0) {
+      amountFilter = { type: filterAmountType, value: value };
     }
   }
   
