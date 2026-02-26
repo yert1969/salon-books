@@ -572,11 +572,13 @@ async function safeRender(renderFn, viewName) {
 function navigate(view) {
   state.currentView = view;
   
-  // Update all nav buttons
-  ['entries', 'renters', 'reports', 'settings'].forEach(v => {
+  // Update all nav buttons - remove all active states first, then add to current
+  document.querySelectorAll('.nav-btn').forEach(btn => btn.classList.remove('active'));
+  
+  ['entries', 'insights', 'renters', 'reports', 'settings'].forEach(v => {
     const btn = document.getElementById('nav-' + v);
-    if (btn) {
-      btn.classList.toggle('active', v === view);
+    if (btn && v === view) {
+      btn.classList.add('active');
     }
   });
   
@@ -591,6 +593,7 @@ function navigate(view) {
   
   const titles = {
     entries:  'Entries',
+    insights: 'Insights',
     renters:  'Booth Renters',
     reports:  'Reports',
     settings: 'Settings',

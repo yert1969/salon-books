@@ -270,8 +270,12 @@ html, body {
   -webkit-tap-highlight-color: transparent;
 }
 
-.nav-btn.active { color: var(--gold); }
-.nav-btn.active .nav-icon { stroke: var(--gold); }
+.nav-btn.active { 
+  color: var(--gold) !important; 
+}
+.nav-btn.active .nav-icon { 
+  stroke: var(--gold) !important; 
+}
 
 .nav-icon {
   width: 22px;
