@@ -2731,7 +2731,7 @@ async function renderReportInner() {
         <div class="report-controls" style="display:flex; gap:8px; align-items:center;">
           <button class="report-btn" onclick="navigateWeek(-1)" style="padding:8px 12px;">◄</button>
           <input type="date" class="report-input" id="r-week-date" value="${state.selectedDate}"
-            placeholder="Pick any day in the week" style="flex:1;">
+            placeholder="Week starting (Monday)" style="flex:1;">
           <button class="report-btn" onclick="navigateWeek(1)" style="padding:8px 12px;">►</button>
           <button class="report-btn" onclick="runWeeklyReport()">View</button>
         </div>
@@ -3090,6 +3090,12 @@ function navigateMonth(direction) {
 async function runWeeklyReport() {
   const pickedDate = document.getElementById('r-week-date')?.value || state.selectedDate;
   const weekStart  = getWeekStart(pickedDate);
+  
+  // Update the date picker to show the Monday (start of week)
+  const dateInput = document.getElementById('r-week-date');
+  if (dateInput && dateInput.value !== weekStart) {
+    dateInput.value = weekStart;
+  }
 
   let weeklyIncome = 0, weeklyTips = 0, weeklyExp = 0, weeklyClients = 0;
   const rows = [];
