@@ -1115,11 +1115,14 @@ async function editTransaction(id) {
     return;
   }
   
-  // Switch to Add Entry tab
+  // Store the transaction ID being edited FIRST (before re-rendering)
+  state.editingTransactionId = id;
+  
+  // Switch to Add Entry tab and re-render (this will hide the list)
   state.entriesTab = 'add';
   await renderEntriesTabContent();
   
-  // Populate form with transaction data
+  // Now populate form with transaction data
   if (transaction.type === 'INCOME') {
     document.querySelector('input[name="entry-type"][value="INCOME"]').checked = true;
     document.getElementById('entry-amount').value = transaction.serviceAmount || 0;
@@ -1135,9 +1138,6 @@ async function editTransaction(id) {
   document.getElementById('entry-notes').value = transaction.notes || '';
   
   updateEntryForm();
-  
-  // Store the transaction ID being edited
-  state.editingTransactionId = id;
   
   // Show persistent edit banner
   showEditBanner();
