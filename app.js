@@ -885,14 +885,18 @@ async function renderRecentTransactionsSimple() {
           
           return `
             <div style="display:flex; justify-content:space-between; align-items:center; padding:10px 0; border-bottom:1px solid var(--border-light);">
-              <div>
+              <div style="flex:1;">
                 <div style="font-size:14px; font-weight:500; color:var(--text);">${t.category}</div>
                 ${t.notes ? `<div style="font-size:12px; color:var(--text-muted); margin-top:2px;">${t.notes}</div>` : ''}
               </div>
-              <div style="text-align:right;">
-                <div style="font-size:14px; font-weight:600; color:${amountColor};">
-                  ${isIncome && t.serviceAmount > 0 ? `$${t.serviceAmount.toFixed(2)}` : `$${amount.toFixed(2)}`}${tipText}
+              <div style="text-align:right; display:flex; align-items:center; gap:8px;">
+                <div>
+                  <div style="font-size:14px; font-weight:600; color:${amountColor};">
+                    ${isIncome && t.serviceAmount > 0 ? `$${t.serviceAmount.toFixed(2)}` : `$${amount.toFixed(2)}`}${tipText}
+                  </div>
                 </div>
+                <button onclick="editTransaction('${t.id}')" style="background:none; border:none; color:var(--plum); font-size:20px; padding:4px; cursor:pointer;">✎</button>
+                <button onclick="deleteTransaction('${t.id}')" style="background:none; border:none; color:var(--danger); font-size:18px; padding:4px; cursor:pointer;">✕</button>
               </div>
             </div>
           `;
@@ -1045,14 +1049,18 @@ async function renderRecentTransactions() {
           
           return `
             <div style="display:flex; justify-content:space-between; align-items:center; padding:10px 0; border-bottom:1px solid var(--border-light);">
-              <div>
+              <div style="flex:1;">
                 <div style="font-size:14px; font-weight:500; color:var(--text);">${t.category}</div>
                 ${t.notes ? `<div style="font-size:12px; color:var(--text-muted); margin-top:2px;">${t.notes}</div>` : ''}
               </div>
-              <div style="text-align:right;">
-                <div style="font-size:14px; font-weight:600; color:${amountColor};">
-                  ${isIncome && t.serviceAmount > 0 ? `$${t.serviceAmount.toFixed(2)}` : `$${amount.toFixed(2)}`}${tipText}
+              <div style="text-align:right; display:flex; align-items:center; gap:8px;">
+                <div>
+                  <div style="font-size:14px; font-weight:600; color:${amountColor};">
+                    ${isIncome && t.serviceAmount > 0 ? `$${t.serviceAmount.toFixed(2)}` : `$${amount.toFixed(2)}`}${tipText}
+                  </div>
                 </div>
+                <button onclick="editTransaction('${t.id}')" style="background:none; border:none; color:var(--plum); font-size:20px; padding:4px; cursor:pointer;">✎</button>
+                <button onclick="deleteTransaction('${t.id}')" style="background:none; border:none; color:var(--danger); font-size:18px; padding:4px; cursor:pointer;">✕</button>
               </div>
             </div>
           `;
@@ -1084,6 +1092,158 @@ async function renderRecentTransactions() {
 function loadMoreTransactions() {
   state.transactionsToShow = (state.transactionsToShow || 30) + 30;
   renderRecentTransactions();
+}
+
+async function editTransaction(id) {
+  const transaction = await db.transactions.get(id);
+  if (!transaction) {
+    showToast('Transaction not found');
+    return;
+  }
+  
+  // Switch to Add Entry tab
+  state.entriesTab = 'add';
+  await renderEntriesTabContent();
+  
+  // Populate form with transaction data
+  if (transaction.type === 'INCOME') {
+    document.querySelector('input[name="entry-type"][value="INCOME"]').checked = true;
+    document.getElementById('entry-amount').value = transaction.serviceAmount || 0;
+    document.getElementById('entry-tip').value = transaction.tipAmount || 0;
+    document.getElementById('entry-date').value = transaction.date;
+  } else {
+    document.querySelector('input[name="entry-type"][value="EXPENSE"]').checked = true;
+    document.getElementById('entry-expense-amount').value = transaction.amount || 0;
+    document.getElementById('entry-date').value = transaction.date;
+  }
+  
+  document.getElementById('entry-category').value = transaction.category;
+  document.getElementById('entry-notes').value = transaction.notes || '';
+  
+  updateEntryForm();
+  
+  // Store the transaction ID being edited
+  state.editingTransactionId = id;
+  
+  // Change button text and function
+  const addButton = document.querySelector('.btn-primary');
+  if (addButton) {
+    addButton.textContent = 'Update Entry';
+    addButton.onclick = () => updateTransaction();
+  }
+  
+  showToast('Editing transaction');
+  window.scrollTo(0, 0);
+}
+
+async function deleteTransaction(id) {
+  if (!confirm('Delete this transaction?')) return;
+  
+  try {
+    // Delete from local DB
+    await db.transactions.delete(id);
+    
+    // Delete from Firestore
+    await firestore.collection('users').doc(auth.currentUser.uid)
+      .collection('transactions').doc(id).delete();
+    
+    showToast('Transaction deleted');
+    
+    // Refresh current view
+    if (state.entriesTab === 'add') {
+      await renderRecentTransactionsSimple();
+    } else {
+      await renderRecentTransactions();
+    }
+  } catch (error) {
+    console.error('Error deleting transaction:', error);
+    showToast('Error deleting transaction');
+  }
+}
+
+async function updateTransaction() {
+  const id = state.editingTransactionId;
+  if (!id) {
+    showToast('Error: No transaction to update');
+    return;
+  }
+  
+  const type = document.querySelector('input[name="entry-type"]:checked')?.value;
+  const category = document.getElementById('entry-category')?.value;
+  const notes = document.getElementById('entry-notes')?.value.trim() || '';
+  
+  let serviceAmount = 0;
+  let tipAmount = 0;
+  let expenseAmount = 0;
+  let entryDate = '';
+  
+  if (type === 'INCOME') {
+    serviceAmount = parseFloat(document.getElementById('entry-amount')?.value) || 0;
+    tipAmount = parseFloat(document.getElementById('entry-tip')?.value) || 0;
+    
+    if (serviceAmount <= 0 && tipAmount <= 0) {
+      showToast('Please enter service amount or tip');
+      return;
+    }
+    
+    entryDate = document.getElementById('entry-date').value;
+  } else {
+    expenseAmount = parseFloat(document.getElementById('entry-expense-amount')?.value) || 0;
+    
+    if (expenseAmount <= 0) {
+      showToast('Please enter a valid amount');
+      return;
+    }
+    
+    entryDate = document.getElementById('entry-date').value;
+  }
+  
+  try {
+    const updatedTransaction = {
+      type: type,
+      category: category,
+      notes: notes,
+      date: entryDate
+    };
+    
+    if (type === 'INCOME') {
+      updatedTransaction.serviceAmount = serviceAmount;
+      updatedTransaction.tipAmount = tipAmount;
+    } else {
+      updatedTransaction.amount = expenseAmount;
+    }
+    
+    // Update in Firestore
+    await firestore.collection('users').doc(auth.currentUser.uid)
+      .collection('transactions').doc(id).update(updatedTransaction);
+    
+    // Update in local DB
+    await db.transactions.update(id, updatedTransaction);
+    
+    // Clear editing state
+    delete state.editingTransactionId;
+    
+    // Clear form
+    document.getElementById('entry-amount').value = '';
+    document.getElementById('entry-tip').value = '';
+    document.getElementById('entry-expense-amount').value = '';
+    document.getElementById('entry-notes').value = '';
+    document.getElementById('entry-date').value = todayStr();
+    
+    // Reset button
+    const addButton = document.querySelector('.btn-primary');
+    if (addButton) {
+      addButton.textContent = 'Add Entry';
+      addButton.onclick = () => saveEntryTransaction();
+    }
+    
+    showToast('Transaction updated ✓');
+    await renderRecentTransactionsSimple();
+    
+  } catch (error) {
+    console.error('Error updating transaction:', error);
+    showToast('Error updating transaction');
+  }
 }
 
 function updateEntryForm() {
