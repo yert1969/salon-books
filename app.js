@@ -639,6 +639,12 @@ async function renderEntriesView() {
 
 function switchEntriesTab(tab) {
   state.entriesTab = tab;
+  
+  // If switching away from Add Entry tab while editing, cancel the edit
+  if (state.editingTransactionId && tab !== 'add') {
+    cancelEdit();
+  }
+  
   renderEntriesTabContent();
 }
 
@@ -1125,15 +1131,97 @@ async function editTransaction(id) {
   // Store the transaction ID being edited
   state.editingTransactionId = id;
   
-  // Change button text and function
+  // Show persistent edit banner
+  showEditBanner();
+  
+  // Change button to show Update and Cancel
   const addButton = document.querySelector('.btn-primary');
   if (addButton) {
     addButton.textContent = 'Update Entry';
     addButton.onclick = () => updateTransaction();
+    
+    // Add cancel button after the update button
+    const cancelButton = document.createElement('button');
+    cancelButton.className = 'btn-secondary';
+    cancelButton.textContent = 'Cancel Edit';
+    cancelButton.style.width = '100%';
+    cancelButton.style.padding = '14px';
+    cancelButton.style.fontSize = '15px';
+    cancelButton.style.fontWeight = '600';
+    cancelButton.style.marginTop = '8px';
+    cancelButton.onclick = () => cancelEdit();
+    addButton.parentNode.insertBefore(cancelButton, addButton.nextSibling);
   }
   
-  showToast('Editing transaction');
   window.scrollTo(0, 0);
+}
+
+function showEditBanner() {
+  // Remove any existing banner
+  const existingBanner = document.getElementById('edit-banner');
+  if (existingBanner) existingBanner.remove();
+  
+  // Create new banner
+  const banner = document.createElement('div');
+  banner.id = 'edit-banner';
+  banner.style.cssText = `
+    position: sticky;
+    top: 0;
+    z-index: 1000;
+    background: var(--danger);
+    color: white;
+    padding: 12px 16px;
+    text-align: center;
+    font-weight: 600;
+    font-size: 14px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+  `;
+  banner.innerHTML = '✎ EDITING TRANSACTION';
+  
+  // Insert at top of app content
+  const appContent = document.getElementById('app-content');
+  if (appContent && appContent.firstChild) {
+    appContent.insertBefore(banner, appContent.firstChild);
+  }
+}
+
+function hideEditBanner() {
+  const banner = document.getElementById('edit-banner');
+  if (banner) banner.remove();
+}
+
+function cancelEdit() {
+  // Clear editing state
+  delete state.editingTransactionId;
+  
+  // Hide edit banner
+  hideEditBanner();
+  
+  // Clear form
+  document.getElementById('entry-amount').value = '';
+  document.getElementById('entry-tip').value = '';
+  document.getElementById('entry-expense-amount').value = '';
+  document.getElementById('entry-notes').value = '';
+  document.getElementById('entry-date').value = todayStr();
+  
+  // Reset to income type default
+  document.querySelector('input[name="entry-type"][value="INCOME"]').checked = true;
+  updateEntryForm();
+  
+  // Remove cancel button and reset add button
+  const addButton = document.querySelector('.btn-primary');
+  if (addButton) {
+    addButton.textContent = 'Add Entry';
+    addButton.onclick = () => saveEntryTransaction();
+    
+    // Remove cancel button
+    const cancelButton = addButton.nextElementSibling;
+    if (cancelButton && cancelButton.textContent === 'Cancel Edit') {
+      cancelButton.remove();
+    }
+  }
+  
+  showToast('Edit cancelled');
 }
 
 async function deleteTransaction(id) {
@@ -1223,6 +1311,9 @@ async function updateTransaction() {
     // Clear editing state
     delete state.editingTransactionId;
     
+    // Hide edit banner
+    hideEditBanner();
+    
     // Clear form
     document.getElementById('entry-amount').value = '';
     document.getElementById('entry-tip').value = '';
@@ -1235,6 +1326,12 @@ async function updateTransaction() {
     if (addButton) {
       addButton.textContent = 'Add Entry';
       addButton.onclick = () => saveEntryTransaction();
+      
+      // Remove cancel button
+      const cancelButton = addButton.nextElementSibling;
+      if (cancelButton && cancelButton.textContent === 'Cancel Edit') {
+        cancelButton.remove();
+      }
     }
     
     showToast('Transaction updated ✓');
