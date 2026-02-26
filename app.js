@@ -619,7 +619,44 @@ async function renderEntriesView() {
   const hdr = document.getElementById('header-actions');
   hdr.innerHTML = '';
   
+  const entriesTab = state.entriesTab || 'add';
+  
   content.innerHTML = `
+    <div class="mobile-tabs" style="display:flex; gap:8px; margin-bottom:20px; border-bottom:2px solid var(--border); padding-bottom:0;">
+      <button class="mobile-tab ${entriesTab === 'add' ? 'active' : ''}" onclick="switchEntriesTab('add')" style="flex:1; padding:12px; background:none; border:none; border-bottom:3px solid ${entriesTab === 'add' ? 'var(--plum)' : 'transparent'}; font-size:14px; font-weight:${entriesTab === 'add' ? '600' : '500'}; color:${entriesTab === 'add' ? 'var(--plum)' : 'var(--text-muted)'}; margin-bottom:-2px;">
+        Add Entry
+      </button>
+      <button class="mobile-tab ${entriesTab === 'search' ? 'active' : ''}" onclick="switchEntriesTab('search')" style="flex:1; padding:12px; background:none; border:none; border-bottom:3px solid ${entriesTab === 'search' ? 'var(--plum)' : 'transparent'}; font-size:14px; font-weight:${entriesTab === 'search' ? '600' : '500'}; color:${entriesTab === 'search' ? 'var(--plum)' : 'var(--text-muted)'}; margin-bottom:-2px;">
+        Browse & Search
+      </button>
+    </div>
+    
+    <div id="entries-tab-content"></div>
+  `;
+  
+  await renderEntriesTabContent();
+}
+
+function switchEntriesTab(tab) {
+  state.entriesTab = tab;
+  renderEntriesTabContent();
+}
+
+async function renderEntriesTabContent() {
+  const container = document.getElementById('entries-tab-content');
+  if (!container) return;
+  
+  const entriesTab = state.entriesTab || 'add';
+  
+  if (entriesTab === 'add') {
+    await renderAddEntryTab(container);
+  } else {
+    await renderSearchTab(container);
+  }
+}
+
+async function renderAddEntryTab(container) {
+  container.innerHTML = `
     <div class="card" style="margin-bottom:20px;">
       <h3 style="font-size:16px; margin-bottom:16px; font-weight:600;">Add Transaction</h3>
       
@@ -705,7 +742,19 @@ async function renderEntriesView() {
     </div>
     
     <div class="card">
-      <h3 style="font-size:16px; margin-bottom:16px; font-weight:600;">Transactions</h3>
+      <h3 style="font-size:16px; margin-bottom:16px; font-weight:600;">Recent (Last 30)</h3>
+      <div id="recent-transactions-simple"></div>
+    </div>
+  `;
+  
+  updateEntryForm();
+  await renderRecentTransactionsSimple();
+}
+
+async function renderSearchTab(container) {
+  container.innerHTML = `
+    <div class="card">
+      <h3 style="font-size:16px; margin-bottom:16px; font-weight:600;">Search & Filter</h3>
       
       <div style="margin-bottom:16px;">
         <input type="text" id="transaction-search" class="form-input" placeholder="Search by category or notes..." 
@@ -733,20 +782,16 @@ async function renderEntriesView() {
         </div>
       </div>
       
-      <div id="recent-transactions"></div>
+      <div id="search-transactions"></div>
       <div id="load-more-container"></div>
     </div>
   `;
   
-  updateEntryForm();
+  populateCategoryFilter();
   
-  // Initialize showing first 30 transactions
   if (!state.transactionsToShow) {
     state.transactionsToShow = 30;
   }
-  
-  // Populate category filter
-  populateCategoryFilter();
   
   await renderRecentTransactions();
 }
@@ -780,8 +825,85 @@ function filterTransactions() {
   renderRecentTransactions();
 }
 
+async function renderRecentTransactionsSimple() {
+  const container = document.getElementById('recent-transactions-simple');
+  if (!container) return;
+  
+  // Get last 30 transactions sorted by creation time (newest first)
+  const allTransactions = await db.transactions.toArray();
+  allTransactions.sort((a, b) => {
+    const aTime = a.createdAt?.toDate?.() || new Date(0);
+    const bTime = b.createdAt?.toDate?.() || new Date(0);
+    return bTime - aTime;
+  });
+  
+  const recentTransactions = allTransactions.slice(0, 30);
+  
+  if (recentTransactions.length === 0) {
+    container.innerHTML = `
+      <div style="text-align:center; padding:20px; color:var(--text-muted); font-size:14px;">
+        No transactions yet
+      </div>
+    `;
+    return;
+  }
+  
+  // Group by date
+  const groupedByDate = {};
+  const today = todayStr();
+  
+  recentTransactions.forEach(t => {
+    if (!groupedByDate[t.date]) {
+      groupedByDate[t.date] = [];
+    }
+    groupedByDate[t.date].push(t);
+  });
+  
+  // Render grouped transactions
+  const dates = Object.keys(groupedByDate).sort((a, b) => b.localeCompare(a));
+  
+  container.innerHTML = dates.map(date => {
+    const dateObj = new Date(date + 'T00:00:00');
+    const dayOfWeek = dateObj.toLocaleDateString('en-US', { weekday: 'short' });
+    const monthDay = dateObj.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' });
+    const year = dateObj.toLocaleDateString('en-US', { year: '2-digit' });
+    
+    const dateLabel = date === today ? 'Today' : `${dayOfWeek}, ${monthDay}/${year}`;
+    
+    const transactions = groupedByDate[date];
+    
+    return `
+      <div style="margin-bottom:16px;">
+        <div style="font-size:13px; font-weight:600; color:var(--text-muted); margin-bottom:8px; text-transform:uppercase; letter-spacing:0.5px;">
+          ${dateLabel}
+        </div>
+        ${transactions.map(t => {
+          const isIncome = t.type === 'INCOME';
+          const amount = isIncome ? (t.serviceAmount || 0) + (t.tipAmount || 0) : (t.amount || 0);
+          const amountColor = isIncome ? 'var(--success)' : 'var(--danger)';
+          const tipText = isIncome && t.tipAmount > 0 ? ` + $${t.tipAmount.toFixed(2)} tip` : '';
+          
+          return `
+            <div style="display:flex; justify-content:space-between; align-items:center; padding:10px 0; border-bottom:1px solid var(--border-light);">
+              <div>
+                <div style="font-size:14px; font-weight:500; color:var(--text);">${t.category}</div>
+                ${t.notes ? `<div style="font-size:12px; color:var(--text-muted); margin-top:2px;">${t.notes}</div>` : ''}
+              </div>
+              <div style="text-align:right;">
+                <div style="font-size:14px; font-weight:600; color:${amountColor};">
+                  ${isIncome && t.serviceAmount > 0 ? `$${t.serviceAmount.toFixed(2)}` : `$${amount.toFixed(2)}`}${tipText}
+                </div>
+              </div>
+            </div>
+          `;
+        }).join('')}
+      </div>
+    `;
+  }).join('');
+}
+
 async function renderRecentTransactions() {
-  const container = document.getElementById('recent-transactions');
+  const container = document.getElementById('search-transactions');
   const loadMoreContainer = document.getElementById('load-more-container');
   if (!container) return;
   
@@ -1120,8 +1242,8 @@ async function saveEntryTransaction() {
     
     showToast('Entry added ✓');
     
-    // Refresh recent transactions to show the new entry
-    await renderRecentTransactions();
+    // Refresh simple recent transactions list on Add Entry tab
+    await renderRecentTransactionsSimple();
     
   } catch (error) {
     console.error('Error saving entry:', error);
