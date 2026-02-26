@@ -2714,8 +2714,10 @@ async function renderReportInner() {
 
     case 'daily': {
       el.innerHTML = `
-        <div class="report-controls">
-          <input type="date" class="report-input" id="r-date" value="${state.selectedDate}">
+        <div class="report-controls" style="display:flex; gap:8px; align-items:center;">
+          <button class="report-btn" onclick="navigateDay(-1)" style="padding:8px 12px;">◄</button>
+          <input type="date" class="report-input" id="r-date" value="${state.selectedDate}" style="flex:1;">
+          <button class="report-btn" onclick="navigateDay(1)" style="padding:8px 12px;">►</button>
           <button class="report-btn" onclick="runDailyReport()">View</button>
         </div>
         <div class="report-body" id="report-output"></div>
@@ -2743,9 +2745,11 @@ async function renderReportInner() {
       const monthOpts = Array.from({length:12},(_,i)=>
         `<option value="${i+1}" ${i+1===monthNow?'selected':''}>${monthName(i+1)}</option>`).join('');
       el.innerHTML = `
-        <div class="report-controls">
-          <select class="report-select" id="r-month">${monthOpts}</select>
+        <div class="report-controls" style="display:flex; gap:8px; align-items:center;">
+          <button class="report-btn" onclick="navigateMonth(-1)" style="padding:8px 12px;">◄</button>
+          <select class="report-select" id="r-month" style="flex:1;">${monthOpts}</select>
           <input type="number" class="report-input" id="r-year" value="${yearNow}" min="2020" max="2099" style="max-width:90px" inputmode="numeric">
+          <button class="report-btn" onclick="navigateMonth(1)" style="padding:8px 12px;">►</button>
           <button class="report-btn" onclick="runMonthlyReport()">View</button>
         </div>
         <div class="report-body" id="report-output"></div>
@@ -3036,6 +3040,51 @@ function navigateWeek(direction) {
   // Update state and run report
   state.selectedDate = newDate;
   runWeeklyReport();
+}
+
+function navigateDay(direction) {
+  // direction: -1 for previous day, +1 for next day
+  const currentDate = document.getElementById('r-date')?.value || state.selectedDate;
+  const newDate = addDays(currentDate, direction);
+  
+  // Update the date input
+  const dateInput = document.getElementById('r-date');
+  if (dateInput) {
+    dateInput.value = newDate;
+  }
+  
+  // Update state and run report
+  state.selectedDate = newDate;
+  runDailyReport();
+}
+
+function navigateMonth(direction) {
+  // direction: -1 for previous month, +1 for next month
+  const currentMonth = parseInt(document.getElementById('r-month')?.value) || state.selectedMonth;
+  const currentYear = parseInt(document.getElementById('r-year')?.value) || state.selectedYear;
+  
+  let newMonth = currentMonth + direction;
+  let newYear = currentYear;
+  
+  // Handle year wrapping
+  if (newMonth < 1) {
+    newMonth = 12;
+    newYear--;
+  } else if (newMonth > 12) {
+    newMonth = 1;
+    newYear++;
+  }
+  
+  // Update the inputs
+  const monthSelect = document.getElementById('r-month');
+  const yearInput = document.getElementById('r-year');
+  if (monthSelect) monthSelect.value = newMonth;
+  if (yearInput) yearInput.value = newYear;
+  
+  // Update state and run report
+  state.selectedMonth = newMonth;
+  state.selectedYear = newYear;
+  runMonthlyReport();
 }
 
 async function runWeeklyReport() {
