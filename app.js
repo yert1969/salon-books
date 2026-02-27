@@ -497,21 +497,24 @@ async function saveCategories() {
 }
 
 function categoryOptions(type) {
-  // For expense types, combine both daily and monthly categories
-  if (type === 'DAILY_EXPENSE' || type === 'MONTHLY_EXPENSE') {
+  // For expense types, check unified EXPENSE key first, then fall back to old split keys
+  if (type === 'EXPENSE' || type === 'DAILY_EXPENSE' || type === 'MONTHLY_EXPENSE') {
     const allExpenseCategories = [
+      ...(state.categories.EXPENSE || []),
       ...(state.categories.DAILY_EXPENSE || []),
       ...(state.categories.MONTHLY_EXPENSE || [])
     ];
-    return allExpenseCategories
-      .sort()  // Sort alphabetically
+    // Deduplicate
+    const unique = [...new Set(allExpenseCategories)];
+    return unique
+      .sort()
       .map(name => `<option value="${name}">${name}</option>`)
       .join('');
   }
   
   // For income, use income categories
   return (state.categories[type] || [])
-    .sort()  // Sort alphabetically
+    .sort()
     .map(name => `<option value="${name}">${name}</option>`)
     .join('');
 }
@@ -2557,7 +2560,7 @@ function changeDate(delta) {
 async function openAddTransactionModal(type) {
   await loadCategories();
   const isIncome = type === 'INCOME';
-  const catKey   = isIncome ? 'INCOME' : 'DAILY_EXPENSE';
+  const catKey   = isIncome ? 'INCOME' : 'EXPENSE';
   const catOptions = categoryOptions(catKey);
   const pmOptions = ['Cash','Card','Venmo','Zelle','Check','Other']
     .map(m => `<option>${m}</option>`).join('');
@@ -2666,7 +2669,7 @@ async function openEditTransactionModal(id) {
   if (!t) return;
 
   const isIncome = t.type === 'INCOME';
-  const catKey   = isIncome ? 'INCOME' : 'DAILY_EXPENSE';
+  const catKey   = isIncome ? 'INCOME' : 'EXPENSE';
   const availableCategories = state.categories[catKey] || [];
   
   // Check if transaction's category exists in current categories
