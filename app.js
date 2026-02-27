@@ -1747,8 +1747,6 @@ async function deleteTransaction(id) {
 
   try {
     await db.transactions.delete(id);
-    await firestore.collection('users').doc(auth.currentUser.uid)
-      .collection('transactions').doc(id).delete();
     showToast('Entry deleted');
     renderEntriesView();
   } catch (error) {
@@ -1809,11 +1807,7 @@ async function updateTransaction() {
       updatedTransaction.amount = expenseAmount;
     }
     
-    // Update in Firestore
-    await firestore.collection('users').doc(auth.currentUser.uid)
-      .collection('transactions').doc(id).update(updatedTransaction);
-    
-    // Update in local DB
+    // Update in DB (shim handles Firebase)
     await db.transactions.update(id, updatedTransaction);
     
     // Clear editing state
@@ -1930,8 +1924,7 @@ async function saveEntryTransaction() {
         createdAt: firebase.firestore.Timestamp.now()
       };
       
-      const docRef = await firestore.collection('users').doc(auth.currentUser.uid).collection('transactions').add(transaction);
-      await db.transactions.add({ id: docRef.id, ...transaction });
+      await db.transactions.add(transaction);
       
       // Switch to daily view showing the date where entry was added
       state.entriesViewMode = 'daily';
@@ -1950,8 +1943,7 @@ async function saveEntryTransaction() {
         createdAt: firebase.firestore.Timestamp.now()
       };
       
-      const docRef = await firestore.collection('users').doc(auth.currentUser.uid).collection('transactions').add(transaction);
-      await db.transactions.add({ id: docRef.id, ...transaction });
+      await db.transactions.add(transaction);
       
       // Switch to daily view showing the date where entry was added
       state.entriesViewMode = 'daily';
@@ -1972,8 +1964,7 @@ async function saveEntryTransaction() {
         createdAt: firebase.firestore.Timestamp.now()
       };
       
-      const docRef = await firestore.collection('users').doc(auth.currentUser.uid).collection('monthlyExpenses').add(expense);
-      await db.monthlyExpenses.add({ id: docRef.id, ...expense });
+      const docRef = await db.monthlyExpenses.add(expense);
       
       // Switch to monthly view showing the month where entry was added
       state.entriesViewMode = 'monthly';
@@ -2335,7 +2326,6 @@ async function deleteDailyEntry(id) {
   if (!confirm(`Delete ${transaction.category} (${fmt(amount)})?`)) return;
   
   try {
-    await firestore.collection('users').doc(auth.currentUser.uid).collection('transactions').doc(id).delete();
     await db.transactions.delete(id);
     showToast('Deleted');
     renderEntriesContent();
@@ -2352,7 +2342,6 @@ async function deleteMonthlyExpenseEntry(id) {
   if (!confirm(`Delete ${e.category} (${fmt(e.amount)})?`)) return;
   
   try {
-    await firestore.collection('users').doc(auth.currentUser.uid).collection('monthlyExpenses').doc(id).delete();
     await db.monthlyExpenses.delete(id);
     showToast('Deleted');
     renderEntriesContent();
@@ -2575,15 +2564,11 @@ async function deleteMonthlyExpenseFromEntries(id) {
   if (!confirmed) return;
   try {
     await db.monthlyExpenses.delete(id);
-    await firestore.collection('users').doc(auth.currentUser.uid)
-      .collection('monthlyExpenses').doc(id).delete();
     showToast('Monthly expense deleted');
     renderEntriesView();
   } catch (err) {
     console.error('Error deleting monthly expense:', err);
-    await db.monthlyExpenses.delete(id);
-    showToast('Monthly expense deleted');
-    renderEntriesView();
+    showToast('Error deleting monthly expense');
   }
 }
 
@@ -2745,9 +2730,7 @@ async function saveTransaction(type) {
     const year  = parseInt(document.getElementById('txn-year').value);
     const expense = { category, amount, notes, month, year };
     try {
-      const docRef = await firestore.collection('users').doc(auth.currentUser.uid)
-        .collection('monthlyExpenses').add(expense);
-      await db.monthlyExpenses.add({ id: docRef.id, ...expense });
+      await db.monthlyExpenses.add(expense);
       closeModal();
       showToast('Monthly expense saved ✓');
       renderEntriesView();
@@ -2782,21 +2765,14 @@ async function saveTransaction(type) {
   }
 
   try {
-    const docRef = await firestore.collection('users').doc(auth.currentUser.uid)
-      .collection('transactions').add(record);
-    await db.transactions.add({ id: docRef.id, ...record });
+    await db.transactions.add(record);
     if (date !== state.selectedDate) state.selectedDate = date;
     closeModal();
     showToast(isIncome ? 'Income saved ✓' : 'Expense saved ✓');
     renderEntriesView();
   } catch (err) {
     console.error('Error saving transaction:', err);
-    // Fallback: save locally only
-    await db.transactions.add(record);
-    if (date !== state.selectedDate) state.selectedDate = date;
-    closeModal();
-    showToast(isIncome ? 'Income saved ✓' : 'Expense saved ✓');
-    renderEntriesView();
+    showToast('Error saving transaction');
   }
 }
 
@@ -2926,12 +2902,8 @@ async function updateTransaction(id, type) {
       const expense = { category, amount, notes, month, year };
 
       await db.transactions.delete(id);
-      await firestore.collection('users').doc(auth.currentUser.uid)
-        .collection('transactions').doc(id).delete();
 
-      const docRef = await firestore.collection('users').doc(auth.currentUser.uid)
-        .collection('monthlyExpenses').add(expense);
-      await db.monthlyExpenses.add({ id: docRef.id, ...expense });
+      await db.monthlyExpenses.add(expense);
 
       closeModal();
       showToast('Moved to monthly expenses ✓');
@@ -2958,8 +2930,6 @@ async function updateTransaction(id, type) {
     }
 
     await db.transactions.update(id, changes);
-    await firestore.collection('users').doc(auth.currentUser.uid)
-      .collection('transactions').doc(id).update(changes);
     if (date !== state.selectedDate) state.selectedDate = date;
 
     closeModal();
