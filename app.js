@@ -2560,20 +2560,46 @@ function changeDate(delta) {
 async function openAddTransactionModal(type) {
   await loadCategories();
   const isIncome = type === 'INCOME';
-  const catKey   = isIncome ? 'INCOME' : 'EXPENSE';
-  const catOptions = categoryOptions(catKey);
+  const catOptions = categoryOptions(isIncome ? 'INCOME' : 'EXPENSE');
   const pmOptions = ['Cash','Card','Venmo','Zelle','Check','Other']
     .map(m => `<option>${m}</option>`).join('');
 
-  // TIMEZONE FIX: Ensure we always use a valid local date
   const defaultDate = ensureLocalDate(state.selectedDate);
+
+  const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  const now = new Date();
+  const monthOptions = monthNames.map((m, i) => `<option value="${i+1}" ${i === now.getMonth() ? 'selected' : ''}>${m}</option>`).join('');
+  const yearOptions = [now.getFullYear()-1, now.getFullYear(), now.getFullYear()+1]
+    .map(y => `<option value="${y}" ${y === now.getFullYear() ? 'selected' : ''}>${y}</option>`).join('');
 
   openModal(`
     <h2 class="modal-title">+ Add ${isIncome ? 'Income' : 'Expense'}</h2>
 
+    ${!isIncome ? `
     <div class="form-group">
+      <label class="form-label">Type</label>
+      <div style="display:flex; gap:8px;">
+        <label style="flex:1; display:flex; align-items:center; gap:8px; padding:10px 14px; border:2px solid var(--plum); border-radius:8px; cursor:pointer; font-size:14px; font-weight:600; color:var(--plum); background:rgba(93,56,84,0.06);">
+          <input type="radio" name="txn-frequency" value="DAILY" checked onchange="toggleTxnFrequency()" style="accent-color:var(--plum);"> Daily
+        </label>
+        <label style="flex:1; display:flex; align-items:center; gap:8px; padding:10px 14px; border:2px solid var(--border); border-radius:8px; cursor:pointer; font-size:14px; font-weight:500; color:var(--text-muted);">
+          <input type="radio" name="txn-frequency" value="MONTHLY" onchange="toggleTxnFrequency()" style="accent-color:var(--plum);"> Monthly
+        </label>
+      </div>
+    </div>
+    ` : ''}
+
+    <div id="txn-date-section" class="form-group">
       <label class="form-label">Date</label>
       <input type="date" class="form-input" id="txn-date" value="${defaultDate}">
+    </div>
+
+    <div id="txn-month-section" class="form-group" style="display:none;">
+      <label class="form-label">Month</label>
+      <div style="display:flex; gap:8px;">
+        <select class="form-select" id="txn-month" style="flex:2;">${monthOptions}</select>
+        <select class="form-select" id="txn-year" style="flex:1;">${yearOptions}</select>
+      </div>
     </div>
 
     <div class="form-group">
@@ -2589,7 +2615,7 @@ async function openAddTransactionModal(type) {
       <input type="number" class="form-input" id="txn-amount" placeholder="0.00" step="0.01" min="0" inputmode="decimal">
     </div>
 
-    <div class="form-group">
+    <div id="txn-payment-section" class="form-group">
       <label class="form-label">Payment Method</label>
       <select class="form-select" id="txn-payment">${pmOptions}</select>
     </div>
@@ -2622,18 +2648,65 @@ async function openAddTransactionModal(type) {
   `);
 }
 
+function toggleTxnFrequency() {
+  const isMonthly = document.querySelector('input[name="txn-frequency"]:checked')?.value === 'MONTHLY';
+  document.getElementById('txn-date-section').style.display   = isMonthly ? 'none' : '';
+  document.getElementById('txn-month-section').style.display  = isMonthly ? '' : 'none';
+  document.getElementById('txn-payment-section').style.display = isMonthly ? 'none' : '';
+
+  document.querySelectorAll('input[name="txn-frequency"]').forEach(radio => {
+    const label = radio.closest('label');
+    if (radio.checked) {
+      label.style.borderColor = 'var(--plum)';
+      label.style.color = 'var(--plum)';
+      label.style.background = 'rgba(93,56,84,0.06)';
+      label.style.fontWeight = '600';
+    } else {
+      label.style.borderColor = 'var(--border)';
+      label.style.color = 'var(--text-muted)';
+      label.style.background = 'none';
+      label.style.fontWeight = '500';
+    }
+  });
+
+}
+
+
 async function saveTransaction(type) {
   const isIncome = type === 'INCOME';
-  let date       = document.getElementById('txn-date').value;
+  const frequency = document.querySelector('input[name="txn-frequency"]:checked')?.value || 'DAILY';
+  const isMonthly = !isIncome && frequency === 'MONTHLY';
+
   const category = document.getElementById('txn-category').value;
   const amount   = parseFloat(document.getElementById('txn-amount').value) || 0;
-  const payment  = document.getElementById('txn-payment').value;
   const notes    = document.getElementById('txn-notes').value.trim();
 
   if (!category) { alert('Please select a category.'); return; }
   if (amount <= 0) { alert('Please enter an amount greater than zero.'); return; }
 
-  // TIMEZONE FIX: Ensure date is valid local date string
+  if (isMonthly) {
+    // Save as monthly expense
+    const month = parseInt(document.getElementById('txn-month').value);
+    const year  = parseInt(document.getElementById('txn-year').value);
+    const expense = { category, amount, notes, month, year };
+    try {
+      const docRef = await firestore.collection('users').doc(auth.currentUser.uid)
+        .collection('monthlyExpenses').add(expense);
+      await db.monthlyExpenses.add({ id: docRef.id, ...expense });
+      closeModal();
+      showToast('Monthly expense saved ✓');
+      renderEntriesView();
+    } catch (err) {
+      console.error('Error saving monthly expense:', err);
+      showToast('Error saving expense');
+    }
+    return;
+  }
+
+  // Save as daily transaction
+  let date = document.getElementById('txn-date').value;
+  const payment = document.getElementById('txn-payment').value;
+
   if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
     date = state.selectedDate || todayStr();
   }
@@ -2653,12 +2726,23 @@ async function saveTransaction(type) {
     record.amount        = amount;
   }
 
-  await db.transactions.add(record);
-  if (date !== state.selectedDate) state.selectedDate = date;
-
-  closeModal();
-  showToast(isIncome ? 'Income saved ✓' : 'Expense saved ✓');
-  renderEntriesView();
+  try {
+    const docRef = await firestore.collection('users').doc(auth.currentUser.uid)
+      .collection('transactions').add(record);
+    await db.transactions.add({ id: docRef.id, ...record });
+    if (date !== state.selectedDate) state.selectedDate = date;
+    closeModal();
+    showToast(isIncome ? 'Income saved ✓' : 'Expense saved ✓');
+    renderEntriesView();
+  } catch (err) {
+    console.error('Error saving transaction:', err);
+    // Fallback: save locally only
+    await db.transactions.add(record);
+    if (date !== state.selectedDate) state.selectedDate = date;
+    closeModal();
+    showToast(isIncome ? 'Income saved ✓' : 'Expense saved ✓');
+    renderEntriesView();
+  }
 }
 
 // (deleteTransaction defined earlier in file)
@@ -2669,31 +2753,53 @@ async function openEditTransactionModal(id) {
   if (!t) return;
 
   const isIncome = t.type === 'INCOME';
-  const catKey   = isIncome ? 'INCOME' : 'EXPENSE';
-  const availableCategories = state.categories[catKey] || [];
-  
-  // Check if transaction's category exists in current categories
+  const availableCategories = state.categories[isIncome ? 'INCOME' : 'EXPENSE'] || [];
   const categoryExists = availableCategories.includes(t.category);
-  
-  // Build category options
+
   let catOptions = availableCategories
     .map(name => `<option value="${name}" ${name === t.category ? 'selected' : ''}>${name}</option>`)
     .join('');
-  
-  // If transaction has a category that's not in the list (legacy category), add it
   if (t.category && !categoryExists) {
     catOptions = `<option value="${t.category}" selected>${t.category} (legacy)</option>` + catOptions;
   }
-  
+
   const pmOptions = ['Cash','Card','Venmo','Zelle','Check','Other']
     .map(m => `<option ${m === t.paymentMethod ? 'selected' : ''}>${m}</option>`).join('');
+
+  const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  const now = new Date();
+  const monthOptions = monthNames.map((m, i) => `<option value="${i+1}" ${i === now.getMonth() ? 'selected' : ''}>${m}</option>`).join('');
+  const yearOptions = [now.getFullYear()-1, now.getFullYear(), now.getFullYear()+1]
+    .map(y => `<option value="${y}" ${y === now.getFullYear() ? 'selected' : ''}>${y}</option>`).join('');
 
   openModal(`
     <h2 class="modal-title">Edit ${isIncome ? 'Income' : 'Expense'}</h2>
 
+    ${!isIncome ? `
     <div class="form-group">
+      <label class="form-label">Type</label>
+      <div style="display:flex; gap:8px;">
+        <label style="flex:1; display:flex; align-items:center; gap:8px; padding:10px 14px; border:2px solid var(--plum); border-radius:8px; cursor:pointer; font-size:14px; font-weight:600; color:var(--plum); background:rgba(93,56,84,0.06);">
+          <input type="radio" name="txn-frequency" value="DAILY" checked onchange="toggleTxnFrequency()" style="accent-color:var(--plum);"> Daily
+        </label>
+        <label style="flex:1; display:flex; align-items:center; gap:8px; padding:10px 14px; border:2px solid var(--border); border-radius:8px; cursor:pointer; font-size:14px; font-weight:500; color:var(--text-muted);">
+          <input type="radio" name="txn-frequency" value="MONTHLY" onchange="toggleTxnFrequency()" style="accent-color:var(--plum);"> Monthly
+        </label>
+      </div>
+    </div>
+    ` : ''}
+
+    <div id="txn-date-section" class="form-group">
       <label class="form-label">Date</label>
       <input type="date" class="form-input" id="txn-date" value="${t.date}">
+    </div>
+
+    <div id="txn-month-section" class="form-group" style="display:none;">
+      <label class="form-label">Month</label>
+      <div style="display:flex; gap:8px;">
+        <select class="form-select" id="txn-month" style="flex:2;">${monthOptions}</select>
+        <select class="form-select" id="txn-year" style="flex:1;">${yearOptions}</select>
+      </div>
     </div>
 
     <div class="form-group">
@@ -2710,7 +2816,7 @@ async function openEditTransactionModal(id) {
         value="${isIncome ? (t.serviceAmount || '') : (t.amount || '')}">
     </div>
 
-    <div class="form-group">
+    <div id="txn-payment-section" class="form-group">
       <label class="form-label">Payment Method</label>
       <select class="form-select" id="txn-payment">${pmOptions}</select>
     </div>
@@ -2744,39 +2850,73 @@ async function openEditTransactionModal(id) {
   `);
 }
 
+
 async function updateTransaction(id, type) {
   const isIncome = type === 'INCOME';
-  const date     = document.getElementById('txn-date').value;
+  const frequency = document.querySelector('input[name="txn-frequency"]:checked')?.value || 'DAILY';
+  const isMonthly = !isIncome && frequency === 'MONTHLY';
+
   const category = document.getElementById('txn-category').value;
   const amount   = parseFloat(document.getElementById('txn-amount').value) || 0;
-  const payment  = document.getElementById('txn-payment').value;
   const notes    = document.getElementById('txn-notes').value.trim();
 
   if (!category) { alert('Please select a category.'); return; }
   if (amount <= 0) { alert('Please enter an amount greater than zero.'); return; }
 
-  const changes = { date, category, paymentMethod: payment, notes };
+  try {
+    if (isMonthly) {
+      // User switched daily expense to monthly — delete from transactions, add to monthlyExpenses
+      const month = parseInt(document.getElementById('txn-month').value);
+      const year  = parseInt(document.getElementById('txn-year').value);
+      const expense = { category, amount, notes, month, year };
 
-  if (isIncome) {
-    const tip       = parseFloat(document.getElementById('txn-tip').value) || 0;
-    const tipMethod = document.getElementById('txn-tip-method').value;
-    changes.serviceAmount = amount;
-    changes.tipAmount     = tip;
-    changes.tipMethod     = tipMethod;
-    changes.amount        = amount;
-  } else {
-    changes.amount        = amount;
-    changes.serviceAmount = 0;
-    changes.tipAmount     = 0;
+      await db.transactions.delete(id);
+      await firestore.collection('users').doc(auth.currentUser.uid)
+        .collection('transactions').doc(id).delete();
+
+      const docRef = await firestore.collection('users').doc(auth.currentUser.uid)
+        .collection('monthlyExpenses').add(expense);
+      await db.monthlyExpenses.add({ id: docRef.id, ...expense });
+
+      closeModal();
+      showToast('Moved to monthly expenses ✓');
+      renderEntriesView();
+      return;
+    }
+
+    // Daily transaction update
+    const date    = document.getElementById('txn-date').value;
+    const payment = document.getElementById('txn-payment').value;
+    const changes = { date, category, paymentMethod: payment, notes };
+
+    if (isIncome) {
+      const tip       = parseFloat(document.getElementById('txn-tip').value) || 0;
+      const tipMethod = document.getElementById('txn-tip-method').value;
+      changes.serviceAmount = amount;
+      changes.tipAmount     = tip;
+      changes.tipMethod     = tipMethod;
+      changes.amount        = amount;
+    } else {
+      changes.amount        = amount;
+      changes.serviceAmount = 0;
+      changes.tipAmount     = 0;
+    }
+
+    await db.transactions.update(id, changes);
+    await firestore.collection('users').doc(auth.currentUser.uid)
+      .collection('transactions').doc(id).update(changes);
+    if (date !== state.selectedDate) state.selectedDate = date;
+
+    closeModal();
+    showToast('Entry updated ✓');
+    renderEntriesView();
+
+  } catch (err) {
+    console.error('Error updating transaction:', err);
+    showToast('Error saving changes');
   }
-
-  await db.transactions.update(id, changes);
-  if (date !== state.selectedDate) state.selectedDate = date;
-
-  closeModal();
-  showToast('Entry updated ✓');
-  renderEntriesView();
 }
+
 
 // ----------------------------------------------------------------
 // 11. DAY SUMMARY MODAL
