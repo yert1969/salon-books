@@ -1,7 +1,7 @@
 // Service Worker — Mane Frame Salon App
 // v9 — Stable updates, no false positives
 
-const CACHE_NAME = 'salon-books-v16';
+const CACHE_NAME = 'salon-books-v1772159298';
 
 // All the files our app needs to work offline
 const FILES_TO_CACHE = [

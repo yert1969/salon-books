@@ -964,35 +964,152 @@ async function renderEntriesView() {
   const content = document.getElementById('app-content');
   const hdr = document.getElementById('header-actions');
   hdr.innerHTML = '';
-  
-  const entriesTab = state.entriesTab || 'add';
-  
+
+  const txns    = await db.transactions.where('date').equals(state.selectedDate).toArray();
+  const summary = await db.dailySummary.where('date').equals(state.selectedDate).first();
+
+  const income   = txns.filter(t => t.type === 'INCOME');
+  const expenses = txns.filter(t => t.type === 'EXPENSE');
+
+  const totalService = income.reduce((s, t) => s + (t.serviceAmount || 0), 0);
+  const totalTips    = income.reduce((s, t) => s + (t.tipAmount    || 0), 0);
+  const totalIncome  = totalService + totalTips;
+  const totalExp     = expenses.reduce((s, t) => s + (t.amount || 0), 0);
+  const net          = totalIncome - totalExp;
+
+  const isToday = state.selectedDate === todayStr();
+
+  // Comparison cards (today only)
+  let comparisonHTML = '';
+  if (isToday) {
+    const allTxns = await db.transactions.toArray();
+    const yesterday = addDays(todayStr(), -1);
+    const lastWeek  = addDays(todayStr(), -7);
+    const yesterdayIncome = allTxns.filter(t => t.date === yesterday && t.type === 'INCOME')
+      .reduce((s, t) => s + (t.serviceAmount || 0) + (t.tipAmount || 0), 0);
+    const lastWeekIncome  = allTxns.filter(t => t.date === lastWeek  && t.type === 'INCOME')
+      .reduce((s, t) => s + (t.serviceAmount || 0) + (t.tipAmount || 0), 0);
+
+    const calcChange = (cur, prev) => prev === 0 ? (cur > 0 ? 100 : 0) : ((cur - prev) / prev) * 100;
+    const vsYesterday = calcChange(totalIncome, yesterdayIncome);
+    const vsLastWeek  = calcChange(totalIncome, lastWeekIncome);
+
+    const formatChange = (change, prevAmount) => {
+      if (prevAmount === 0 && change === 0) return '<span style="color:var(--text-muted);font-size:14px;">No data</span>';
+      const arrow = change > 0 ? '↑' : change < 0 ? '↓' : '→';
+      const color = change > 0 ? '#2D7A4C' : change < 0 ? '#C13838' : '#999';
+      return `<div style="color:${color};"><span class="comparison-arrow">${arrow}</span><span class="comparison-percent">${Math.abs(change).toFixed(0)}%</span></div>`;
+    };
+
+    const dayNames = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+    const dayName  = dayNames[new Date().getDay()];
+
+    comparisonHTML = `
+      <div class="comparison-cards">
+        <div class="comparison-card">
+          <div class="comparison-label">vs Yesterday</div>
+          <div class="comparison-value">${formatChange(vsYesterday, yesterdayIncome)}</div>
+          <div class="comparison-amount">${fmt(yesterdayIncome)}</div>
+        </div>
+        <div class="comparison-card">
+          <div class="comparison-label">vs Last ${dayName}</div>
+          <div class="comparison-value">${formatChange(vsLastWeek, lastWeekIncome)}</div>
+          <div class="comparison-amount">${fmt(lastWeekIncome)}</div>
+        </div>
+      </div>`;
+  }
+
+  // Backup nudge
+  const lastBackupSetting = await db.settings.get('lastBackup');
+  let backupNudge = '';
+  if (isToday) {
+    const lastBackupDate = lastBackupSetting?.value;
+    const daysOverdue = lastBackupDate
+      ? Math.floor((new Date() - new Date(lastBackupDate + 'T12:00:00')) / 86400000)
+      : 999;
+    if (daysOverdue >= 30) {
+      backupNudge = `<div class="backup-nudge" onclick="navigate('settings')">💾 Export a local backup — ${daysOverdue >= 999 ? 'no local backup yet' : `last export ${daysOverdue} days ago`} <span style="margin-left:6px;opacity:.7;">›</span></div>`;
+    }
+  }
+
   content.innerHTML = `
-    <div class="mobile-tabs" style="display:flex; gap:8px; margin-bottom:20px; border-bottom:2px solid var(--border); padding-bottom:0;">
-      <button class="mobile-tab ${entriesTab === 'add' ? 'active' : ''}" onclick="switchEntriesTab('add')" style="flex:1; padding:12px; background:none; border:none; border-bottom:3px solid ${entriesTab === 'add' ? 'var(--plum)' : 'transparent'}; font-size:14px; font-weight:${entriesTab === 'add' ? '600' : '500'}; color:${entriesTab === 'add' ? 'var(--plum)' : 'var(--text-muted)'}; margin-bottom:-2px;">
-        Add Entry
-      </button>
-      <button class="mobile-tab ${entriesTab === 'search' ? 'active' : ''}" onclick="switchEntriesTab('search')" style="flex:1; padding:12px; background:none; border:none; border-bottom:3px solid ${entriesTab === 'search' ? 'var(--plum)' : 'transparent'}; font-size:14px; font-weight:${entriesTab === 'search' ? '600' : '500'}; color:${entriesTab === 'search' ? 'var(--plum)' : 'var(--text-muted)'}; margin-bottom:-2px;">
-        Browse & Search
-      </button>
+    ${backupNudge}
+
+    <div class="daily-date-bar">
+      <button class="date-nav-btn" onclick="changeDate(-1)">‹</button>
+      <div class="current-date" onclick="openDatePicker()">${isToday ? 'Today' : formatDateDisplay(state.selectedDate)}</div>
+      <button class="date-nav-btn" onclick="changeDate(1)">›</button>
     </div>
-    
-    <div id="entries-tab-content"></div>
+
+    <div class="summary-cards">
+      <div class="summary-card income-card">
+        <div class="summary-label">Income</div>
+        <div class="summary-amount">${fmt(totalIncome)}</div>
+        ${totalTips > 0 ? `<div class="summary-sub">incl. ${fmt(totalTips)} tips</div>` : ''}
+      </div>
+      <div class="summary-card expense-card">
+        <div class="summary-label">Expenses</div>
+        <div class="summary-amount">${fmt(totalExp)}</div>
+      </div>
+      <div class="summary-card net-card">
+        <div class="summary-label">Net</div>
+        <div class="summary-amount ${net >= 0 ? 'positive' : 'negative'}">${fmt(net)}</div>
+      </div>
+    </div>
+
+    ${comparisonHTML}
+
+    ${summary ? `
+    <div class="day-summary-card" onclick="openDaySummaryModal()">
+      <div style="display:flex;align-items:center;gap:12px;flex:1;font-size:13px;">
+        <span>👤 ${summary.clientsSeen} clients</span>
+        <span>⏱ ${summary.hoursWorked}h</span>
+      </div>
+      <span style="opacity:.5;font-size:12px;">edit ✏</span>
+    </div>
+    ` : `
+    <div class="day-summary-card empty" onclick="openDaySummaryModal()">
+      <div style="flex:1;">
+        <div style="font-weight:600;font-size:13px;color:var(--plum);margin-bottom:1px;">📋 Log today's activity</div>
+        <div style="font-size:12px;color:var(--text-muted);">Track clients & hours</div>
+      </div>
+      <span style="font-size:20px;opacity:.3;">+</span>
+    </div>
+    `}
+
+    <div style="padding:0 16px 8px;">
+      <div class="section-label">Income</div>
+      ${income.length === 0 ? `
+        <div class="empty-state">
+          <div class="empty-icon">💈</div>
+          <div class="empty-text">No income yet.</div>
+        </div>
+      ` : income.map(t => renderTransactionItem(t)).join('')}
+
+      <div class="section-label" style="margin-top:12px;">Expenses</div>
+      ${expenses.length === 0 ? `
+        <div class="empty-state">
+          <div class="empty-icon">🧾</div>
+          <div class="empty-text">No expenses yet.</div>
+        </div>
+      ` : expenses.map(t => renderTransactionItem(t)).join('')}
+    </div>
+
+    <div class="fab-row">
+      <button class="fab fab-income"  onclick="openAddTransactionModal('INCOME')"><span style="font-size:18px">+</span> Income</button>
+      <button class="fab fab-expense" onclick="openAddTransactionModal('EXPENSE')"><span style="font-size:18px">+</span> Expense</button>
+    </div>
+
+    <div style="height:16px;"></div>
   `;
-  
-  await renderEntriesTabContent();
 }
 
 function switchEntriesTab(tab) {
   state.entriesTab = tab;
-  
-  // If switching away from Add Entry tab while editing, cancel the edit
   if (state.editingTransactionId && tab !== 'add') {
     delete state.editingTransactionId;
     hideEditBanner();
   }
-  
-  // Re-render entire entries view to update tab underline
   renderEntriesView();
 }
 
@@ -1591,24 +1708,24 @@ function cancelEdit() {
 }
 
 async function deleteTransaction(id) {
-  if (!confirm('Delete this transaction?')) return;
-  
+  const t = await db.transactions.get(id);
+  if (!t) return;
+
+  const amount = t.type === 'INCOME'
+    ? fmt((t.serviceAmount || 0) + (t.tipAmount || 0))
+    : fmt(t.amount || 0);
+  const type = t.type === 'INCOME' ? 'income' : 'expense';
+  const message = `Are you sure you want to delete this ${type}?\n\n${t.category || 'Entry'}: ${amount}\n\nThis cannot be undone.`;
+
+  const confirmed = await confirmDialog(message, 'Confirm Delete');
+  if (!confirmed) return;
+
   try {
-    // Delete from local DB
     await db.transactions.delete(id);
-    
-    // Delete from Firestore
     await firestore.collection('users').doc(auth.currentUser.uid)
       .collection('transactions').doc(id).delete();
-    
-    showToast('Transaction deleted');
-    
-    // Refresh current view
-    if (state.entriesTab === 'add') {
-      await renderRecentTransactionsSimple();
-    } else {
-      await renderRecentTransactions();
-    }
+    showToast('Entry deleted');
+    renderEntriesView();
   } catch (error) {
     console.error('Error deleting transaction:', error);
     showToast('Error deleting transaction');
@@ -2425,12 +2542,12 @@ function openDatePicker() {
 
 function jumpToDate() {
   const v = document.getElementById('date-picker-val').value;
-  if (v) { state.selectedDate = v; closeModal(); renderDailyView(); }
+  if (v) { state.selectedDate = v; closeModal(); renderEntriesView(); }
 }
 
 function changeDate(delta) {
   state.selectedDate = addDays(state.selectedDate, delta);
-  renderDailyView();
+  renderEntriesView();
 }
 
 // ----------------------------------------------------------------
@@ -2538,27 +2655,10 @@ async function saveTransaction(type) {
 
   closeModal();
   showToast(isIncome ? 'Income saved ✓' : 'Expense saved ✓');
-  renderDailyView();
+  renderEntriesView();
 }
 
-async function deleteTransaction(id) {
-  const t = await db.transactions.get(id);
-  if (!t) return;
-  
-  const amount = t.type === 'INCOME' 
-    ? fmt((t.serviceAmount || 0) + (t.tipAmount || 0))
-    : fmt(t.amount || 0);
-  const type = t.type === 'INCOME' ? 'income' : 'expense';
-  
-  const message = `Are you sure you want to delete this ${type}?\n\n${t.category || 'Entry'}: ${amount}\n\nThis cannot be undone.`;
-  
-  const confirmed = await confirmDialog(message, 'Confirm Delete');
-  if (!confirmed) return;
-  
-  await db.transactions.delete(id);
-  showToast('Entry deleted');
-  renderDailyView();
-}
+// (deleteTransaction defined earlier in file)
 
 async function openEditTransactionModal(id) {
   await loadCategories();
@@ -2672,7 +2772,7 @@ async function updateTransaction(id, type) {
 
   closeModal();
   showToast('Entry updated ✓');
-  renderDailyView();
+  renderEntriesView();
 }
 
 // ----------------------------------------------------------------
@@ -2715,7 +2815,7 @@ async function saveDaySummary() {
 
   closeModal();
   showToast('Day summary saved ✓');
-  renderDailyView();
+  renderEntriesView();
 }
 
 // ----------------------------------------------------------------
@@ -4839,8 +4939,8 @@ async function checkPin() {
       navigate('entries');
       
           
-      // Give renderDailyView a moment to complete
-      // (navigate is sync but calls async renderDailyView)
+      // Give renderEntriesView a moment to complete
+      // (navigate is sync but calls async renderEntriesView)
       await new Promise(resolve => setTimeout(resolve, 100));
       
         } catch (err) {
