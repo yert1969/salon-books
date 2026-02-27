@@ -971,14 +971,23 @@ async function renderEntriesView() {
   const txns    = await db.transactions.where('date').equals(state.selectedDate).toArray();
   const summary = await db.dailySummary.where('date').equals(state.selectedDate).first();
 
+  // Also load monthly expenses for the selected month/year
+  const selDate  = new Date(state.selectedDate + 'T12:00:00');
+  const selMonth = selDate.getMonth() + 1;
+  const selYear  = selDate.getFullYear();
+  const allMonthly = await db.monthlyExpenses.toArray();
+  const monthlyExp = allMonthly.filter(e => e.month === selMonth && e.year === selYear);
+
   const income   = txns.filter(t => t.type === 'INCOME');
   const expenses = txns.filter(t => t.type === 'EXPENSE');
 
-  const totalService = income.reduce((s, t) => s + (t.serviceAmount || 0), 0);
-  const totalTips    = income.reduce((s, t) => s + (t.tipAmount    || 0), 0);
-  const totalIncome  = totalService + totalTips;
-  const totalExp     = expenses.reduce((s, t) => s + (t.amount || 0), 0);
-  const net          = totalIncome - totalExp;
+  const totalService  = income.reduce((s, t) => s + (t.serviceAmount || 0), 0);
+  const totalTips     = income.reduce((s, t) => s + (t.tipAmount    || 0), 0);
+  const totalIncome   = totalService + totalTips;
+  const totalDailyExp = expenses.reduce((s, t) => s + (t.amount || 0), 0);
+  const totalMonthlyExp = monthlyExp.reduce((s, e) => s + (e.amount || 0), 0);
+  const totalExp      = totalDailyExp + totalMonthlyExp;
+  const net           = totalIncome - totalExp;
 
   const isToday = state.selectedDate === todayStr();
 
@@ -1089,13 +1098,21 @@ async function renderEntriesView() {
         </div>
       ` : income.map(t => renderTransactionItem(t)).join('')}
 
-      <div class="section-label" style="margin-top:12px;">Expenses</div>
+      <div class="section-label" style="margin-top:12px;">Daily Expenses</div>
       ${expenses.length === 0 ? `
         <div class="empty-state">
           <div class="empty-icon">🧾</div>
-          <div class="empty-text">No expenses yet.</div>
+          <div class="empty-text">No daily expenses yet.</div>
         </div>
       ` : expenses.map(t => renderTransactionItem(t)).join('')}
+
+      <div class="section-label" style="margin-top:12px;">Monthly Expenses <span style="font-size:11px;font-weight:400;color:var(--text-muted);">${monthName(selMonth)} ${selYear}</span></div>
+      ${monthlyExp.length === 0 ? `
+        <div class="empty-state">
+          <div class="empty-icon">📅</div>
+          <div class="empty-text">No monthly expenses this month.</div>
+        </div>
+      ` : monthlyExp.map(e => renderMonthlyExpenseItem(e)).join('')}
     </div>
 
     <div class="fab-row">
@@ -2533,6 +2550,39 @@ function renderTransactionItem(t) {
     </div>`;
 }
 
+function renderMonthlyExpenseItem(e) {
+  return `
+    <div class="txn-row">
+      <div class="txn-body" onclick="openEditMonthlyExpenseModal('${e.id}')">
+        <div class="txn-category">${e.category || '—'} <span style="font-size:11px;color:var(--text-light);font-weight:400;">✏</span></div>
+        <div class="txn-meta">Monthly${e.notes ? ' · ' + e.notes : ''}</div>
+      </div>
+      <div class="txn-amount-col expense-amount" onclick="openEditMonthlyExpenseModal('${e.id}')">-${fmt(e.amount || 0)}</div>
+      <button class="txn-delete" onclick="deleteMonthlyExpenseFromEntries('${e.id}')">✕</button>
+    </div>`;
+}
+
+async function deleteMonthlyExpenseFromEntries(id) {
+  const e = await db.monthlyExpenses.get(id);
+  if (!e) return;
+  const message = `Are you sure you want to delete this monthly expense?\n\n${e.category}: ${fmt(e.amount)}\n\nThis cannot be undone.`;
+  const confirmed = await confirmDialog(message, 'Confirm Delete');
+  if (!confirmed) return;
+  try {
+    await db.monthlyExpenses.delete(id);
+    await firestore.collection('users').doc(auth.currentUser.uid)
+      .collection('monthlyExpenses').doc(id).delete();
+    showToast('Monthly expense deleted');
+    renderEntriesView();
+  } catch (err) {
+    console.error('Error deleting monthly expense:', err);
+    await db.monthlyExpenses.delete(id);
+    showToast('Monthly expense deleted');
+    renderEntriesView();
+  }
+}
+
+
 function openDatePicker() {
   openModal(`
     <h2 class="modal-title">Go to Date</h2>
@@ -3184,12 +3234,14 @@ async function openEditMonthlyExpenseModal(id) {
   const e = await db.monthlyExpenses.get(id);
   if (!e) return;
   
-  // Get all expense categories (both daily and monthly)
+  // Get all expense categories
   const allExpenseCategories = [
+    ...(state.categories.EXPENSE || []),
     ...(state.categories.DAILY_EXPENSE || []),
     ...(state.categories.MONTHLY_EXPENSE || [])
   ];
-  const catOptions = allExpenseCategories
+  const uniqueCats = [...new Set(allExpenseCategories)].sort();
+  const catOptions = uniqueCats
     .map(name => `<option value="${name}" ${name === e.category ? 'selected' : ''}>${name}</option>`)
     .join('');
 
@@ -3254,7 +3306,7 @@ async function updateMonthlyExpense(id) {
 
   closeModal();
   showToast('Expense updated ✓');
-  renderMonthlyView();
+  if (state.currentView === 'entries') { renderEntriesView(); } else { renderMonthlyView(); }
 }
 
 // ----------------------------------------------------------------
