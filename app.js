@@ -986,8 +986,8 @@ async function renderEntriesView() {
   const totalIncome   = totalService + totalTips;
   const totalDailyExp = expenses.reduce((s, t) => s + (t.amount || 0), 0);
   const totalMonthlyExp = monthlyExp.reduce((s, e) => s + (e.amount || 0), 0);
-  const totalExp      = totalDailyExp + totalMonthlyExp;
-  const net           = totalIncome - totalExp;
+  // Net is based on daily income vs daily expenses only — monthly expenses are fixed costs shown separately
+  const net           = totalIncome - totalDailyExp;
 
   const isToday = state.selectedDate === todayStr();
 
@@ -1053,19 +1053,24 @@ async function renderEntriesView() {
       <button class="date-nav-btn" onclick="changeDate(1)">›</button>
     </div>
 
-    <div class="summary-cards">
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; padding:0 16px 12px;">
       <div class="summary-card income-card">
         <div class="summary-label">Income</div>
         <div class="summary-amount">${fmt(totalIncome)}</div>
         ${totalTips > 0 ? `<div class="summary-sub">incl. ${fmt(totalTips)} tips</div>` : ''}
       </div>
-      <div class="summary-card expense-card">
-        <div class="summary-label">Expenses</div>
-        <div class="summary-amount">${fmt(totalExp)}</div>
-      </div>
       <div class="summary-card net-card">
-        <div class="summary-label">Net</div>
+        <div class="summary-label">Net (Daily)</div>
         <div class="summary-amount ${net >= 0 ? 'positive' : 'negative'}">${fmt(net)}</div>
+      </div>
+      <div class="summary-card expense-card">
+        <div class="summary-label">Daily Expenses</div>
+        <div class="summary-amount">${fmt(totalDailyExp)}</div>
+      </div>
+      <div class="summary-card expense-card" style="border-color:#9b6e9b;">
+        <div class="summary-label">Monthly Expenses</div>
+        <div class="summary-amount">${fmt(totalMonthlyExp)}</div>
+        ${totalMonthlyExp > 0 ? `<div class="summary-sub" style="color:#9b6e9b;">${monthName(selMonth)}</div>` : ''}
       </div>
     </div>
 
