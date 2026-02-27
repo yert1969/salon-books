@@ -5562,78 +5562,43 @@ function triggerImportHistoryPicker() {
 // Firestore IDs live inside the manifest object (not as custom
 // array properties) so they are never silently lost.
 // ─────────────────────────────────────────────────────────────────
-
-async function snapshotBeforeImport() {
-  const [transactions, dailySummary] = await Promise.all([
-    db.transactions.toArray(),
-    db.dailySummary.toArray(),
-  ]);
-  return {
-    timestamp: new Date().toISOString(),
-    transactions,   // full copy retained in case a hard restore is needed
-    dailySummary,
-  };
-}
-
-// manifest shape (all fields required):
+// IMPORT SAFETY NET
+//
+// db is a pure Firestore wrapper — no IndexedDB/Dexie.
+// Every add() returns a Firestore string doc ID.
+// Rollback deletes those specific doc IDs from Firestore.
+//
+// manifest (built during import, stored on window for manual undo):
 // {
-//   addedTxIdbIds:    number[]                          — IDB auto-IDs to delete
-//   addedSumIdbIds:   number[]                          — dailySummary IDB IDs to delete
-//   bumpedSumEntries: { id, fsDocId, previousClientsSeen }[]  — rows we updated, to restore
-//   addedTxFsIds:     string[]                          — Firestore tx doc IDs to delete
-//   addedSumFsIds:    string[]                          — Firestore summary doc IDs to delete
+//   addedTxIds:       string[]  — Firestore transaction doc IDs added
+//   addedSumIds:      string[]  — Firestore dailySummary doc IDs added
+//   bumpedSumEntries: { id: string, previousClientsSeen: number }[]
 // }
+// ─────────────────────────────────────────────────────────────────
+
 async function rollbackImport(manifest) {
   const errors = [];
 
-  // 1. Delete added transactions from IndexedDB
-  if (manifest.addedTxIdbIds.length > 0) {
-    try { await db.transactions.bulkDelete(manifest.addedTxIdbIds); }
-    catch(e) { errors.push('IDB tx delete: ' + e.message); }
+  // Delete added transactions one at a time (db.delete is reliable)
+  for (const id of manifest.addedTxIds) {
+    try { await db.transactions.delete(id); }
+    catch(e) { errors.push('tx delete ' + id + ': ' + e.message); }
   }
 
-  // 2. Delete newly-created dailySummary rows from IndexedDB
-  if (manifest.addedSumIdbIds.length > 0) {
-    try { await db.dailySummary.bulkDelete(manifest.addedSumIdbIds); }
-    catch(e) { errors.push('IDB summary delete: ' + e.message); }
+  // Delete added dailySummary rows
+  for (const id of manifest.addedSumIds) {
+    try { await db.dailySummary.delete(id); }
+    catch(e) { errors.push('sum delete ' + id + ': ' + e.message); }
   }
 
-  // 3. Restore dailySummary rows whose clientsSeen we bumped upward
+  // Restore dailySummary rows whose clientsSeen count we bumped
   for (const entry of manifest.bumpedSumEntries) {
     try { await db.dailySummary.update(entry.id, { clientsSeen: entry.previousClientsSeen }); }
-    catch(e) { errors.push('IDB summary restore id=' + entry.id + ': ' + e.message); }
-  }
-
-  // 4. Firestore — all deletions + restorations
-  if (auth.currentUser) {
-    const uid    = auth.currentUser.uid;
-    const txRef  = firestore.collection('users').doc(uid).collection('transactions');
-    const sumRef = firestore.collection('users').doc(uid).collection('dailySummary');
-
-    const fsBatch = async (ref, ids, op) => {
-      for (let i = 0; i < ids.length; i += 20) {
-        const b = firestore.batch();
-        ids.slice(i, i+20).forEach(id => op(b, ref, id));
-        try { await b.commit(); }
-        catch(e) { errors.push('Firestore batch: ' + e.message); }
-      }
-    };
-
-    if (manifest.addedTxFsIds.length > 0)
-      await fsBatch(txRef, manifest.addedTxFsIds, (b, ref, id) => b.delete(ref.doc(id)));
-    if (manifest.addedSumFsIds.length > 0)
-      await fsBatch(sumRef, manifest.addedSumFsIds, (b, ref, id) => b.delete(ref.doc(id)));
-
-    // Restore bumped summary rows in Firestore
-    for (const entry of manifest.bumpedSumEntries) {
-      if (!entry.fsDocId) continue;
-      try { await sumRef.doc(entry.fsDocId).update({ clientsSeen: entry.previousClientsSeen }); }
-      catch(e) { errors.push('Firestore summary restore ' + entry.fsDocId + ': ' + e.message); }
-    }
+    catch(e) { errors.push('sum restore ' + entry.id + ': ' + e.message); }
   }
 
   if (errors.length > 0) {
-    console.error('Rollback completed with errors:', errors);
+    console.error('Rollback errors:', errors);
     throw new Error(errors.join('; '));
   }
 }
@@ -5675,23 +5640,16 @@ async function importHistoryCSV(file) {
     if (subEl) subEl.textContent = sub;
   };
 
-  // The manifest tracks every write so rollback is 100% surgical —
-  // nothing outside these lists is ever touched.
+  // Every write goes through manifest — rollback uses these IDs surgically
   const manifest = {
-    addedTxIdbIds:    [],   // IndexedDB IDs of transactions we inserted
-    addedSumIdbIds:   [],   // IndexedDB IDs of dailySummary rows we created
-    bumpedSumEntries: [],   // { id, fsDocId, previousClientsSeen } rows we updated
-    addedTxFsIds:     [],   // Firestore doc IDs for transactions
-    addedSumFsIds:    [],   // Firestore doc IDs for dailySummary
+    addedTxIds:       [],   // Firestore doc IDs of transactions added
+    addedSumIds:      [],   // Firestore doc IDs of dailySummary rows added
+    bumpedSumEntries: [],   // { id, previousClientsSeen } rows we updated
   };
 
   try {
-    // ── Step 1: Snapshot (safety baseline, not used by rollback logic) ──
-    setProgress(5, 'Creating safety snapshot...', 'Saving current state');
-    await snapshotBeforeImport();   // errors here abort before any write
-
-    // ── Step 2: Parse CSV ──
-    setProgress(10, 'Reading CSV...', file.name);
+    // ── Step 1: Parse CSV ──
+    setProgress(8, 'Reading CSV...', file.name);
     const text    = await file.text();
     const lines   = text.trim().split('\n');
     const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''));
@@ -5718,10 +5676,10 @@ async function importHistoryCSV(file) {
     }
     setProgress(18, `Parsed ${csvRows.length} rows`, 'Checking for duplicates...');
 
-    // ── Step 3: Three-key deduplication ──
-    // Key A: date + cents + paymentMethod  → same tx, different name
-    // Key B: date + cents + clientName     → same tx, different method
-    // Key C: date + paymentMethod + clientName → same tx, slightly different amount
+    // ── Step 2: Three-key deduplication against existing data ──
+    // Key A: date + cents + paymentMethod  — same tx, different name
+    // Key B: date + cents + clientName     — same tx, different method
+    // Key C: date + paymentMethod + name   — same tx, slightly different amount
     const existing = await db.transactions.toArray();
     const normName = s => (s || '').toLowerCase().replace(/[^a-z]/g, '');
 
@@ -5765,31 +5723,31 @@ async function importHistoryCSV(file) {
                    amount: serviceAmount, paymentMethod, notes });
     }
 
-    setProgress(30, `${toAdd.length} new records`, `${skipped} duplicates skipped`);
+    setProgress(28, `${toAdd.length} new records to import`, `${skipped} duplicates skipped`);
     if (toAdd.length === 0) {
       closeModal();
       showToast(`Nothing new to import — ${skipped} duplicates found`);
       return;
     }
 
-    // ── Step 4: Write transactions to IndexedDB — IDs captured for rollback ──
-    setProgress(40, 'Writing to local database...', `0 / ${toAdd.length}`);
-    const batchSize = 50;
-    for (let i = 0; i < toAdd.length; i += batchSize) {
-      const batch  = toAdd.slice(i, i + batchSize);
-      const newIds = await db.transactions.bulkAdd(batch, { allKeys: true });
-      manifest.addedTxIdbIds.push(...newIds);
-      setProgress(
-        40 + Math.round((i / toAdd.length) * 20),
-        'Writing to local database...',
-        `${Math.min(i + batchSize, toAdd.length)} / ${toAdd.length}`
-      );
+    // ── Step 3: Write transactions — collect each Firestore ID for rollback ──
+    setProgress(35, 'Writing transactions...', `0 / ${toAdd.length}`);
+    for (let i = 0; i < toAdd.length; i++) {
+      const newId = await db.transactions.add(toAdd[i]);
+      manifest.addedTxIds.push(newId);
+      if (i % 10 === 0) {
+        setProgress(
+          35 + Math.round((i / toAdd.length) * 40),
+          'Writing transactions...',
+          `${i} / ${toAdd.length}`
+        );
+      }
     }
+    setProgress(76, `${toAdd.length} transactions written`, 'Updating daily client counts...');
 
-    // ── Step 5: Upsert dailySummary client counts ──
-    // Count actual rows per date across the whole CSV (includes skipped
-    // duplicates so the count reflects real clients seen that day).
-    setProgress(62, 'Updating daily client counts...', '');
+    // ── Step 4: Upsert dailySummary client counts ──
+    // Count rows per date across the full CSV (including skipped dupes,
+    // so the number reflects actual clients seen that day)
     const clientsPerDate = {};
     for (const row of csvRows) {
       const d = (row.date || '').trim();
@@ -5800,81 +5758,24 @@ async function importHistoryCSV(file) {
       const existing = await db.dailySummary.where('date').equals(date).first();
       if (existing) {
         if (count > (existing.clientsSeen || 0)) {
-          // Track the previous value so rollback can restore it exactly
           manifest.bumpedSumEntries.push({
             id: existing.id,
-            fsDocId: existing.fsDocId || null,   // set later during Firestore step
             previousClientsSeen: existing.clientsSeen || 0,
           });
           await db.dailySummary.update(existing.id, { clientsSeen: count });
         }
+        // if existing count is already >= imported count, leave it alone
       } else {
         const newId = await db.dailySummary.add({ date, clientsSeen: count, hoursWorked: 0 });
-        manifest.addedSumIdbIds.push(newId);
-      }
-    }
-
-    // ── Step 6: Sync to Firestore ──
-    setProgress(72, 'Syncing to cloud...', 'Uploading transactions');
-    if (auth.currentUser) {
-      const uid    = auth.currentUser.uid;
-      const txRef  = firestore.collection('users').doc(uid).collection('transactions');
-      const sumRef = firestore.collection('users').doc(uid).collection('dailySummary');
-
-      // Transactions — collect Firestore IDs for rollback
-      for (let i = 0; i < toAdd.length; i += 20) {
-        const b = firestore.batch();
-        const refs = [];
-        toAdd.slice(i, i + 20).forEach(tx => {
-          const ref = txRef.doc();
-          b.set(ref, tx);
-          refs.push(ref.id);
-        });
-        try {
-          await b.commit();
-          manifest.addedTxFsIds.push(...refs);
-        } catch(e) { console.warn('Firestore tx batch:', e); }
-        setProgress(
-          72 + Math.round((i / toAdd.length) * 14),
-          'Syncing to cloud...',
-          `${Math.min(i + 20, toAdd.length)} / ${toAdd.length} transactions`
-        );
-      }
-
-      // Daily summaries
-      setProgress(87, 'Syncing client counts...', '');
-      for (const [date, count] of Object.entries(clientsPerDate)) {
-        try {
-          const snap = await sumRef.where('date', '==', date).get();
-          if (snap.empty) {
-            const ref = sumRef.doc();
-            await ref.set({ date, clientsSeen: count, hoursWorked: 0 });
-            manifest.addedSumFsIds.push(ref.id);
-          } else {
-            const fsDoc = snap.docs[0];
-            // Backfill fsDocId onto the bumped entry so rollback can restore it
-            const bumped = manifest.bumpedSumEntries.find(e => e.id !== undefined &&
-              (async () => {
-                const local = await db.dailySummary.get(e.id);
-                return local && local.date === date;
-              })()
-            );
-            if (bumped) bumped.fsDocId = fsDoc.id;
-
-            if (count > (fsDoc.data().clientsSeen || 0)) {
-              await fsDoc.ref.update({ clientsSeen: count });
-            }
-          }
-        } catch(e) { console.warn('Firestore summary sync:', e); }
+        manifest.addedSumIds.push(newId);
       }
     }
 
     setProgress(100, 'Done!', '');
-    await new Promise(r => setTimeout(r, 500));
+    await new Promise(r => setTimeout(r, 400));
     closeModal();
 
-    // Persist the manifest as a plain serialisable object —
-    // no custom array properties, so spread and JSON.stringify are safe.
+    // Store manifest as plain JSON-safe object for manual undo
     window._lastImportRollback = {
       manifest: JSON.parse(JSON.stringify(manifest)),
       count: toAdd.length,
@@ -5907,9 +5808,8 @@ async function importHistoryCSV(file) {
         (look for "ENTER AMOUNT" in the notes) and tap each one to fill in the actual amount.
       </div>` : ''}
       <div style="background:#E8F5E9; border:1px solid #2D7A4C; border-radius:8px; padding:10px 12px; font-size:12px; color:#1B5E20; margin-bottom:16px;">
-        <strong>🛡️ Full rollback available</strong> — tap "Undo Import" to remove every record
-        that was just added from both local storage and the cloud. This option disappears
-        when you navigate away.
+        <strong>🛡️ Full rollback available</strong> — tap "Undo Import" below to remove every
+        record just added. This option disappears when you navigate away.
       </div>
       <button class="btn-submit" style="width:100%; margin-bottom:10px;"
         onclick="closeModal(); navigate('entries')">
@@ -5923,8 +5823,7 @@ async function importHistoryCSV(file) {
 
   } catch(err) {
     console.error('Import error:', err);
-    // Auto-rollback: remove everything written so far
-    if (manifest.addedTxIdbIds.length > 0 || manifest.addedSumIdbIds.length > 0 ||
+    if (manifest.addedTxIds.length > 0 || manifest.addedSumIds.length > 0 ||
         manifest.bumpedSumEntries.length > 0) {
       try {
         setProgress(0, 'Import failed — rolling back...', 'Removing partial writes');
@@ -5934,7 +5833,7 @@ async function importHistoryCSV(file) {
       } catch(rbErr) {
         console.error('Rollback also encountered errors:', rbErr);
         closeModal();
-        showToast('Import failed and rollback had issues — check console and consider restoring from backup.');
+        showToast('Import failed and rollback had issues — restore from your backup file.');
       }
     } else {
       closeModal();
@@ -5943,16 +5842,13 @@ async function importHistoryCSV(file) {
   }
 }
 
-
 // Called from the success modal "Undo Import" button
 async function undoLastImport() {
   const data = window._lastImportRollback;
   if (!data) { showToast('Nothing to undo'); return; }
 
-  const { manifest, count } = data;
-
   const confirmed = confirm(
-    `↩ Undo Import\n\nThis will remove all ${count} imported transactions and restore ` +
+    `↩ Undo Import\n\nThis will remove all ${data.count} imported transactions and restore ` +
     `any daily client counts that were changed.\n\nContinue?`
   );
   if (!confirmed) return;
@@ -5961,15 +5857,16 @@ async function undoLastImport() {
   showToast('Rolling back import...');
 
   try {
-    await rollbackImport(manifest);
+    await rollbackImport(data.manifest);
     window._lastImportRollback = null;
-    showToast(`✓ Rolled back — ${count} records removed, all counts restored`);
+    showToast(`✓ Rolled back — ${data.count} records removed, all counts restored`);
     if (state.currentView === 'entries') renderEntriesView();
   } catch(err) {
     console.error('Undo error:', err);
     showToast('Undo encountered issues — check console. Some records may need manual cleanup.');
   }
 }
+
 
 
 async function importBackup(file) {
