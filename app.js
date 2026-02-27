@@ -1094,6 +1094,11 @@ async function renderEntriesView() {
     </div>
     `}
 
+    <div class="fab-row" style="padding:0 16px 12px;">
+      <button class="fab fab-income"  onclick="openAddTransactionModal('INCOME')"><span style="font-size:18px">+</span> Income</button>
+      <button class="fab fab-expense" onclick="openAddTransactionModal('EXPENSE')"><span style="font-size:18px">+</span> Expense</button>
+    </div>
+
     <div style="padding:0 16px 8px;">
       <div class="section-label">Income</div>
       ${income.length === 0 ? `
@@ -1118,11 +1123,6 @@ async function renderEntriesView() {
           <div class="empty-text">No monthly expenses this month.</div>
         </div>
       ` : monthlyExp.map(e => renderMonthlyExpenseItem(e)).join('')}
-    </div>
-
-    <div class="fab-row">
-      <button class="fab fab-income"  onclick="openAddTransactionModal('INCOME')"><span style="font-size:18px">+</span> Income</button>
-      <button class="fab fab-expense" onclick="openAddTransactionModal('EXPENSE')"><span style="font-size:18px">+</span> Expense</button>
     </div>
 
     <div style="height:16px;"></div>
