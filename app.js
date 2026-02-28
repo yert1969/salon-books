@@ -3331,6 +3331,7 @@ async function renderReportsView() {
     { id: 'annual',   label: 'Annual' },
     { id: 'yoy',      label: 'Year vs Year' },
     { id: 'category', label: 'By Category' },
+    { id: 'booth-rent', label: 'Booth Rent' },
     { id: 'export',   label: '📥 Export CSV' },
   ];
 
@@ -3591,6 +3592,18 @@ async function renderReportInner() {
         <div class="report-body" id="report-output"></div>
       `;
       await runCategoryReport();
+      break;
+    }
+
+    case 'booth-rent': {
+      el.innerHTML = `
+        <div class="report-controls">
+          <input type="number" class="report-input" id="r-br-year" value="${yearNow}" min="2020" max="2099" style="max-width:100px" inputmode="numeric">
+          <button class="report-btn" onclick="runBoothRentReport()">View</button>
+        </div>
+        <div class="report-body" id="report-output"></div>
+      `;
+      await runBoothRentReport();
       break;
     }
 
@@ -4672,6 +4685,204 @@ function drawPie(canvasId, labels, values, centerLabel) {
   } catch (err) {
     console.error('Chart creation failed:', err);
   }
+}
+
+// ---- Booth Rent Report ----
+async function runBoothRentReport() {
+  const year = parseInt(document.getElementById('r-br-year')?.value) || new Date().getFullYear();
+
+  const allRenters  = await db.renters.toArray();
+  const allPayments = await db.rentPayments.toArray();
+
+  // Filter payments to selected year
+  const yearPayments = allPayments.filter(p => p.datePaid && p.datePaid.startsWith(String(year)));
+
+  // Build per-renter stats
+  const renterStats = allRenters.map(r => {
+    const pmts = yearPayments.filter(p => p.renterId === r.id);
+    const totalPaid = pmts.reduce((s, p) => s + (p.amount || 0), 0);
+    const onTime = pmts.filter(p => getRentStatus(p.weekStart, p.datePaid) === 'ontime').length;
+    const late   = pmts.filter(p => getRentStatus(p.weekStart, p.datePaid) === 'late').length;
+    const total  = pmts.length;
+    const onTimePct = total > 0 ? Math.round((onTime / total) * 100) : 0;
+
+    // Monthly breakdown
+    const months = {};
+    for (let m = 1; m <= 12; m++) {
+      const ms = `${year}-${String(m).padStart(2, '0')}`;
+      const mPmts = pmts.filter(p => p.datePaid.startsWith(ms));
+      months[m] = {
+        paid: mPmts.reduce((s, p) => s + (p.amount || 0), 0),
+        count: mPmts.length,
+        onTime: mPmts.filter(p => getRentStatus(p.weekStart, p.datePaid) === 'ontime').length,
+        late: mPmts.filter(p => getRentStatus(p.weekStart, p.datePaid) === 'late').length,
+      };
+    }
+
+    // Average days to pay (from week start Monday to datePaid)
+    let totalDays = 0;
+    pmts.forEach(p => {
+      const ws = new Date(p.weekStart + 'T12:00:00');
+      const pd = new Date(p.datePaid + 'T12:00:00');
+      totalDays += Math.round((pd - ws) / 86400000);
+    });
+    const avgDaysToPay = total > 0 ? (totalDays / total).toFixed(1) : '—';
+
+    // Longest on-time streak
+    const sorted = [...pmts].sort((a, b) => a.weekStart.localeCompare(b.weekStart));
+    let maxStreak = 0, curStreak = 0, currentStreak = 0;
+    sorted.forEach((p, i) => {
+      if (getRentStatus(p.weekStart, p.datePaid) === 'ontime') {
+        curStreak++;
+        if (curStreak > maxStreak) maxStreak = curStreak;
+        if (i === sorted.length - 1) currentStreak = curStreak;
+      } else {
+        curStreak = 0;
+        if (i === sorted.length - 1) currentStreak = 0;
+      }
+    });
+
+    // Expected weeks: count Mondays in the year from renter start to now (or end of year)
+    const rStart = r.startDate || `${year}-01-01`;
+    const rangeStart = rStart > `${year}-01-01` ? rStart : `${year}-01-01`;
+    const rangeEnd = `${year}-12-31` < todayStr() ? `${year}-12-31` : todayStr();
+    let expectedWeeks = 0;
+    let cursor = getWeekStart(rangeStart);
+    while (cursor <= rangeEnd) {
+      if (cursor >= rangeStart) expectedWeeks++;
+      cursor = addDays(cursor, 7);
+    }
+    const expectedAmt = expectedWeeks * (r.weeklyRate || 0);
+    const collectionRate = expectedAmt > 0 ? Math.round((totalPaid / expectedAmt) * 100) : 0;
+
+    return {
+      id: r.id, name: r.name, booth: r.booth, rate: r.weeklyRate || 0,
+      status: r.status, startDate: r.startDate,
+      totalPaid, onTime, late, total, onTimePct, months,
+      avgDaysToPay, maxStreak, currentStreak,
+      expectedWeeks, expectedAmt, collectionRate,
+    };
+  });
+
+  // Grand totals
+  const grandPaid     = renterStats.reduce((s, r) => s + r.totalPaid, 0);
+  const grandExpected = renterStats.reduce((s, r) => s + r.expectedAmt, 0);
+  const grandOnTime   = renterStats.reduce((s, r) => s + r.onTime, 0);
+  const grandLate     = renterStats.reduce((s, r) => s + r.late, 0);
+  const grandTotal    = renterStats.reduce((s, r) => s + r.total, 0);
+  const grandOnTimePct = grandTotal > 0 ? Math.round((grandOnTime / grandTotal) * 100) : 0;
+  const grandCollRate  = grandExpected > 0 ? Math.round((grandPaid / grandExpected) * 100) : 0;
+
+  // Month short names for table headers
+  const mShort = ['','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+  // Determine which months have data (for compact table)
+  const activeMo = [];
+  for (let m = 1; m <= 12; m++) {
+    if (renterStats.some(r => r.months[m].count > 0)) activeMo.push(m);
+  }
+  if (activeMo.length === 0) activeMo.push(new Date().getMonth() + 1);
+
+  const el = document.getElementById('report-output');
+  el.innerHTML = `
+    <div class="report-section-title">${year} Booth Rent Summary</div>
+
+    <div class="report-stat-grid">
+      <div class="report-stat"><div class="report-stat-label">Total Collected</div><div class="report-stat-value green">${fmt(grandPaid)}</div></div>
+      <div class="report-stat"><div class="report-stat-label">Expected</div><div class="report-stat-value">${fmt(grandExpected)}</div></div>
+      <div class="report-stat"><div class="report-stat-label">Collection Rate</div><div class="report-stat-value ${grandCollRate >= 95 ? 'green' : grandCollRate >= 80 ? 'gold' : 'red'}">${grandCollRate}%</div></div>
+      <div class="report-stat"><div class="report-stat-label">On Time</div><div class="report-stat-value green">${grandOnTime} of ${grandTotal}</div></div>
+      <div class="report-stat"><div class="report-stat-label">Late</div><div class="report-stat-value ${grandLate > 0 ? 'red' : 'green'}">${grandLate}</div></div>
+      <div class="report-stat"><div class="report-stat-label">On-Time Rate</div><div class="report-stat-value ${grandOnTimePct >= 90 ? 'green' : grandOnTimePct >= 75 ? 'gold' : 'red'}">${grandOnTimePct}%</div></div>
+    </div>
+
+    ${renterStats.filter(r => r.total > 0 || r.status === 'active').map(r => `
+      <div class="report-white-card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+          <div>
+            <div class="report-section-title" style="margin-bottom:2px;">${r.name}${r.booth ? ` <span style="font-weight:400;color:var(--text-muted);font-size:12px;">Booth ${r.booth}</span>` : ''}</div>
+            <div style="font-size:12px;color:var(--text-muted);">${fmt(r.rate)}/week · ${r.status === 'active' ? '🟢 Active' : '⚪ Inactive'}${r.startDate ? ` · Since ${formatDateDisplay(r.startDate)}` : ''}</div>
+          </div>
+          <div style="text-align:right;">
+            <div style="font-size:20px;font-weight:700;color:var(--success);">${fmt(r.totalPaid)}</div>
+            <div style="font-size:11px;color:var(--text-muted);">of ${fmt(r.expectedAmt)} expected</div>
+          </div>
+        </div>
+
+        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px;">
+          <div style="flex:1;min-width:70px;background:var(--bg-input);border-radius:8px;padding:8px;text-align:center;">
+            <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;">On-Time</div>
+            <div style="font-size:16px;font-weight:700;color:${r.onTimePct >= 90 ? 'var(--success)' : r.onTimePct >= 75 ? 'var(--gold)' : 'var(--danger)'};">${r.onTimePct}%</div>
+            <div style="font-size:10px;color:var(--text-muted);">${r.onTime} of ${r.total}</div>
+          </div>
+          <div style="flex:1;min-width:70px;background:var(--bg-input);border-radius:8px;padding:8px;text-align:center;">
+            <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;">Late</div>
+            <div style="font-size:16px;font-weight:700;color:${r.late > 0 ? 'var(--danger)' : 'var(--success)'};">${r.late}</div>
+            <div style="font-size:10px;color:var(--text-muted);">payment${r.late !== 1 ? 's' : ''}</div>
+          </div>
+          <div style="flex:1;min-width:70px;background:var(--bg-input);border-radius:8px;padding:8px;text-align:center;">
+            <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;">Avg Days</div>
+            <div style="font-size:16px;font-weight:700;">${r.avgDaysToPay}</div>
+            <div style="font-size:10px;color:var(--text-muted);">to pay</div>
+          </div>
+          <div style="flex:1;min-width:70px;background:var(--bg-input);border-radius:8px;padding:8px;text-align:center;">
+            <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;">Collection</div>
+            <div style="font-size:16px;font-weight:700;color:${r.collectionRate >= 95 ? 'var(--success)' : r.collectionRate >= 80 ? 'var(--gold)' : 'var(--danger)'};">${r.collectionRate}%</div>
+            <div style="font-size:10px;color:var(--text-muted);">of expected</div>
+          </div>
+          <div style="flex:1;min-width:70px;background:var(--bg-input);border-radius:8px;padding:8px;text-align:center;">
+            <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;">Streak</div>
+            <div style="font-size:16px;font-weight:700;color:var(--success);">${r.currentStreak}</div>
+            <div style="font-size:10px;color:var(--text-muted);">current on-time</div>
+          </div>
+        </div>
+
+        <div style="overflow-x:auto;">
+          <table style="width:100%;border-collapse:collapse;font-size:12px;">
+            <thead>
+              <tr style="border-bottom:2px solid var(--plum);">
+                <th style="text-align:left;padding:6px 4px;color:var(--text-muted);font-size:10px;text-transform:uppercase;">Month</th>
+                ${activeMo.map(m => `<th style="text-align:center;padding:6px 4px;color:var(--text-muted);font-size:10px;">${mShort[m]}</th>`).join('')}
+                <th style="text-align:right;padding:6px 4px;color:var(--text-muted);font-size:10px;text-transform:uppercase;">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td style="padding:6px 4px;font-weight:500;">Paid</td>
+                ${activeMo.map(m => {
+                  const md = r.months[m];
+                  return `<td style="text-align:center;padding:6px 4px;color:${md.paid > 0 ? 'var(--success)' : 'var(--text-muted)'};">${md.paid > 0 ? fmt(md.paid) : '—'}</td>`;
+                }).join('')}
+                <td style="text-align:right;padding:6px 4px;font-weight:700;color:var(--success);">${fmt(r.totalPaid)}</td>
+              </tr>
+              <tr style="border-top:1px solid var(--bg-input);">
+                <td style="padding:6px 4px;font-weight:500;">Weeks</td>
+                ${activeMo.map(m => {
+                  const md = r.months[m];
+                  return `<td style="text-align:center;padding:6px 4px;">${md.count > 0 ? md.count : '—'}</td>`;
+                }).join('')}
+                <td style="text-align:right;padding:6px 4px;font-weight:700;">${r.total}</td>
+              </tr>
+              <tr style="border-top:1px solid var(--bg-input);">
+                <td style="padding:6px 4px;font-weight:500;">On Time</td>
+                ${activeMo.map(m => {
+                  const md = r.months[m];
+                  if (md.count === 0) return '<td style="text-align:center;padding:6px 4px;color:var(--text-muted);">—</td>';
+                  const pct = Math.round((md.onTime / md.count) * 100);
+                  return `<td style="text-align:center;padding:6px 4px;color:${pct >= 90 ? 'var(--success)' : pct >= 75 ? 'var(--gold)' : 'var(--danger)'};">${pct}%</td>`;
+                }).join('')}
+                <td style="text-align:right;padding:6px 4px;font-weight:700;color:${r.onTimePct >= 90 ? 'var(--success)' : 'var(--danger)'};">${r.onTimePct}%</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `).join('')}
+
+    ${renterStats.filter(r => r.total > 0 || r.status === 'active').length === 0 ? `
+      <p style="color:var(--text-muted);text-align:center;padding:30px 0;">No booth rent data for ${year}.</p>
+    ` : ''}
+  `;
 }
 
 async function exportCSV() {
