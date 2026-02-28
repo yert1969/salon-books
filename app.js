@@ -1930,8 +1930,7 @@ async function saveEntryTransaction() {
         createdAt: firebase.firestore.Timestamp.now()
       };
       
-      const docRef = await firestore.collection('users').doc(auth.currentUser.uid).collection('transactions').add(transaction);
-      await db.transactions.add({ id: docRef.id, ...transaction });
+      await db.transactions.add(transaction);
       
       // Switch to daily view showing the date where entry was added
       state.entriesViewMode = 'daily';
@@ -1950,8 +1949,7 @@ async function saveEntryTransaction() {
         createdAt: firebase.firestore.Timestamp.now()
       };
       
-      const docRef = await firestore.collection('users').doc(auth.currentUser.uid).collection('transactions').add(transaction);
-      await db.transactions.add({ id: docRef.id, ...transaction });
+      await db.transactions.add(transaction);
       
       // Switch to daily view showing the date where entry was added
       state.entriesViewMode = 'daily';
@@ -1972,8 +1970,7 @@ async function saveEntryTransaction() {
         createdAt: firebase.firestore.Timestamp.now()
       };
       
-      const docRef = await firestore.collection('users').doc(auth.currentUser.uid).collection('monthlyExpenses').add(expense);
-      await db.monthlyExpenses.add({ id: docRef.id, ...expense });
+      await db.monthlyExpenses.add(expense);
       
       // Switch to monthly view showing the month where entry was added
       state.entriesViewMode = 'monthly';
