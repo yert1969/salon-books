@@ -1747,6 +1747,8 @@ async function deleteTransaction(id) {
 
   try {
     await db.transactions.delete(id);
+    await firestore.collection('users').doc(auth.currentUser.uid)
+      .collection('transactions').doc(id).delete();
     showToast('Entry deleted');
     renderEntriesView();
   } catch (error) {
@@ -1807,7 +1809,11 @@ async function updateTransaction() {
       updatedTransaction.amount = expenseAmount;
     }
     
-    // Update in DB (shim handles Firebase)
+    // Update in Firestore
+    await firestore.collection('users').doc(auth.currentUser.uid)
+      .collection('transactions').doc(id).update(updatedTransaction);
+    
+    // Update in local DB
     await db.transactions.update(id, updatedTransaction);
     
     // Clear editing state
@@ -1924,7 +1930,8 @@ async function saveEntryTransaction() {
         createdAt: firebase.firestore.Timestamp.now()
       };
       
-      await db.transactions.add(transaction);
+      const docRef = await firestore.collection('users').doc(auth.currentUser.uid).collection('transactions').add(transaction);
+      await db.transactions.add({ id: docRef.id, ...transaction });
       
       // Switch to daily view showing the date where entry was added
       state.entriesViewMode = 'daily';
@@ -1943,7 +1950,8 @@ async function saveEntryTransaction() {
         createdAt: firebase.firestore.Timestamp.now()
       };
       
-      await db.transactions.add(transaction);
+      const docRef = await firestore.collection('users').doc(auth.currentUser.uid).collection('transactions').add(transaction);
+      await db.transactions.add({ id: docRef.id, ...transaction });
       
       // Switch to daily view showing the date where entry was added
       state.entriesViewMode = 'daily';
@@ -1964,7 +1972,8 @@ async function saveEntryTransaction() {
         createdAt: firebase.firestore.Timestamp.now()
       };
       
-      const docRef = await db.monthlyExpenses.add(expense);
+      const docRef = await firestore.collection('users').doc(auth.currentUser.uid).collection('monthlyExpenses').add(expense);
+      await db.monthlyExpenses.add({ id: docRef.id, ...expense });
       
       // Switch to monthly view showing the month where entry was added
       state.entriesViewMode = 'monthly';
@@ -2326,6 +2335,7 @@ async function deleteDailyEntry(id) {
   if (!confirm(`Delete ${transaction.category} (${fmt(amount)})?`)) return;
   
   try {
+    await firestore.collection('users').doc(auth.currentUser.uid).collection('transactions').doc(id).delete();
     await db.transactions.delete(id);
     showToast('Deleted');
     renderEntriesContent();
@@ -2342,6 +2352,7 @@ async function deleteMonthlyExpenseEntry(id) {
   if (!confirm(`Delete ${e.category} (${fmt(e.amount)})?`)) return;
   
   try {
+    await firestore.collection('users').doc(auth.currentUser.uid).collection('monthlyExpenses').doc(id).delete();
     await db.monthlyExpenses.delete(id);
     showToast('Deleted');
     renderEntriesContent();
@@ -2564,11 +2575,15 @@ async function deleteMonthlyExpenseFromEntries(id) {
   if (!confirmed) return;
   try {
     await db.monthlyExpenses.delete(id);
+    await firestore.collection('users').doc(auth.currentUser.uid)
+      .collection('monthlyExpenses').doc(id).delete();
     showToast('Monthly expense deleted');
     renderEntriesView();
   } catch (err) {
     console.error('Error deleting monthly expense:', err);
-    showToast('Error deleting monthly expense');
+    await db.monthlyExpenses.delete(id);
+    showToast('Monthly expense deleted');
+    renderEntriesView();
   }
 }
 
@@ -2730,7 +2745,9 @@ async function saveTransaction(type) {
     const year  = parseInt(document.getElementById('txn-year').value);
     const expense = { category, amount, notes, month, year };
     try {
-      await db.monthlyExpenses.add(expense);
+      const docRef = await firestore.collection('users').doc(auth.currentUser.uid)
+        .collection('monthlyExpenses').add(expense);
+      await db.monthlyExpenses.add({ id: docRef.id, ...expense });
       closeModal();
       showToast('Monthly expense saved ✓');
       renderEntriesView();
@@ -2765,14 +2782,21 @@ async function saveTransaction(type) {
   }
 
   try {
-    await db.transactions.add(record);
+    const docRef = await firestore.collection('users').doc(auth.currentUser.uid)
+      .collection('transactions').add(record);
+    await db.transactions.add({ id: docRef.id, ...record });
     if (date !== state.selectedDate) state.selectedDate = date;
     closeModal();
     showToast(isIncome ? 'Income saved ✓' : 'Expense saved ✓');
     renderEntriesView();
   } catch (err) {
     console.error('Error saving transaction:', err);
-    showToast('Error saving transaction');
+    // Fallback: save locally only
+    await db.transactions.add(record);
+    if (date !== state.selectedDate) state.selectedDate = date;
+    closeModal();
+    showToast(isIncome ? 'Income saved ✓' : 'Expense saved ✓');
+    renderEntriesView();
   }
 }
 
@@ -2902,8 +2926,12 @@ async function updateTransaction(id, type) {
       const expense = { category, amount, notes, month, year };
 
       await db.transactions.delete(id);
+      await firestore.collection('users').doc(auth.currentUser.uid)
+        .collection('transactions').doc(id).delete();
 
-      await db.monthlyExpenses.add(expense);
+      const docRef = await firestore.collection('users').doc(auth.currentUser.uid)
+        .collection('monthlyExpenses').add(expense);
+      await db.monthlyExpenses.add({ id: docRef.id, ...expense });
 
       closeModal();
       showToast('Moved to monthly expenses ✓');
@@ -2930,6 +2958,8 @@ async function updateTransaction(id, type) {
     }
 
     await db.transactions.update(id, changes);
+    await firestore.collection('users').doc(auth.currentUser.uid)
+      .collection('transactions').doc(id).update(changes);
     if (date !== state.selectedDate) state.selectedDate = date;
 
     closeModal();
@@ -5242,7 +5272,8 @@ async function renderRentersView() {
             </div>
             <div class="renter-amount">
               <div style="font-weight:700;color:${p ? 'var(--success)' : 'var(--text-muted)'}">${p ? fmt(p.amount) : fmt(r.weeklyRate || 0)}</div>
-              ${!p ? `<button class="renter-pay-btn" onclick="event.stopPropagation();openLogPaymentModal('${r.id}')">Log Payment</button>` : ''}
+              ${!p ? `<button class="renter-pay-btn" onclick="event.stopPropagation();openLogPaymentModal('${r.id}')">Log Payment</button>`
+                   : `<button class="renter-pay-btn" style="background:var(--bg-card);color:var(--text-muted);font-size:10px;padding:2px 8px;" onclick="event.stopPropagation();openEditRentPayment('${p.id}','${r.id}')">Edit</button>`}
             </div>
           </div>`;
         }).join('')
@@ -5325,6 +5356,60 @@ async function saveRentPayment(renterId) {
   renderRentersView();
 }
 
+async function openEditRentPayment(paymentId, renterId) {
+  const p = await db.rentPayments.get(paymentId);
+  if (!p) return;
+  const r = await db.renters.get(renterId);
+  const renterName = r ? r.name : 'Renter';
+
+  openModal(`
+    <h2 class="modal-title">Edit Rent Payment</h2>
+    <p style="color:var(--text-muted);font-size:13px;margin-bottom:14px;">${renterName} · Week of ${formatWeekRange(p.weekStart)}</p>
+
+    <label class="form-label">Amount Paid ($)</label>
+    <input type="number" inputmode="decimal" class="form-input" id="erp-amount"
+      value="${p.amount || 0}" step="0.01" min="0">
+
+    <label class="form-label">Date Paid</label>
+    <input type="date" class="form-input" id="erp-date" value="${p.datePaid || ''}">
+
+    <label class="form-label">Payment Method</label>
+    <select class="form-select" id="erp-method">
+      ${['Cash','Venmo','Zelle','Card','Check','Other'].map(m =>
+        `<option${m === p.paymentMethod ? ' selected' : ''}>${m}</option>`
+      ).join('')}
+    </select>
+
+    <label class="form-label">Notes (optional)</label>
+    <input type="text" class="form-input" id="erp-notes" value="${p.notes || ''}" placeholder="Any notes…">
+
+    <button class="btn-primary" style="width:100%;margin-top:8px;" onclick="updateRentPayment('${paymentId}')">Save Changes</button>
+    <button class="btn-danger-sm" style="width:100%;margin-top:8px;" onclick="deleteRentPayment('${paymentId}')">Delete Payment</button>
+  `);
+}
+
+async function updateRentPayment(paymentId) {
+  const amount    = parseFloat(document.getElementById('erp-amount').value);
+  const datePaid  = document.getElementById('erp-date').value;
+  const method    = document.getElementById('erp-method').value;
+  const notes     = document.getElementById('erp-notes').value.trim();
+
+  if (!amount || !datePaid) { showToast('Please fill in amount and date'); return; }
+
+  await db.rentPayments.update(paymentId, { amount, datePaid, paymentMethod: method, notes });
+  closeModal();
+  showToast('Payment updated ✓');
+  renderRentersView();
+}
+
+async function deleteRentPayment(paymentId) {
+  if (!confirm('Delete this rent payment?')) return;
+  await db.rentPayments.delete(paymentId);
+  closeModal();
+  showToast('Payment deleted');
+  renderRentersView();
+}
+
 function openRenterDetail(renterId) {
   db.renters.get(renterId).then(async r => {
     if (!r) return;
@@ -5341,7 +5426,7 @@ function openRenterDetail(renterId) {
           const statusClass = { ontime: 'status-ontime', late: 'status-late' }[status];
           const icon        = status === 'ontime' ? '✅' : '⚠️';
           return `
-          <div class="renter-history-row">
+          <div class="renter-history-row" onclick="openEditRentPayment('${p.id}','${renterId}')" style="cursor:pointer;">
             <span>${icon}</span>
             <div style="flex:1">
               <div style="font-size:12px;font-weight:500;">${formatWeekRange(p.weekStart)}</div>
@@ -5351,6 +5436,7 @@ function openRenterDetail(renterId) {
               <div style="font-weight:700;color:var(--success);font-size:13px;">${fmt(p.amount)}</div>
               <div class="${statusClass}" style="font-size:10px;">${status === 'ontime' ? 'On Time' : 'Late'}</div>
             </div>
+            <div style="font-size:16px;color:var(--text-muted);margin-left:4px;">✎</div>
           </div>`;
         }).join('');
 
