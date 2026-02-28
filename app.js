@@ -1045,8 +1045,29 @@ async function renderEntriesView() {
     }
   }
 
+  const entriesTab = state.entriesTab || 'add';
+
+  // If Browse & Search tab is selected, render that instead
+  if (entriesTab === 'search') {
+    content.innerHTML = `
+      ${backupNudge}
+      <div style="display:flex;gap:0;padding:0 16px 8px;">
+        <button class="tab-btn" onclick="switchEntriesTab('add')" style="flex:1;">Add Entry</button>
+        <button class="tab-btn active" onclick="switchEntriesTab('search')" style="flex:1;">Browse &amp; Search</button>
+      </div>
+      <div id="entries-tab-content"></div>
+    `;
+    await renderSearchTab(document.getElementById('entries-tab-content'));
+    return;
+  }
+
   content.innerHTML = `
     ${backupNudge}
+
+    <div style="display:flex;gap:0;padding:0 16px 8px;">
+      <button class="tab-btn active" onclick="switchEntriesTab('add')" style="flex:1;">Add Entry</button>
+      <button class="tab-btn" onclick="switchEntriesTab('search')" style="flex:1;">Browse &amp; Search</button>
+    </div>
 
     <div class="daily-date-bar">
       <button class="date-nav-btn" onclick="changeDate(-1)">‹</button>
