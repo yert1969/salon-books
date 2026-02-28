@@ -1502,11 +1502,26 @@ async function renderRecentTransactions() {
     }
   }
   
-  // Get all transactions sorted by creation time (newest first)
+  // Get all daily transactions
   let allTransactions = await db.transactions.toArray();
+
+  // Also include monthly expenses (normalized to look like transactions)
+  const allMonthly = await db.monthlyExpenses.toArray();
+  allMonthly.forEach(e => {
+    allTransactions.push({
+      ...e,
+      _isMonthly: true,
+      type: 'EXPENSE',
+      date: `${e.year}-${String(e.month).padStart(2,'0')}-01`,
+      amount: e.amount || 0,
+      serviceAmount: 0,
+      tipAmount: 0,
+    });
+  });
+
   allTransactions.sort((a, b) => {
-    const aTime = a.createdAt?.toDate?.() || new Date(0);
-    const bTime = b.createdAt?.toDate?.() || new Date(0);
+    const aTime = a.createdAt?.toDate?.() || new Date(a.date + 'T12:00:00' || 0);
+    const bTime = b.createdAt?.toDate?.() || new Date(b.date + 'T12:00:00' || 0);
     return bTime - aTime;
   });
   
@@ -1562,7 +1577,7 @@ async function renderRecentTransactions() {
   if (recentTransactions.length === 0) {
     container.innerHTML = `
       <div style="text-align:center; padding:20px; color:var(--text-muted); font-size:14px;">
-        ${searchText || filterType !== 'all' || filterCategory !== 'all' || filterAmount ? 'No matching transactions' : 'No transactions yet'}
+        ${searchText || filterType !== 'all' || filterCategory !== 'all' || amountFilter ? 'No matching transactions' : 'No transactions yet'}
       </div>
     `;
     if (loadMoreContainer) loadMoreContainer.innerHTML = '';
@@ -1574,24 +1589,30 @@ async function renderRecentTransactions() {
   const today = todayStr();
   
   recentTransactions.forEach(t => {
-    if (!groupedByDate[t.date]) {
-      groupedByDate[t.date] = [];
+    const groupDate = t._isMonthly ? `monthly-${t.year}-${String(t.month).padStart(2,'0')}` : t.date;
+    if (!groupedByDate[groupDate]) {
+      groupedByDate[groupDate] = { items: [], isMonthlyGroup: t._isMonthly, month: t.month, year: t.year, date: t.date };
     }
-    groupedByDate[t.date].push(t);
+    groupedByDate[groupDate].items.push(t);
   });
   
   // Render grouped transactions
-  const dates = Object.keys(groupedByDate).sort((a, b) => b.localeCompare(a));
+  const groupKeys = Object.keys(groupedByDate).sort((a, b) => b.localeCompare(a));
   
-  container.innerHTML = dates.map(date => {
-    const dateObj = new Date(date + 'T00:00:00');
-    const dayOfWeek = dateObj.toLocaleDateString('en-US', { weekday: 'short' });
-    const monthDay = dateObj.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' });
-    const year = dateObj.toLocaleDateString('en-US', { year: '2-digit' });
+  container.innerHTML = groupKeys.map(key => {
+    const group = groupedByDate[key];
+    let dateLabel;
+    if (group.isMonthlyGroup) {
+      dateLabel = `${monthName(group.month)} ${group.year} — Monthly Expenses`;
+    } else {
+      const dateObj = new Date(group.date + 'T00:00:00');
+      const dayOfWeek = dateObj.toLocaleDateString('en-US', { weekday: 'short' });
+      const monthDay = dateObj.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' });
+      const yr = dateObj.toLocaleDateString('en-US', { year: '2-digit' });
+      dateLabel = group.date === today ? 'Today' : `${dayOfWeek}, ${monthDay}/${yr}`;
+    }
     
-    const dateLabel = date === today ? 'Today' : `${dayOfWeek}, ${monthDay}/${year}`;
-    
-    const transactions = groupedByDate[date];
+    const transactions = group.items;
     
     return `
       <div style="margin-bottom:16px;">
@@ -1600,14 +1621,18 @@ async function renderRecentTransactions() {
         </div>
         ${transactions.map(t => {
           const isIncome = t.type === 'INCOME';
+          const isMonthly = !!t._isMonthly;
           const amount = isIncome ? (t.serviceAmount || 0) + (t.tipAmount || 0) : (t.amount || 0);
           const amountColor = isIncome ? 'var(--success)' : 'var(--danger)';
           const tipText = isIncome && t.tipAmount > 0 ? ` + $${t.tipAmount.toFixed(2)} tip` : '';
+          const monthlyBadge = isMonthly ? '<span style="font-size:10px;background:var(--plum);color:#fff;padding:1px 6px;border-radius:4px;margin-left:6px;">Monthly</span>' : '';
+          const editFn = isMonthly ? `openEditMonthlyExpenseModal('${t.id}')` : `editTransaction('${t.id}')`;
+          const deleteFn = isMonthly ? `deleteMonthlyExpenseEntry('${t.id}')` : `deleteTransaction('${t.id}')`;
           
           return `
             <div style="display:flex; justify-content:space-between; align-items:center; padding:10px 0; border-bottom:1px solid var(--border-light);">
               <div style="flex:1;">
-                <div style="font-size:15px; font-weight:500; color:var(--text);">${t.category}</div>
+                <div style="font-size:15px; font-weight:500; color:var(--text);">${t.category}${monthlyBadge}</div>
                 ${t.notes ? `<div style="font-size:13px; color:var(--text-muted); margin-top:2px;">${t.notes}</div>` : ''}
               </div>
               <div style="text-align:right; display:flex; align-items:center; gap:4px;">
@@ -1616,8 +1641,8 @@ async function renderRecentTransactions() {
                     ${isIncome && t.serviceAmount > 0 ? `$${t.serviceAmount.toFixed(2)}` : `$${amount.toFixed(2)}`}${tipText}
                   </div>
                 </div>
-                <button onclick="editTransaction('${t.id}')" style="background:none; border:none; color:var(--plum); font-size:28px; padding:8px 12px; cursor:pointer; min-width:44px; min-height:44px; display:flex; align-items:center; justify-content:center;">✎</button>
-                <button onclick="deleteTransaction('${t.id}')" style="background:none; border:none; color:var(--danger); font-size:24px; padding:8px 12px; cursor:pointer; min-width:44px; min-height:44px; display:flex; align-items:center; justify-content:center;">✕</button>
+                <button onclick="${editFn}" style="background:none; border:none; color:var(--plum); font-size:28px; padding:8px 12px; cursor:pointer; min-width:44px; min-height:44px; display:flex; align-items:center; justify-content:center;">✎</button>
+                <button onclick="${deleteFn}" style="background:none; border:none; color:var(--danger); font-size:24px; padding:8px 12px; cursor:pointer; min-width:44px; min-height:44px; display:flex; align-items:center; justify-content:center;">✕</button>
               </div>
             </div>
           `;
@@ -1637,7 +1662,7 @@ async function renderRecentTransactions() {
     } else if (recentTransactions.length > 0) {
       loadMoreContainer.innerHTML = `
         <div style="text-align:center; padding:16px; color:var(--text-muted); font-size:13px;">
-          ${allTransactions.length} ${allTransactions.length === 1 ? 'transaction' : 'transactions'} shown
+          ${allTransactions.length} ${allTransactions.length === 1 ? 'entry' : 'entries'} shown
         </div>
       `;
     } else {
@@ -1645,7 +1670,6 @@ async function renderRecentTransactions() {
     }
   }
 }
-
 function loadMoreTransactions() {
   state.transactionsToShow = (state.transactionsToShow || 30) + 30;
   renderRecentTransactions();
