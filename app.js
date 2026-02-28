@@ -266,6 +266,7 @@ async function signInWithGoogle() {
 
 async function signOutUser() {
   if (!confirm('Sign out of Mane Frame?')) return;
+  _appBooted = false;
   await auth.signOut();
   // onAuthStateChanged fires → shows login screen
 }
@@ -6449,7 +6450,12 @@ document.addEventListener('DOMContentLoaded', () => {
 // ----------------------------------------------------------------
 
 // Called after Firebase confirms the user is signed in.
+let _appBooted = false;
+
 async function bootApp() {
+  if (_appBooted) return;
+  _appBooted = true;
+
   await loadCategories();
   await updateRentersTabVisibility();
 
