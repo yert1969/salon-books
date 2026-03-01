@@ -652,6 +652,11 @@ async function buildDashboard() {
     const allRenters = await db.renters.where('status').equals('active').toArray();
     const allRentPmts = await db.rentPayments.toArray();
 
+    // Employee income categories (excluded from personal service metrics)
+    const employeeCategories = ['Chasity (Vagaro Income)'];
+    const isPersonalService = (t) => t.type === 'INCOME' && !employeeCategories.includes(t.category);
+    const isEmployeeIncome = (t) => t.type === 'INCOME' && employeeCategories.includes(t.category);
+
     const today     = todayStr();
     const now       = new Date();
     const curMonth  = now.getMonth() + 1;
@@ -724,26 +729,29 @@ async function buildDashboard() {
     const ytdRentCollected = allRentPmts.filter(p => p.datePaid?.startsWith(yearStr))
       .reduce((s,p) => s + (p.amount||0), 0);
 
-    // ---- Avg per client ----
+    // ---- Avg per client (personal services only) ----
     const mtdSums = allSums.filter(s => s.date?.startsWith(curMonthStr));
     const mtdClients = mtdSums.reduce((s,d) => s + (d.clientsSeen||0), 0);
-    const avgPerClient = mtdClients > 0 ? mtdIncome / mtdClients : 0;
+    const mtdPersonalIncome = allTxns.filter(t => t.date?.startsWith(curMonthStr) && isPersonalService(t))
+      .reduce((s,t) => s + (t.serviceAmount||0) + (t.tipAmount||0), 0);
+    const avgPerClient = mtdClients > 0 ? mtdPersonalIncome / mtdClients : 0;
 
     const prevMoSums = allSums.filter(s => s.date?.startsWith(prevMonthStr));
     const prevMoClients = prevMoSums.reduce((s,d) => s + (d.clientsSeen||0), 0);
-    const prevMoIncome = prevMonthIncome;
-    const prevAvgPerClient = prevMoClients > 0 ? prevMoIncome / prevMoClients : 0;
+    const prevMoPersonalIncome = allTxns.filter(t => t.date?.startsWith(prevMonthStr) && isPersonalService(t))
+      .reduce((s,t) => s + (t.serviceAmount||0) + (t.tipAmount||0), 0);
+    const prevAvgPerClient = prevMoClients > 0 ? prevMoPersonalIncome / prevMoClients : 0;
 
-    // ---- Tip rate ----
-    const mtdServices = allTxns.filter(t => t.date?.startsWith(curMonthStr) && t.type === 'INCOME')
+    // ---- Tip rate (personal services only) ----
+    const mtdServices = allTxns.filter(t => t.date?.startsWith(curMonthStr) && isPersonalService(t))
       .reduce((s,t) => s + (t.serviceAmount||0), 0);
-    const mtdTips = allTxns.filter(t => t.date?.startsWith(curMonthStr) && t.type === 'INCOME')
+    const mtdTips = allTxns.filter(t => t.date?.startsWith(curMonthStr) && isPersonalService(t))
       .reduce((s,t) => s + (t.tipAmount||0), 0);
     const tipRate = mtdServices > 0 ? ((mtdTips / mtdServices) * 100).toFixed(1) : '0.0';
 
-    // ---- Top service ----
+    // ---- Top service (personal services only) ----
     const serviceRevMap = {};
-    allTxns.filter(t => t.date?.startsWith(curMonthStr) && t.type === 'INCOME').forEach(t => {
+    allTxns.filter(t => t.date?.startsWith(curMonthStr) && isPersonalService(t)).forEach(t => {
       if (!serviceRevMap[t.category]) serviceRevMap[t.category] = 0;
       serviceRevMap[t.category] += (t.serviceAmount||0) + (t.tipAmount||0);
     });
@@ -838,8 +846,8 @@ async function buildDashboard() {
       });
     }
 
-    // Tips trend
-    const prevMoTips = allTxns.filter(t => t.date?.startsWith(prevMonthStr) && t.type === 'INCOME')
+    // Tips trend (personal services only)
+    const prevMoTips = allTxns.filter(t => t.date?.startsWith(prevMonthStr) && isPersonalService(t))
       .reduce((s,t) => s + (t.tipAmount||0), 0);
     if (prevMoTips > 0 && mtdTips > 0) {
       const tipChange = Math.round(((mtdTips - prevMoTips) / prevMoTips) * 100);
@@ -1365,6 +1373,11 @@ async function renderAddEntryTab(container) {
         <input type="number" id="entry-tip" class="form-input" step="0.01" placeholder="0.00" style="width:100%; padding:12px; font-size:16px;">
       </div>
       
+      <div class="form-group" id="client-name-section">
+        <label class="form-label" style="font-size:13px; margin-bottom:8px; display:block; font-weight:500;">Client Name (optional)</label>
+        <input type="text" id="entry-client" class="form-input" placeholder="e.g. Sarah M." style="width:100%; padding:12px; font-size:14px;" autocomplete="off">
+      </div>
+      
       <div class="form-group hidden" id="expense-amount-section">
         <label class="form-label" style="font-size:13px; margin-bottom:8px; display:block; font-weight:500;">Amount</label>
         <input type="number" id="entry-expense-amount" class="form-input" step="0.01" placeholder="0.00" style="width:100%; padding:12px; font-size:16px;">
@@ -1599,6 +1612,7 @@ async function renderRecentTransactionsSimple() {
             <div style="display:flex; justify-content:space-between; align-items:center; padding:10px 0; border-bottom:1px solid var(--border-light);">
               <div style="flex:1;">
                 <div style="font-size:15px; font-weight:500; color:var(--text);">${t.category}</div>
+                ${t.clientName ? `<div style="font-size:12px; color:var(--plum); margin-top:2px;">👤 ${t.clientName}</div>` : ''}
                 ${t.notes ? `<div style="font-size:13px; color:var(--text-muted); margin-top:2px;">${t.notes}</div>` : ''}
               </div>
               <div style="text-align:right; display:flex; align-items:center; gap:4px;">
@@ -1675,11 +1689,12 @@ async function renderRecentTransactions() {
     // Category filter
     if (filterCategory !== 'all' && t.category !== filterCategory) return false;
     
-    // Search filter (search in category and notes)
+    // Search filter (search in category, notes, and client name)
     if (searchText) {
       const categoryMatch = t.category?.toLowerCase().includes(searchText);
       const notesMatch = t.notes?.toLowerCase().includes(searchText);
-      if (!categoryMatch && !notesMatch) return false;
+      const clientMatch = t.clientName?.toLowerCase().includes(searchText);
+      if (!categoryMatch && !notesMatch && !clientMatch) return false;
     }
     
     // Amount filter
@@ -1775,6 +1790,7 @@ async function renderRecentTransactions() {
             <div style="display:flex; justify-content:space-between; align-items:center; padding:10px 0; border-bottom:1px solid var(--border-light);">
               <div style="flex:1;">
                 <div style="font-size:15px; font-weight:500; color:var(--text);">${t.category}${monthlyBadge}</div>
+                ${t.clientName ? `<div style="font-size:12px; color:var(--plum); margin-top:2px;">${t.clientName}</div>` : ''}
                 ${t.notes ? `<div style="font-size:13px; color:var(--text-muted); margin-top:2px;">${t.notes}</div>` : ''}
               </div>
               <div style="text-align:right; display:flex; align-items:center; gap:4px;">
@@ -1845,6 +1861,9 @@ async function editTransaction(id) {
   
   document.getElementById('entry-category').value = transaction.category;
   document.getElementById('entry-notes').value = transaction.notes || '';
+  if (document.getElementById('entry-client')) {
+    document.getElementById('entry-client').value = transaction.clientName || '';
+  }
   
   updateEntryForm();
   
@@ -1953,6 +1972,7 @@ async function updateTransaction() {
   const type = document.querySelector('input[name="entry-type"]:checked')?.value;
   const category = document.getElementById('entry-category')?.value;
   const notes = document.getElementById('entry-notes')?.value.trim() || '';
+  const clientName = document.getElementById('entry-client')?.value.trim() || '';
   
   let serviceAmount = 0;
   let tipAmount = 0;
@@ -1991,6 +2011,7 @@ async function updateTransaction() {
     if (type === 'INCOME') {
       updatedTransaction.serviceAmount = serviceAmount;
       updatedTransaction.tipAmount = tipAmount;
+      updatedTransaction.clientName = clientName || null;
     } else {
       updatedTransaction.amount = expenseAmount;
     }
@@ -2028,6 +2049,7 @@ function updateEntryForm() {
   const serviceAmountSection = document.getElementById('service-amount-section');
   const tipAmountSection = document.getElementById('tip-amount-section');
   const expenseAmountSection = document.getElementById('expense-amount-section');
+  const clientNameSection = document.getElementById('client-name-section');
   
   // Show/hide frequency for expenses only
   if (type === 'EXPENSE') {
@@ -2036,12 +2058,14 @@ function updateEntryForm() {
     serviceAmountSection?.classList.add('hidden');
     tipAmountSection?.classList.add('hidden');
     expenseAmountSection?.classList.remove('hidden');
+    clientNameSection?.classList.add('hidden');
   } else {
     frequencySection?.classList.add('hidden');
     // Show income fields (service + tip), hide expense field
     serviceAmountSection?.classList.remove('hidden');
     tipAmountSection?.classList.remove('hidden');
     expenseAmountSection?.classList.add('hidden');
+    clientNameSection?.classList.remove('hidden');
   }
   
   // Show date for income and daily expenses, show month/year for monthly expenses
@@ -2068,6 +2092,7 @@ async function saveEntryTransaction() {
   const frequency = document.querySelector('input[name="entry-frequency"]:checked')?.value || 'DAILY';
   const category = document.getElementById('entry-category')?.value;
   const notes = document.getElementById('entry-notes')?.value.trim() || '';
+  const clientName = document.getElementById('entry-client')?.value.trim() || '';
   
   let serviceAmount = 0;
   let tipAmount = 0;
@@ -2108,6 +2133,7 @@ async function saveEntryTransaction() {
         category: category,
         serviceAmount: serviceAmount,
         tipAmount: tipAmount,
+        clientName: clientName || null,
         notes: notes,
         createdAt: firebase.firestore.Timestamp.now()
       };
@@ -2865,6 +2891,11 @@ async function openAddTransactionModal(type) {
         </select>
       </div>
     </div>
+
+    <div class="form-group">
+      <label class="form-label">Client Name (optional)</label>
+      <input type="text" class="form-input" id="txn-client" placeholder="e.g. Sarah M." autocomplete="off">
+    </div>
     ` : ''}
 
     <div class="form-group">
@@ -2908,6 +2939,7 @@ async function saveTransaction(type) {
   const category = document.getElementById('txn-category').value;
   const amount   = parseFloat(document.getElementById('txn-amount').value) || 0;
   const notes    = document.getElementById('txn-notes').value.trim();
+  const clientName = isIncome ? (document.getElementById('txn-client')?.value.trim() || '') : '';
 
   if (!category) { alert('Please select a category.'); return; }
   if (amount <= 0) { alert('Please enter an amount greater than zero.'); return; }
@@ -2946,6 +2978,7 @@ async function saveTransaction(type) {
     record.tipAmount     = tip;
     record.tipMethod     = tipMethod;
     record.amount        = amount;
+    record.clientName    = clientName || null;
   } else {
     record.serviceAmount = 0;
     record.tipAmount     = 0;
@@ -3060,6 +3093,13 @@ async function openEditTransactionModal(id) {
     </div>
     ` : ''}
 
+    ${isIncome ? `
+    <div class="form-group">
+      <label class="form-label">Client Name (optional)</label>
+      <input type="text" class="form-input" id="txn-client" value="${t.clientName || ''}" autocomplete="off">
+    </div>
+    ` : ''}
+
     <div class="form-group">
       <label class="form-label">Notes (optional)</label>
       <input type="text" class="form-input" id="txn-notes" value="${t.notes || ''}">
@@ -3106,10 +3146,12 @@ async function updateTransaction(id, type) {
     if (isIncome) {
       const tip       = parseFloat(document.getElementById('txn-tip').value) || 0;
       const tipMethod = document.getElementById('txn-tip-method').value;
+      const clientName = document.getElementById('txn-client')?.value.trim() || '';
       changes.serviceAmount = amount;
       changes.tipAmount     = tip;
       changes.tipMethod     = tipMethod;
       changes.amount        = amount;
+      changes.clientName    = clientName || null;
     } else {
       changes.amount        = amount;
       changes.serviceAmount = 0;
