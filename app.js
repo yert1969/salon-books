@@ -5760,6 +5760,9 @@ function openEditRenterModal(renterId) {
       <label class="form-label">Weekly Rate ($)</label>
       <input type="number" inputmode="decimal" class="form-input" id="er-rate" value="${r.weeklyRate || 140}">
 
+      <label class="form-label">Start Date</label>
+      <input type="date" class="form-input" id="er-start" value="${r.startDate || ''}">
+
       <label class="form-label">Notes</label>
       <input type="text" class="form-input" id="er-notes" value="${r.notes || ''}">
 
@@ -5772,11 +5775,12 @@ async function saveEditRenter(renterId) {
   const name  = document.getElementById('er-name').value.trim();
   const booth = document.getElementById('er-booth').value.trim();
   const rate  = parseFloat(document.getElementById('er-rate').value);
+  const startDate = document.getElementById('er-start').value || null;
   const notes = document.getElementById('er-notes').value.trim();
 
   if (!name) { showToast('Name is required'); return; }
 
-  await db.renters.update(renterId, { name, booth: booth || null, weeklyRate: rate, notes });
+  await db.renters.update(renterId, { name, booth: booth || null, weeklyRate: rate, startDate, notes });
   closeModal();
   showToast('Renter updated ✓');
   renderRentersView();
