@@ -597,7 +597,7 @@ function navigate(view) {
   
   const titles = {
     entries:  'Entries',
-    insights: 'Insights',
+    insights: 'Dashboard',
     renters:  'Booth Renters',
     reports:  'Reports',
     settings: 'Settings',
@@ -606,7 +606,7 @@ function navigate(view) {
   
   const views = {
     entries:  () => safeRender(renderEntriesView, 'Entries'),
-    insights: () => safeRender(renderInsightsView, 'Insights'),
+    insights: () => safeRender(renderInsightsView, 'Dashboard'),
     renters:  () => safeRender(renderRentersView, 'Booth Renters'),
     reports:  () => safeRender(renderReportsView, 'Reports'),
     settings: () => safeRender(renderSettingsView, 'Settings'),
@@ -619,344 +619,486 @@ function navigate(view) {
 // ----------------------------------------------------------------
 
 // ----------------------------------------------------------------
-// INSIGHTS VIEW - Smart automatic insights from data
+// ----------------------------------------------------------------
+// DASHBOARD VIEW (replaces Insights)
 // ----------------------------------------------------------------
 
 async function renderInsightsView() {
   const content = document.getElementById('app-content');
   const hdr = document.getElementById('header-actions');
   hdr.innerHTML = '';
-  
+
   content.innerHTML = `
-    <div style="padding:16px; padding-bottom:80px;">
-      <div style="text-align:center; margin-bottom:24px;">
-        <div style="font-size:32px; margin-bottom:8px;">💡</div>
-        <h2 style="font-size:20px; font-weight:600; margin:0;">Smart Insights</h2>
-        <p style="color:var(--text-muted); font-size:14px; margin-top:4px;">Automatic analysis of your business data</p>
+    <div style="padding:0 0 80px;">
+      <div id="dashboard-loading" style="text-align:center; padding:60px; color:var(--text-muted);">
+        Loading dashboard...
       </div>
-      
-      <div id="insights-loading" style="text-align:center; padding:40px; color:var(--text-muted);">
-        Analyzing your data...
-      </div>
-      <div id="insights-content"></div>
+      <div id="dashboard-content"></div>
     </div>
   `;
-  
-  // Calculate and render insights
-  await calculateAndRenderInsights();
+
+  await buildDashboard();
 }
 
-async function calculateAndRenderInsights() {
-  const container = document.getElementById('insights-content');
-  const loader = document.getElementById('insights-loading');
-  
+async function buildDashboard() {
+  const container = document.getElementById('dashboard-content');
+  const loader = document.getElementById('dashboard-loading');
+
   try {
-    // Get all transactions
-    const allTransactions = await db.transactions.toArray();
-    const allSummaries = await db.dailySummary.toArray();
-    
-    if (allTransactions.length === 0) {
-      container.innerHTML = `
-        <div style="text-align:center; padding:40px; color:var(--text-muted);">
-          <div style="font-size:48px; margin-bottom:16px;">📊</div>
-          <p>Start adding transactions to see insights!</p>
-        </div>
-      `;
-      loader.style.display = 'none';
-      return;
+    // ---- Gather all data ----
+    const allTxns    = await db.transactions.toArray();
+    const allMExp    = await db.monthlyExpenses.toArray();
+    const allSums    = await db.dailySummary.toArray();
+    const allRenters = await db.renters.where('status').equals('active').toArray();
+    const allRentPmts = await db.rentPayments.toArray();
+
+    const today     = todayStr();
+    const now       = new Date();
+    const curMonth  = now.getMonth() + 1;
+    const curYear   = now.getFullYear();
+    const curMonthStr = `${curYear}-${String(curMonth).padStart(2,'0')}`;
+
+    // ---- This week vs last week ----
+    const thisWS   = getWeekStart(today);
+    const lastWS   = addDays(thisWS, -7);
+    const dayNames = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+
+    // Day-by-day income for this week and last week
+    const thisWeekDays = [];
+    const lastWeekDays = [];
+    for (let i = 0; i < 7; i++) {
+      const thisDayStr = addDays(thisWS, i);
+      const lastDayStr = addDays(lastWS, i);
+      const thisInc = allTxns.filter(t => t.date === thisDayStr && t.type === 'INCOME')
+        .reduce((s,t) => s + (t.serviceAmount||0) + (t.tipAmount||0), 0);
+      const lastInc = allTxns.filter(t => t.date === lastDayStr && t.type === 'INCOME')
+        .reduce((s,t) => s + (t.serviceAmount||0) + (t.tipAmount||0), 0);
+      thisWeekDays.push(thisInc);
+      lastWeekDays.push(lastInc);
     }
-    
-    const insights = [];
-    const today = new Date();
-    const currentMonth = today.getMonth() + 1;
-    const currentYear = today.getFullYear();
-    
-    // Helper functions
-    const getDayName = (dateStr) => {
-      const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-      const date = new Date(dateStr + 'T00:00:00');
-      return days[date.getDay()];
-    };
-    
-    const fmt = (num) => `$${num.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
-    
-    // 1. BEST DAY OF WEEK
-    const dayTotals = {};
-    allTransactions.filter(t => t.type === 'INCOME').forEach(t => {
-      const dayName = getDayName(t.date);
-      if (!dayTotals[dayName]) dayTotals[dayName] = {total: 0, count: 0};
-      dayTotals[dayName].total += (t.serviceAmount || 0) + (t.tipAmount || 0);
-      dayTotals[dayName].count++;
+
+    const thisWeekTotal = thisWeekDays.reduce((s,v) => s+v, 0);
+    const lastWeekTotal = lastWeekDays.reduce((s,v) => s+v, 0);
+
+    // Figure out what day of the week we're on (0=Mon, 6=Sun)
+    const dayOfWeek = (now.getDay() + 6) % 7; // Convert Sun=0 to Mon=0
+    // Last week same-point total (up through same day)
+    const lastWeekSamePoint = lastWeekDays.slice(0, dayOfWeek + 1).reduce((s,v) => s+v, 0);
+    const weekPaceChange = lastWeekSamePoint > 0
+      ? Math.round(((thisWeekTotal - lastWeekSamePoint) / lastWeekSamePoint) * 100)
+      : (thisWeekTotal > 0 ? 100 : 0);
+
+    // Max for bar chart scaling
+    const allDayVals = [...thisWeekDays, ...lastWeekDays];
+    const maxDayVal = Math.max(...allDayVals, 1);
+
+    // ---- Month to date ----
+    const mtdIncome = allTxns.filter(t => t.date?.startsWith(curMonthStr) && t.type === 'INCOME')
+      .reduce((s,t) => s + (t.serviceAmount||0) + (t.tipAmount||0), 0);
+    const mtdDailyExp = allTxns.filter(t => t.date?.startsWith(curMonthStr) && t.type === 'EXPENSE')
+      .reduce((s,t) => s + (t.amount||0), 0);
+    const mtdMonthlyExp = allMExp.filter(e => e.year === curYear && e.month === curMonth)
+      .reduce((s,e) => s + (e.amount||0), 0);
+    const mtdExpenses = mtdDailyExp + mtdMonthlyExp;
+    const mtdNet = mtdIncome - mtdExpenses;
+    const mtdMargin = mtdIncome > 0 ? Math.round((mtdNet / mtdIncome) * 100) : 0;
+
+    // Last month for comparison
+    const prevMonth = curMonth === 1 ? 12 : curMonth - 1;
+    const prevYear  = curMonth === 1 ? curYear - 1 : curYear;
+    const prevMonthStr = `${prevYear}-${String(prevMonth).padStart(2,'0')}`;
+    const prevMonthIncome = allTxns.filter(t => t.date?.startsWith(prevMonthStr) && t.type === 'INCOME')
+      .reduce((s,t) => s + (t.serviceAmount||0) + (t.tipAmount||0), 0);
+    const monthChange = prevMonthIncome > 0
+      ? Math.round(((mtdIncome - prevMonthIncome) / prevMonthIncome) * 100) : 0;
+
+    // ---- YTD ----
+    const yearStr = String(curYear);
+    const ytdIncome = allTxns.filter(t => t.date?.startsWith(yearStr) && t.type === 'INCOME')
+      .reduce((s,t) => s + (t.serviceAmount||0) + (t.tipAmount||0), 0);
+    const ytdDailyExp = allTxns.filter(t => t.date?.startsWith(yearStr) && t.type === 'EXPENSE')
+      .reduce((s,t) => s + (t.amount||0), 0);
+    const ytdMonthlyExp = allMExp.filter(e => e.year === curYear)
+      .reduce((s,e) => s + (e.amount||0), 0);
+    const ytdExpenses = ytdDailyExp + ytdMonthlyExp;
+    const ytdRentCollected = allRentPmts.filter(p => p.datePaid?.startsWith(yearStr))
+      .reduce((s,p) => s + (p.amount||0), 0);
+
+    // ---- Avg per client ----
+    const mtdSums = allSums.filter(s => s.date?.startsWith(curMonthStr));
+    const mtdClients = mtdSums.reduce((s,d) => s + (d.clientsSeen||0), 0);
+    const avgPerClient = mtdClients > 0 ? mtdIncome / mtdClients : 0;
+
+    const prevMoSums = allSums.filter(s => s.date?.startsWith(prevMonthStr));
+    const prevMoClients = prevMoSums.reduce((s,d) => s + (d.clientsSeen||0), 0);
+    const prevMoIncome = prevMonthIncome;
+    const prevAvgPerClient = prevMoClients > 0 ? prevMoIncome / prevMoClients : 0;
+
+    // ---- Tip rate ----
+    const mtdServices = allTxns.filter(t => t.date?.startsWith(curMonthStr) && t.type === 'INCOME')
+      .reduce((s,t) => s + (t.serviceAmount||0), 0);
+    const mtdTips = allTxns.filter(t => t.date?.startsWith(curMonthStr) && t.type === 'INCOME')
+      .reduce((s,t) => s + (t.tipAmount||0), 0);
+    const tipRate = mtdServices > 0 ? ((mtdTips / mtdServices) * 100).toFixed(1) : '0.0';
+
+    // ---- Top service ----
+    const serviceRevMap = {};
+    allTxns.filter(t => t.date?.startsWith(curMonthStr) && t.type === 'INCOME').forEach(t => {
+      if (!serviceRevMap[t.category]) serviceRevMap[t.category] = 0;
+      serviceRevMap[t.category] += (t.serviceAmount||0) + (t.tipAmount||0);
     });
-    
-    let bestDay = null;
-    let bestDayAvg = 0;
-    Object.keys(dayTotals).forEach(day => {
-      const avg = dayTotals[day].total / dayTotals[day].count;
-      if (avg > bestDayAvg) {
-        bestDay = day;
-        bestDayAvg = avg;
-      }
-    });
-    
-    if (bestDay) {
-      insights.push({
-        icon: '📅',
-        title: 'Best Day of Week',
-        value: bestDay,
-        subtitle: `Averages ${fmt(bestDayAvg)} in income`,
-        color: 'var(--success)'
-      });
+    const topService = Object.entries(serviceRevMap).sort((a,b) => b[1] - a[1])[0];
+
+    // ---- Forecasting ----
+    const daysInMonth = new Date(curYear, curMonth, 0).getDate();
+    const dayOfMonth = now.getDate();
+    // Count actual working days (days with income entries) this month
+    const workingDays = new Set(allTxns.filter(t => t.date?.startsWith(curMonthStr) && t.type === 'INCOME').map(t => t.date)).size;
+    const dailyAvg = workingDays > 0 ? mtdIncome / workingDays : 0;
+    // Estimate remaining working days (use ratio of working days so far)
+    const workdayRatio = dayOfMonth > 0 ? workingDays / dayOfMonth : 0;
+    const estRemainingWorkdays = Math.round((daysInMonth - dayOfMonth) * workdayRatio);
+    const projectedMonth = mtdIncome + (dailyAvg * estRemainingWorkdays);
+
+    // Monthly avg for annual projection (use months with data)
+    const monthsWithData = new Set(allTxns.filter(t => t.date?.startsWith(yearStr) && t.type === 'INCOME').map(t => t.date?.substring(0,7))).size;
+    const avgMonthlyIncome = monthsWithData > 0 ? ytdIncome / monthsWithData : mtdIncome;
+    const projectedAnnualIncome = avgMonthlyIncome * 12;
+    const projectedAnnualRent = allRenters.reduce((s,r) => s + (r.weeklyRate||0), 0) * 52;
+    const projectedTotalRevenue = projectedAnnualIncome + projectedAnnualRent;
+    const ytdTotalRevenue = ytdIncome + ytdRentCollected;
+
+    // ---- Month trend (last 6 months) ----
+    const trendMonths = [];
+    for (let i = 5; i >= 0; i--) {
+      let tM = curMonth - i;
+      let tY = curYear;
+      while (tM <= 0) { tM += 12; tY--; }
+      const ms = `${tY}-${String(tM).padStart(2,'0')}`;
+      const inc = allTxns.filter(t => t.date?.startsWith(ms) && t.type === 'INCOME')
+        .reduce((s,t) => s + (t.serviceAmount||0) + (t.tipAmount||0), 0);
+      trendMonths.push({ month: tM, year: tY, income: inc, isCurrent: i === 0 });
     }
-    
-    // 2. THIS MONTH VS LAST MONTH
-    const thisMonthTxns = allTransactions.filter(t => {
-      const [y, m] = t.date.split('-');
-      return parseInt(y) === currentYear && parseInt(m) === currentMonth;
-    });
-    
-    const lastMonth = currentMonth === 1 ? 12 : currentMonth - 1;
-    const lastMonthYear = currentMonth === 1 ? currentYear - 1 : currentYear;
-    const lastMonthTxns = allTransactions.filter(t => {
-      const [y, m] = t.date.split('-');
-      return parseInt(y) === lastMonthYear && parseInt(m) === lastMonth;
-    });
-    
-    const thisMonthIncome = thisMonthTxns.filter(t => t.type === 'INCOME').reduce((s, t) => s + (t.serviceAmount || 0) + (t.tipAmount || 0), 0);
-    const lastMonthIncome = lastMonthTxns.filter(t => t.type === 'INCOME').reduce((s, t) => s + (t.serviceAmount || 0) + (t.tipAmount || 0), 0);
-    
-    if (lastMonthIncome > 0) {
-      const change = ((thisMonthIncome - lastMonthIncome) / lastMonthIncome) * 100;
-      const arrow = change > 0 ? '↑' : change < 0 ? '↓' : '→';
-      const color = change > 0 ? 'var(--success)' : change < 0 ? 'var(--danger)' : 'var(--text-muted)';
-      
-      insights.push({
-        icon: '📈',
-        title: 'This Month vs Last',
-        value: `${arrow} ${Math.abs(change).toFixed(0)}%`,
-        subtitle: `${fmt(thisMonthIncome)} vs ${fmt(lastMonthIncome)}`,
-        color: color
-      });
-    }
-    
-    // 3. AVERAGE TIP PERCENTAGE
-    const incomeTxns = allTransactions.filter(t => t.type === 'INCOME' && (t.serviceAmount || 0) > 0);
-    if (incomeTxns.length > 0) {
-      const totalService = incomeTxns.reduce((s, t) => s + (t.serviceAmount || 0), 0);
-      const totalTips = incomeTxns.reduce((s, t) => s + (t.tipAmount || 0), 0);
-      const avgTipPct = (totalTips / totalService) * 100;
-      
-      insights.push({
-        icon: '💰',
-        title: 'Average Tip Rate',
-        value: `${avgTipPct.toFixed(1)}%`,
-        subtitle: `${fmt(totalTips)} in total tips`,
-        color: 'var(--gold)'
-      });
-    }
-    
-    // 4. TOP 3 SERVICES BY REVENUE
-    const serviceRevenue = {};
-    allTransactions.filter(t => t.type === 'INCOME').forEach(t => {
-      if (!serviceRevenue[t.category]) serviceRevenue[t.category] = 0;
-      serviceRevenue[t.category] += (t.serviceAmount || 0) + (t.tipAmount || 0);
-    });
-    
-    const topServices = Object.entries(serviceRevenue)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 3);
-    
-    if (topServices.length > 0) {
-      insights.push({
-        icon: '🏆',
-        title: 'Top Services',
-        value: topServices.map((s, i) => `${i + 1}. ${s[0]}`).join('\n'),
-        subtitle: topServices.map(s => fmt(s[1])).join(' | '),
-        color: 'var(--plum)',
-        multiline: true
-      });
-    }
-    
-    // 5. BUSIEST DAY (by client count)
-    const clientsByDay = {};
-    allSummaries.forEach(s => {
-      const dayName = getDayName(s.date);
-      if (!clientsByDay[dayName]) clientsByDay[dayName] = {total: 0, count: 0};
-      clientsByDay[dayName].total += s.clientsSeen || 0;
-      clientsByDay[dayName].count++;
-    });
-    
-    let busiestDay = null;
-    let busiestAvg = 0;
-    Object.keys(clientsByDay).forEach(day => {
-      const avg = clientsByDay[day].total / clientsByDay[day].count;
-      if (avg > busiestAvg) {
-        busiestDay = day;
-        busiestAvg = avg;
-      }
-    });
-    
-    if (busiestDay) {
-      insights.push({
-        icon: '👥',
-        title: 'Busiest Day',
-        value: busiestDay,
-        subtitle: `Avg ${busiestAvg.toFixed(1)} clients`,
-        color: 'var(--plum)'
-      });
-    }
-    
-    // 6. PROFIT MARGIN THIS MONTH
-    const thisMonthExpenses = thisMonthTxns.filter(t => t.type === 'EXPENSE').reduce((s, t) => s + (t.amount || 0), 0);
-    if (thisMonthIncome > 0) {
-      const profit = thisMonthIncome - thisMonthExpenses;
-      const margin = (profit / thisMonthIncome) * 100;
-      
-      insights.push({
-        icon: '💵',
-        title: 'Profit Margin (This Month)',
-        value: `${margin.toFixed(0)}%`,
-        subtitle: `${fmt(profit)} profit`,
-        color: margin > 50 ? 'var(--success)' : margin > 30 ? 'var(--gold)' : 'var(--text)'
-      });
-    }
-    
-    // 7. SERVICE TRENDING UP
-    const last30Days = allTransactions.filter(t => {
-      const txDate = new Date(t.date);
-      const daysAgo = (today - txDate) / (1000 * 60 * 60 * 24);
-      return daysAgo <= 30;
-    });
-    
-    const prev30Days = allTransactions.filter(t => {
-      const txDate = new Date(t.date);
-      const daysAgo = (today - txDate) / (1000 * 60 * 60 * 24);
-      return daysAgo > 30 && daysAgo <= 60;
-    });
-    
-    const recentByService = {};
-    const prevByService = {};
-    
-    last30Days.filter(t => t.type === 'INCOME').forEach(t => {
-      recentByService[t.category] = (recentByService[t.category] || 0) + 1;
-    });
-    
-    prev30Days.filter(t => t.type === 'INCOME').forEach(t => {
-      prevByService[t.category] = (prevByService[t.category] || 0) + 1;
-    });
-    
-    let trendingService = null;
-    let trendingGrowth = 0;
-    
-    Object.keys(recentByService).forEach(service => {
-      const recent = recentByService[service];
-      const prev = prevByService[service] || 0;
-      if (prev > 0) {
-        const growth = ((recent - prev) / prev) * 100;
-        if (growth > trendingGrowth) {
-          trendingService = service;
-          trendingGrowth = growth;
+    const maxTrend = Math.max(...trendMonths.map(m => m.income), 1);
+
+    // ---- Booth rent this week ----
+    const ws = getWeekStart(today);
+    const weekRentPmts = allRentPmts.filter(p => p.weekStart === ws);
+    const rentCollected = weekRentPmts.reduce((s,p) => s + (p.amount||0), 0);
+    const rentExpected  = allRenters.reduce((s,r) => s + (r.weeklyRate||0), 0);
+    const rentersPaid   = new Set(weekRentPmts.map(p => p.renterId)).size;
+    const rentOutstanding = Math.max(0, rentExpected - rentCollected);
+
+    // ---- Alerts ----
+    const alerts = [];
+
+    // Late rent payments
+    allRenters.forEach(r => {
+      const hasPmt = weekRentPmts.some(p => p.renterId === r.id);
+      if (!hasPmt) {
+        // Check how many weeks overdue
+        const renterPmts = allRentPmts.filter(p => p.renterId === r.id).sort((a,b) => b.weekStart.localeCompare(a.weekStart));
+        const lastPaid = renterPmts[0];
+        let weeksOverdue = 0;
+        if (lastPaid) {
+          let checkWS = ws;
+          while (checkWS > lastPaid.weekStart) {
+            const paid = allRentPmts.some(p => p.renterId === r.id && p.weekStart === checkWS);
+            if (!paid) weeksOverdue++;
+            checkWS = addDays(checkWS, -7);
+          }
+        }
+        // Check late pattern
+        const last6 = allRentPmts.filter(p => p.renterId === r.id).sort((a,b) => b.weekStart.localeCompare(a.weekStart)).slice(0, 6);
+        const lateCount = last6.filter(p => getRentStatus(p.weekStart, p.datePaid) === 'late').length;
+
+        if (weeksOverdue > 0) {
+          const owes = weeksOverdue * (r.weeklyRate || 0);
+          alerts.push({
+            type: 'danger',
+            icon: '🔴',
+            title: `${r.name} owes ${fmt(owes)}`,
+            sub: `${weeksOverdue} week${weeksOverdue > 1 ? 's' : ''} past due${lateCount >= 3 ? ` · Pattern: late ${lateCount} of last 6 weeks` : ''}`,
+            priority: 1
+          });
         }
       }
     });
-    
-    if (trendingService && trendingGrowth > 10) {
-      insights.push({
-        icon: '📊',
-        title: 'Trending Service',
-        value: trendingService,
-        subtitle: `Up ${trendingGrowth.toFixed(0)}% last 30 days`,
-        color: 'var(--success)'
-      });
-    }
-    
-    // 8. AVERAGE PER CLIENT
-    const totalClients = allSummaries.reduce((s, d) => s + (d.clientsSeen || 0), 0);
-    const totalIncome = allTransactions.filter(t => t.type === 'INCOME').reduce((s, t) => s + (t.serviceAmount || 0) + (t.tipAmount || 0), 0);
-    
-    if (totalClients > 0) {
-      const avgPerClient = totalIncome / totalClients;
-      
-      insights.push({
-        icon: '💳',
-        title: 'Avg Per Client',
-        value: fmt(avgPerClient),
-        subtitle: `Based on ${totalClients} total clients`,
-        color: 'var(--plum)'
-      });
-    }
-    
-    // 9. THIS WEEK VS LAST WEEK
-    const getWeekStart = (date) => {
-      const d = new Date(date);
-      const day = d.getDay();
-      const diff = d.getDate() - day + (day === 0 ? -6 : 1);
-      return new Date(d.setDate(diff)).toISOString().split('T')[0];
-    };
-    
-    const todayStr = today.toISOString().split('T')[0];
-    const thisWeekStart = getWeekStart(todayStr);
-    const lastWeekStart = addDays(thisWeekStart, -7);
-    
-    const thisWeekIncome = allTransactions.filter(t => {
-      return t.type === 'INCOME' && t.date >= thisWeekStart && t.date < addDays(thisWeekStart, 7);
-    }).reduce((s, t) => s + (t.serviceAmount || 0) + (t.tipAmount || 0), 0);
-    
-    const lastWeekIncome = allTransactions.filter(t => {
-      return t.type === 'INCOME' && t.date >= lastWeekStart && t.date < thisWeekStart;
-    }).reduce((s, t) => s + (t.serviceAmount || 0) + (t.tipAmount || 0), 0);
-    
-    if (lastWeekIncome > 0) {
-      const weekChange = ((thisWeekIncome - lastWeekIncome) / lastWeekIncome) * 100;
-      const arrow = weekChange > 0 ? '↑' : weekChange < 0 ? '↓' : '→';
-      const color = weekChange > 0 ? 'var(--success)' : weekChange < 0 ? 'var(--danger)' : 'var(--text-muted)';
-      
-      insights.push({
-        icon: '📆',
-        title: 'This Week vs Last',
-        value: `${arrow} ${Math.abs(weekChange).toFixed(0)}%`,
-        subtitle: `${fmt(thisWeekIncome)} vs ${fmt(lastWeekIncome)}`,
-        color: color
-      });
-    }
-    
-    // 10. EXPENSE ALERT
-    const avgMonthlyExpense = allTransactions.filter(t => t.type === 'EXPENSE').reduce((s, t) => s + (t.amount || 0), 0) / 12;
-    
-    if (thisMonthExpenses > avgMonthlyExpense * 1.3) {
-      insights.push({
+
+    // Rent due reminder (Saturday)
+    const todayDay = now.getDay(); // 0=Sun
+    if ((todayDay >= 4 || todayDay === 0) && rentersPaid < allRenters.length && allRenters.length > 0) {
+      const dueDayName = todayDay === 6 ? 'today' : todayDay === 0 ? 'yesterday' : 'Saturday';
+      alerts.push({
+        type: 'warn',
         icon: '⚠️',
-        title: 'Expense Alert',
-        value: 'Higher Than Usual',
-        subtitle: `${fmt(thisMonthExpenses)} vs ${fmt(avgMonthlyExpense)} avg`,
-        color: 'var(--danger)'
+        title: `Booth rent due ${dueDayName}`,
+        sub: `${rentersPaid} of ${allRenters.length} renters paid · ${fmt(rentOutstanding)} outstanding`,
+        priority: 2
       });
     }
-    
-    // Render all insights
-    container.innerHTML = insights.map(insight => `
-      <div class="card" style="margin-bottom:16px; border-left:4px solid ${insight.color};">
-        <div style="display:flex; align-items:start; gap:12px;">
-          <div style="font-size:32px; line-height:1;">${insight.icon}</div>
-          <div style="flex:1;">
-            <div style="font-size:13px; color:var(--text-muted); font-weight:500; margin-bottom:4px;">${insight.title}</div>
-            <div style="font-size:${insight.multiline ? '14px' : '20px'}; font-weight:600; color:${insight.color}; margin-bottom:4px; ${insight.multiline ? 'white-space:pre-line;' : ''}">${insight.value}</div>
-            <div style="font-size:13px; color:var(--text-muted);">${insight.subtitle}</div>
+
+    // Tips trend
+    const prevMoTips = allTxns.filter(t => t.date?.startsWith(prevMonthStr) && t.type === 'INCOME')
+      .reduce((s,t) => s + (t.tipAmount||0), 0);
+    if (prevMoTips > 0 && mtdTips > 0) {
+      const tipChange = Math.round(((mtdTips - prevMoTips) / prevMoTips) * 100);
+      if (Math.abs(tipChange) >= 10) {
+        alerts.push({
+          type: tipChange > 0 ? 'good' : 'warn',
+          icon: tipChange > 0 ? '📈' : '📉',
+          title: `Tips ${tipChange > 0 ? 'up' : 'down'} ${Math.abs(tipChange)}% this month`,
+          sub: `${fmt(mtdTips)} vs ${fmt(prevMoTips)} last month · Avg tip rate: ${tipRate}%`,
+          priority: 3
+        });
+      }
+    }
+
+    // Avg per client trend
+    if (prevAvgPerClient > 0 && avgPerClient > 0) {
+      const apcChange = Math.round(((avgPerClient - prevAvgPerClient) / prevAvgPerClient) * 100);
+      if (Math.abs(apcChange) >= 5) {
+        alerts.push({
+          type: apcChange > 0 ? 'good' : 'info',
+          icon: '💡',
+          title: `Avg ${fmt(avgPerClient)} per client this month`,
+          sub: `${apcChange > 0 ? 'Up' : 'Down'} from ${fmt(prevAvgPerClient)} in ${monthName(prevMonth)}${apcChange > 0 ? ' · Higher-value services trending upward' : ''}`,
+          priority: 4
+        });
+      }
+    }
+
+    // Expense alert
+    const prevMoDailyExp = allTxns.filter(t => t.date?.startsWith(prevMonthStr) && t.type === 'EXPENSE')
+      .reduce((s,t) => s + (t.amount||0), 0);
+    const prevMoMonthlyExp = allMExp.filter(e => e.year === prevYear && e.month === prevMonth)
+      .reduce((s,e) => s + (e.amount||0), 0);
+    const prevMoTotalExp = prevMoDailyExp + prevMoMonthlyExp;
+    if (prevMoTotalExp > 0 && mtdExpenses > prevMoTotalExp * 1.2) {
+      alerts.push({
+        type: 'warn',
+        icon: '⚠️',
+        title: 'Expenses higher than last month',
+        sub: `${fmt(mtdExpenses)} vs ${fmt(prevMoTotalExp)} in ${monthName(prevMonth)}`,
+        priority: 3
+      });
+    }
+
+    // Sort alerts by priority
+    alerts.sort((a,b) => a.priority - b.priority);
+
+    // ---- Short month names for trend ----
+    const mShort = ['','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+    // ---- Build HTML ----
+    let html = '';
+
+    // == WEEK PACE HERO ==
+    const paceDir = weekPaceChange >= 0 ? 'up' : 'down';
+    const paceArrow = weekPaceChange >= 0 ? '↑' : '↓';
+    html += `
+    <div style="margin:12px 16px;background:var(--bg-card);border-radius:16px;padding:20px;box-shadow:0 1px 4px rgba(0,0,0,0.04);">
+      <div style="font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--text-muted);font-weight:600;margin-bottom:8px;">This Week's Pace</div>
+      <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:6px;">
+        <div style="font-size:32px;font-weight:800;color:var(--text);letter-spacing:-1px;">${fmt(thisWeekTotal)}</div>
+        ${lastWeekSamePoint > 0 ? `<div style="font-size:15px;font-weight:700;padding:2px 8px;border-radius:6px;background:${paceDir==='up'?'#E8F5E8':'#FDE8E8'};color:${paceDir==='up'?'var(--success)':'var(--danger)'};">${paceArrow} ${Math.abs(weekPaceChange)}%</div>` : ''}
+      </div>
+      <div style="font-size:13px;color:var(--text-muted);margin-bottom:14px;">vs ${fmt(lastWeekSamePoint)} last week ${lastWeekTotal > lastWeekSamePoint ? `(${fmt(lastWeekTotal)} final)` : ''}</div>
+
+      <div style="display:flex;align-items:flex-end;gap:6px;height:60px;">
+        ${dayNames.map((d, i) => {
+          const thisH = maxDayVal > 0 ? Math.round((thisWeekDays[i] / maxDayVal) * 100) : 0;
+          const lastH = maxDayVal > 0 ? Math.round((lastWeekDays[i] / maxDayVal) * 100) : 0;
+          const isFuture = i > dayOfWeek;
+          return `
+          <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;height:100%;justify-content:flex-end;">
+            <div style="width:100%;border-radius:3px 3px 0 0;min-height:2px;height:${lastH}%;background:#C49BA5;opacity:0.4;"></div>
+            <div style="width:100%;border-radius:3px 3px 0 0;min-height:${isFuture?0:2}px;height:${thisH}%;background:var(--plum);${isFuture?'opacity:0.15;':''}"></div>
+            <div style="font-size:10px;color:${isFuture?'#C49BA5':'var(--text-muted)'};font-weight:500;">${d}</div>
+          </div>`;
+        }).join('')}
+      </div>
+      <div style="display:flex;gap:16px;margin-top:8px;justify-content:center;">
+        <span style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--text-muted);"><span style="width:8px;height:8px;border-radius:2px;background:var(--plum);"></span> This week</span>
+        <span style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--text-muted);"><span style="width:8px;height:8px;border-radius:2px;background:#C49BA5;opacity:0.4;"></span> Last week</span>
+      </div>
+    </div>`;
+
+    // == KEY STATS ==
+    html += `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:0 16px;margin-bottom:12px;">
+      <div style="background:var(--bg-card);border-radius:12px;padding:14px;box-shadow:0 1px 4px rgba(0,0,0,0.04);">
+        <div style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted);font-weight:600;margin-bottom:4px;">Month to Date</div>
+        <div style="font-size:22px;font-weight:700;color:var(--success);">${fmt(mtdIncome)}</div>
+        ${prevMonthIncome > 0 ? `<div style="font-size:11px;color:var(--text-muted);margin-top:2px;">${monthChange >= 0 ? '↑' : '↓'} ${Math.abs(monthChange)}% vs ${mShort[prevMonth]}</div>` : ''}
+      </div>
+      <div style="background:var(--bg-card);border-radius:12px;padding:14px;box-shadow:0 1px 4px rgba(0,0,0,0.04);">
+        <div style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted);font-weight:600;margin-bottom:4px;">Net Profit MTD</div>
+        <div style="font-size:22px;font-weight:700;color:var(--plum);">${fmt(mtdNet)}</div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">${mtdMargin}% margin</div>
+      </div>
+      <div style="background:var(--bg-card);border-radius:12px;padding:14px;box-shadow:0 1px 4px rgba(0,0,0,0.04);">
+        <div style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted);font-weight:600;margin-bottom:4px;">YTD Income</div>
+        <div style="font-size:22px;font-weight:700;">${fmt(ytdIncome)}</div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">Services + Tips</div>
+      </div>
+      <div style="background:var(--bg-card);border-radius:12px;padding:14px;box-shadow:0 1px 4px rgba(0,0,0,0.04);">
+        <div style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted);font-weight:600;margin-bottom:4px;">YTD Expenses</div>
+        <div style="font-size:22px;font-weight:700;color:var(--danger);">${fmt(ytdExpenses)}</div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">Daily + Monthly</div>
+      </div>
+    </div>`;
+
+    // == ALERTS ==
+    if (alerts.length > 0) {
+      html += `
+      <div style="padding:0 16px;margin-bottom:12px;">
+        <div style="font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--text-muted);font-weight:600;margin-bottom:10px;">⚡ Needs Attention</div>
+        ${alerts.map(a => `
+          <div style="display:flex;align-items:start;gap:10px;background:var(--bg-card);border-radius:12px;padding:12px 14px;margin-bottom:8px;box-shadow:0 1px 4px rgba(0,0,0,0.04);border-left:3px solid ${{danger:'var(--danger)',warn:'var(--gold)',good:'var(--success)',info:'var(--plum)'}[a.type]};">
+            <div style="font-size:20px;flex-shrink:0;margin-top:1px;">${a.icon}</div>
+            <div style="font-size:13px;line-height:1.4;color:var(--text);">
+              <strong>${a.title}</strong>
+              <span style="color:var(--text-muted);font-size:12px;display:block;margin-top:2px;">${a.sub}</span>
+            </div>
           </div>
+        `).join('')}
+      </div>`;
+    }
+
+    // == FORECAST ==
+    html += `
+    <div style="margin:12px 16px;background:var(--bg-card);border-radius:16px;padding:20px;box-shadow:0 1px 4px rgba(0,0,0,0.04);">
+      <div style="font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--text-muted);font-weight:600;margin-bottom:12px;">📊 Pace Projections</div>
+
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border-light);">
+        <div>
+          <div style="font-size:14px;font-weight:500;">Projected This Month</div>
+          <div style="font-size:11px;color:var(--text-muted);">Based on ${workingDays} working days avg of ${fmt(dailyAvg)}</div>
+        </div>
+        <div style="font-size:18px;font-weight:700;color:var(--success);text-align:right;">${fmt(projectedMonth)}</div>
+      </div>
+
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border-light);">
+        <div>
+          <div style="font-size:14px;font-weight:500;">Projected Annual Income</div>
+          <div style="font-size:11px;color:var(--text-muted);">At current monthly pace</div>
+        </div>
+        <div style="font-size:18px;font-weight:700;color:var(--plum);text-align:right;">${fmt(projectedAnnualIncome)}</div>
+      </div>
+
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border-light);">
+        <div>
+          <div style="font-size:14px;font-weight:500;">Projected Annual Booth Rent</div>
+          <div style="font-size:11px;color:var(--text-muted);">${allRenters.length} renters × ${fmt(allRenters.length > 0 ? allRenters[0].weeklyRate || 140 : 140)}/wk × 52 wks</div>
+        </div>
+        <div style="font-size:18px;font-weight:700;color:var(--success);text-align:right;">${fmt(projectedAnnualRent)}</div>
+      </div>
+
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;">
+        <div style="font-size:14px;font-weight:700;">Projected Total Revenue</div>
+        <div style="font-size:20px;font-weight:700;color:var(--text);text-align:right;">${fmt(projectedTotalRevenue)}</div>
+      </div>
+
+      <div style="margin-top:14px;">
+        <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text-muted);margin-bottom:6px;">
+          <span>YTD Progress</span>
+          <span>${fmt(ytdTotalRevenue)} of ~${fmt(projectedTotalRevenue)}</span>
+        </div>
+        <div style="height:8px;background:var(--bg-input);border-radius:4px;overflow:hidden;">
+          <div style="height:100%;border-radius:4px;background:linear-gradient(90deg,var(--plum),#C49BA5);width:${Math.min(100, Math.round((ytdTotalRevenue / Math.max(projectedTotalRevenue,1)) * 100))}%;"></div>
+        </div>
+        <div style="text-align:right;font-size:10px;color:var(--text-muted);margin-top:4px;">
+          ${curMonth} of 12 months (${Math.round((curMonth / 12) * 100)}% of year)
         </div>
       </div>
-    `).join('');
-    
+    </div>`;
+
+    // == MONTH TREND ==
+    const hasAnyTrend = trendMonths.some(m => m.income > 0);
+    if (hasAnyTrend) {
+      html += `
+      <div style="margin:12px 16px;background:var(--bg-card);border-radius:16px;padding:20px;box-shadow:0 1px 4px rgba(0,0,0,0.04);">
+        <div style="font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--text-muted);font-weight:600;margin-bottom:12px;">Monthly Income Trend</div>
+        <div style="display:flex;gap:0;margin-top:10px;">
+          ${trendMonths.map(m => {
+            const h = maxTrend > 0 ? Math.round((m.income / maxTrend) * 100) : 0;
+            const hasData = m.income > 0;
+            return `
+            <div style="flex:1;text-align:center;">
+              <div style="height:80px;display:flex;align-items:flex-end;justify-content:center;padding:0 3px;">
+                <div style="width:100%;border-radius:4px 4px 0 0;min-height:${hasData?4:0}px;height:${h}%;background:${m.isCurrent ? 'linear-gradient(180deg,var(--plum),#C49BA5)' : 'var(--plum)'};opacity:${hasData ? (m.isCurrent ? 1 : 0.6) : 0.1};"></div>
+              </div>
+              <div style="font-size:10px;color:${m.isCurrent?'var(--plum)':'var(--text-muted)'};margin-top:4px;font-weight:${m.isCurrent?700:500};">${mShort[m.month]}</div>
+              ${hasData ? `<div style="font-size:9px;color:${m.isCurrent?'var(--plum)':'var(--text-muted)'};margin-top:1px;${m.isCurrent?'font-weight:600;':''}">$${Math.round(m.income/1000*10)/10}k</div>` : ''}
+            </div>`;
+          }).join('')}
+        </div>
+        ${trendMonths.filter(m => m.income > 0).length < 3 ? `<div style="font-size:11px;color:var(--text-muted);text-align:center;margin-top:8px;">More months will fill in as data builds</div>` : ''}
+      </div>`;
+    }
+
+    // == QUICK INSIGHTS ==
+    html += `
+    <div style="padding:0 16px;margin-bottom:8px;">
+      <div style="font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--text-muted);font-weight:600;margin-bottom:10px;">💡 Quick Insights</div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:0 16px;margin-bottom:16px;">
+      <div style="background:var(--bg-card);border-radius:12px;padding:14px;box-shadow:0 1px 4px rgba(0,0,0,0.04);text-align:center;">
+        <div style="font-size:24px;margin-bottom:6px;">💳</div>
+        <div style="font-size:18px;font-weight:700;color:var(--success);">${avgPerClient > 0 ? fmt(avgPerClient) : '—'}</div>
+        <div style="font-size:11px;color:var(--text-muted);">Avg per client</div>
+      </div>
+      <div style="background:var(--bg-card);border-radius:12px;padding:14px;box-shadow:0 1px 4px rgba(0,0,0,0.04);text-align:center;">
+        <div style="font-size:24px;margin-bottom:6px;">💰</div>
+        <div style="font-size:18px;font-weight:700;color:var(--gold);">${tipRate}%</div>
+        <div style="font-size:11px;color:var(--text-muted);">Avg tip rate</div>
+      </div>
+      <div style="background:var(--bg-card);border-radius:12px;padding:14px;box-shadow:0 1px 4px rgba(0,0,0,0.04);text-align:center;">
+        <div style="font-size:24px;margin-bottom:6px;">🏆</div>
+        <div style="font-size:18px;font-weight:700;color:var(--plum);">${topService ? topService[0] : '—'}</div>
+        <div style="font-size:11px;color:var(--text-muted);">Top service by $</div>
+      </div>
+      <div style="background:var(--bg-card);border-radius:12px;padding:14px;box-shadow:0 1px 4px rgba(0,0,0,0.04);text-align:center;">
+        <div style="font-size:24px;margin-bottom:6px;">💵</div>
+        <div style="font-size:18px;font-weight:700;">${mtdMargin}%</div>
+        <div style="font-size:11px;color:var(--text-muted);">Profit margin MTD</div>
+      </div>
+    </div>`;
+
+    // == RENT SNAPSHOT ==
+    if (allRenters.length > 0) {
+      html += `
+      <div style="padding:0 16px;margin-bottom:8px;">
+        <div style="font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--text-muted);font-weight:600;margin-bottom:10px;">🏠 Booth Rent This Week</div>
+      </div>
+      <div style="margin:0 16px 16px;background:var(--bg-card);border-radius:16px;padding:16px 20px;box-shadow:0 1px 4px rgba(0,0,0,0.04);display:flex;justify-content:space-between;align-items:center;">
+        <div>
+          <div style="display:flex;gap:16px;align-items:baseline;">
+            <div style="font-size:22px;font-weight:700;color:var(--success);">${fmt(rentCollected)}</div>
+            <div style="font-size:13px;color:var(--text-muted);">of ${fmt(rentExpected)}</div>
+          </div>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:2px;">${rentersPaid} of ${allRenters.length} renters paid</div>
+        </div>
+        <div style="font-size:13px;font-weight:600;padding:4px 10px;border-radius:8px;background:${rentOutstanding > 0 ? '#FDE8E8' : '#E8F5E8'};color:${rentOutstanding > 0 ? 'var(--danger)' : 'var(--success)'};">
+          ${rentOutstanding > 0 ? fmt(rentOutstanding) + ' due' : '✓ All paid'}
+        </div>
+      </div>`;
+    }
+
+    html += '<div style="height:24px;"></div>';
+
     loader.style.display = 'none';
-    
+    container.innerHTML = html;
+
   } catch (error) {
-    console.error('Error calculating insights:', error);
+    console.error('Dashboard error:', error);
+    loader.style.display = 'none';
     container.innerHTML = `
-      <div style="text-align:center; padding:40px; color:var(--danger);">
-        Error calculating insights. Please try again.
+      <div style="text-align:center;padding:40px;color:var(--danger);">
+        Error loading dashboard. Please try again.
       </div>
     `;
-    loader.style.display = 'none';
   }
 }
 
