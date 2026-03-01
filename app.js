@@ -2758,7 +2758,7 @@ function renderTransactionItem(t) {
     <div class="txn-row">
       <div class="txn-body" onclick="openEditTransactionModal('${t.id}')">
         <div class="txn-category">${t.category || '—'} <span style="font-size:11px;color:var(--text-light);font-weight:400;">✏</span></div>
-        <div class="txn-meta">${t.paymentMethod || ''}${t.notes ? ' · ' + t.notes : ''}${isIncome && t.tipAmount > 0 ? ' · tip ' + fmt(t.tipAmount) : ''}</div>
+        <div class="txn-meta">${t.clientName ? '👤 ' + t.clientName + ' · ' : ''}${t.paymentMethod || ''}${t.notes ? ' · ' + t.notes : ''}${isIncome && t.tipAmount > 0 ? ' · tip ' + fmt(t.tipAmount) : ''}</div>
       </div>
       <div class="txn-amount-col ${colorClass}" onclick="openEditTransactionModal('${t.id}')">${sign}${fmt(Math.abs(total))}</div>
       <button class="txn-delete" onclick="deleteTransaction('${t.id}')">✕</button>
