@@ -5174,10 +5174,9 @@ async function runPnlReport() {
   const ms = `${year}-${String(month).padStart(2,'0')}`;
   const yearStr = String(year);
 
-  // ---- Auto-categorize expense types ----
-  // Direct costs: supplies, products, tools directly tied to service delivery
-  const directCostKeywords = ['supplies', 'products', 'tools', 'equipment', 'color', 'product'];
-  const isDirect = (cat) => directCostKeywords.some(k => cat.toLowerCase().includes(k));
+  // ---- Expense classification from settings ----
+  const directCats = state.directCostCategories || [];
+  const isDirect = (cat) => directCats.includes(cat);
 
   // ---- REVENUE ----
   // Employee income categories
@@ -5368,9 +5367,8 @@ async function runPnlReport() {
     </div>
 
     <div style="margin-top:12px;font-size:11px;color:var(--text-muted);line-height:1.5;">
-      <strong>Direct Costs</strong> include: Supplies, Products, Tools/Equipment.<br>
-      <strong>Operating Expenses</strong> include all other expense categories.<br>
-      Expense classification is automatic — edit categories in Settings to adjust.
+      Expense categories are tagged as <strong>Direct</strong> or <strong>Overhead</strong> in Settings → Expense Categories.<br>
+      Tap the tag on any expense category to toggle its classification.
     </div>
   `;
 }
@@ -5486,6 +5484,7 @@ async function renderSettingsView() {
     <div class="settings-section">
       <div class="settings-label">Expense Categories</div>
       <div class="card" style="margin-bottom: 8px;">
+        <div style="font-size:11px;color:var(--text-muted);margin-bottom:10px;line-height:1.4;">Tap <span style="background:var(--danger);color:#fff;border-radius:4px;font-size:9px;padding:1px 5px;font-weight:600;">Direct</span> / <span style="background:var(--gold);color:#fff;border-radius:4px;font-size:9px;padding:1px 5px;font-weight:600;">Overhead</span> to toggle for P&L report</div>
         <div id="all-exp-cats"></div>
         <div class="add-category-row">
           <input type="text" class="add-category-input" id="new-exp-cat" placeholder="Add category…">
@@ -5655,13 +5654,48 @@ function loadCategoryChips() {
   const expenseEl = document.getElementById('all-exp-cats');
   if (expenseEl) {
     const sortedExpenses = [...(state.categories.EXPENSE || [])].sort();
+    const directCats = state.directCostCategories || [];
     
     expenseEl.innerHTML = sortedExpenses.map(name => {
-      return `<span class="category-chip">${name}
-        <button class="chip-delete" onclick="deleteCategory('EXPENSE','${name.replace(/'/g,"\\'")}')">×</button>
+      const isDirect = directCats.includes(name);
+      const tagColor = isDirect ? 'var(--danger)' : 'var(--gold)';
+      const tagLabel = isDirect ? 'Direct' : 'Overhead';
+      const escapedName = name.replace(/'/g, "\\'");
+      return `<span class="category-chip" style="display:inline-flex;align-items:center;gap:4px;">${name}
+        <button onclick="toggleExpenseType('${escapedName}')" style="background:${tagColor};color:#fff;border:none;border-radius:4px;font-size:9px;padding:1px 5px;cursor:pointer;font-weight:600;" title="Click to toggle">${tagLabel}</button>
+        <button class="chip-delete" onclick="deleteCategory('EXPENSE','${escapedName}')">×</button>
       </span>`;
     }).join('');
   }
+}
+
+async function loadDirectCostCategories() {
+  const doc = await db.settings.get('directCostCategories');
+  if (doc && doc.value) {
+    try {
+      state.directCostCategories = JSON.parse(doc.value);
+    } catch(e) {
+      state.directCostCategories = [];
+    }
+  } else {
+    // Auto-guess defaults on first run
+    const keywords = ['supplies', 'products', 'tools', 'equipment'];
+    const allExp = state.categories.EXPENSE || [];
+    state.directCostCategories = allExp.filter(cat => keywords.some(k => cat.toLowerCase().includes(k)));
+    await db.settings.put({ key: 'directCostCategories', value: JSON.stringify(state.directCostCategories) });
+  }
+}
+
+async function toggleExpenseType(name) {
+  if (!state.directCostCategories) state.directCostCategories = [];
+  const idx = state.directCostCategories.indexOf(name);
+  if (idx >= 0) {
+    state.directCostCategories.splice(idx, 1);
+  } else {
+    state.directCostCategories.push(name);
+  }
+  await db.settings.put({ key: 'directCostCategories', value: JSON.stringify(state.directCostCategories) });
+  loadCategoryChips();
 }
 
 async function addCategory(type) {
@@ -6953,6 +6987,7 @@ async function bootApp() {
   _appBooted = true;
 
   await loadCategories();
+  await loadDirectCostCategories();
   await updateRentersTabVisibility();
 
   const pinSetting  = await db.settings.get('pin');
