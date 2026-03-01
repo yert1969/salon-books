@@ -1843,9 +1843,15 @@ async function editTransaction(id) {
   // Store the transaction ID being edited FIRST (before re-rendering)
   state.editingTransactionId = id;
   
-  // Switch to Add Entry tab and re-render the full view
+  // Switch to Add Entry tab — update nav UI without triggering navigate's render
   state.entriesTab = 'add';
-  navigate('entries');
+  state.currentView = 'entries';
+  document.querySelectorAll('.nav-btn').forEach(btn => btn.classList.remove('active'));
+  const navBtn = document.getElementById('nav-entries');
+  if (navBtn) navBtn.classList.add('active');
+  document.getElementById('view-title').textContent = 'Entries';
+  
+  // Single controlled render
   await renderEntriesView();
   
   // Now populate form with transaction data
