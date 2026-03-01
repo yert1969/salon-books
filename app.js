@@ -727,9 +727,9 @@ async function buildDashboard() {
     const maxDayVal = Math.max(...allDayVals, 1);
 
     // ---- Month to date ----
-    const mtdIncome = allTxns.filter(t => t.date?.startsWith(viewMonthStr) && t.type === 'INCOME')
+    const mtdIncome = allTxns.filter(t => t.date?.startsWith(curMonthStr) && t.type === 'INCOME')
       .reduce((s,t) => s + (t.serviceAmount||0) + (t.tipAmount||0), 0);
-    const mtdDailyExp = allTxns.filter(t => t.date?.startsWith(viewMonthStr) && t.type === 'EXPENSE')
+    const mtdDailyExp = allTxns.filter(t => t.date?.startsWith(curMonthStr) && t.type === 'EXPENSE')
       .reduce((s,t) => s + (t.amount||0), 0);
     const mtdMonthlyExp = allMExp.filter(e => e.year === viewYear && e.month === viewMonth)
       .reduce((s,e) => s + (e.amount||0), 0);
@@ -759,9 +759,9 @@ async function buildDashboard() {
       .reduce((s,p) => s + (p.amount||0), 0);
 
     // ---- Avg per client (personal services only) ----
-    const mtdSums = allSums.filter(s => s.date?.startsWith(viewMonthStr));
+    const mtdSums = allSums.filter(s => s.date?.startsWith(curMonthStr));
     const mtdClients = mtdSums.reduce((s,d) => s + (d.clientsSeen||0), 0);
-    const mtdPersonalIncome = allTxns.filter(t => t.date?.startsWith(viewMonthStr) && isPersonalService(t))
+    const mtdPersonalIncome = allTxns.filter(t => t.date?.startsWith(curMonthStr) && isPersonalService(t))
       .reduce((s,t) => s + (t.serviceAmount||0) + (t.tipAmount||0), 0);
     const avgPerClient = mtdClients > 0 ? mtdPersonalIncome / mtdClients : 0;
 
@@ -772,15 +772,15 @@ async function buildDashboard() {
     const prevAvgPerClient = prevMoClients > 0 ? prevMoPersonalIncome / prevMoClients : 0;
 
     // ---- Tip rate (personal services only) ----
-    const mtdServices = allTxns.filter(t => t.date?.startsWith(viewMonthStr) && isPersonalService(t))
+    const mtdServices = allTxns.filter(t => t.date?.startsWith(curMonthStr) && isPersonalService(t))
       .reduce((s,t) => s + (t.serviceAmount||0), 0);
-    const mtdTips = allTxns.filter(t => t.date?.startsWith(viewMonthStr) && isPersonalService(t))
+    const mtdTips = allTxns.filter(t => t.date?.startsWith(curMonthStr) && isPersonalService(t))
       .reduce((s,t) => s + (t.tipAmount||0), 0);
     const tipRate = mtdServices > 0 ? ((mtdTips / mtdServices) * 100).toFixed(1) : '0.0';
 
     // ---- Top service (personal services only) ----
     const serviceRevMap = {};
-    allTxns.filter(t => t.date?.startsWith(viewMonthStr) && isPersonalService(t)).forEach(t => {
+    allTxns.filter(t => t.date?.startsWith(curMonthStr) && isPersonalService(t)).forEach(t => {
       if (!serviceRevMap[t.category]) serviceRevMap[t.category] = 0;
       serviceRevMap[t.category] += (t.serviceAmount||0) + (t.tipAmount||0);
     });
@@ -790,7 +790,7 @@ async function buildDashboard() {
     const daysInMonth = new Date(viewYear, viewMonth, 0).getDate();
     const dayOfMonth = isCurrentMonth ? now.getDate() : daysInViewMonth;
     // Count actual working days (days with income entries) this month
-    const workingDays = new Set(allTxns.filter(t => t.date?.startsWith(viewMonthStr) && t.type === 'INCOME').map(t => t.date)).size;
+    const workingDays = new Set(allTxns.filter(t => t.date?.startsWith(curMonthStr) && t.type === 'INCOME').map(t => t.date)).size;
     const dailyAvg = workingDays > 0 ? mtdIncome / workingDays : 0;
     // Estimate remaining working days (use ratio of working days so far)
     const workdayRatio = dayOfMonth > 0 ? workingDays / dayOfMonth : 0;
