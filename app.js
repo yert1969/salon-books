@@ -628,6 +628,13 @@ async function renderInsightsView() {
   const hdr = document.getElementById('header-actions');
   hdr.innerHTML = '';
 
+  // Initialize dashboard month to current if not set
+  if (!state.dashboardMonth || !state.dashboardYear) {
+    const now = new Date();
+    state.dashboardMonth = now.getMonth() + 1;
+    state.dashboardYear = now.getFullYear();
+  }
+
   content.innerHTML = `
     <div style="padding:0 0 80px;">
       <div id="dashboard-loading" style="text-align:center; padding:60px; color:var(--text-muted);">
@@ -638,6 +645,19 @@ async function renderInsightsView() {
   `;
 
   await buildDashboard();
+}
+
+function dashboardNav(dir) {
+  let m = state.dashboardMonth + dir;
+  let y = state.dashboardYear;
+  if (m < 1) { m = 12; y--; }
+  if (m > 12) { m = 1; y++; }
+  // Don't go past current month
+  const now = new Date();
+  if (y > now.getFullYear() || (y === now.getFullYear() && m > now.getMonth() + 1)) return;
+  state.dashboardMonth = m;
+  state.dashboardYear = y;
+  buildDashboard();
 }
 
 async function buildDashboard() {
@@ -659,12 +679,17 @@ async function buildDashboard() {
 
     const today     = todayStr();
     const now       = new Date();
-    const curMonth  = now.getMonth() + 1;
-    const curYear   = now.getFullYear();
-    const curMonthStr = `${curYear}-${String(curMonth).padStart(2,'0')}`;
+    const viewMonth = state.dashboardMonth;
+    const viewYear  = state.dashboardYear;
+    const isCurrentMonth = (viewMonth === now.getMonth() + 1 && viewYear === now.getFullYear());
+    const curMonthStr = `${viewYear}-${String(viewMonth).padStart(2,'0')}`;
+    const daysInViewMonth = new Date(viewYear, viewMonth, 0).getDate();
+    // The effective "today" for this view — last day of month if viewing past, actual today if current
+    const viewToday = isCurrentMonth ? today : `${viewYear}-${String(viewMonth).padStart(2,'0')}-${String(daysInViewMonth).padStart(2,'0')}`;
 
     // ---- This week vs last week ----
-    const thisWS   = getWeekStart(today);
+    // For current month: use current week. For past months: use last full week of that month.
+    const thisWS   = isCurrentMonth ? getWeekStart(today) : getWeekStart(viewToday);
     const lastWS   = addDays(thisWS, -7);
     const dayNames = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
 
@@ -685,9 +710,13 @@ async function buildDashboard() {
     const thisWeekTotal = thisWeekDays.reduce((s,v) => s+v, 0);
     const lastWeekTotal = lastWeekDays.reduce((s,v) => s+v, 0);
 
-    // Figure out what day of the week we're on (0=Mon, 6=Sun)
-    const dayOfWeek = (now.getDay() + 6) % 7; // Convert Sun=0 to Mon=0
-    // Last week same-point total (up through same day)
+    // For current month, compare same point in week. For past months, compare full weeks.
+    let dayOfWeek;
+    if (isCurrentMonth) {
+      dayOfWeek = (now.getDay() + 6) % 7; // Convert Sun=0 to Mon=0
+    } else {
+      dayOfWeek = 6; // Show full week for past months
+    }
     const lastWeekSamePoint = lastWeekDays.slice(0, dayOfWeek + 1).reduce((s,v) => s+v, 0);
     const weekPaceChange = lastWeekSamePoint > 0
       ? Math.round(((thisWeekTotal - lastWeekSamePoint) / lastWeekSamePoint) * 100)
@@ -698,19 +727,19 @@ async function buildDashboard() {
     const maxDayVal = Math.max(...allDayVals, 1);
 
     // ---- Month to date ----
-    const mtdIncome = allTxns.filter(t => t.date?.startsWith(curMonthStr) && t.type === 'INCOME')
+    const mtdIncome = allTxns.filter(t => t.date?.startsWith(viewMonthStr) && t.type === 'INCOME')
       .reduce((s,t) => s + (t.serviceAmount||0) + (t.tipAmount||0), 0);
-    const mtdDailyExp = allTxns.filter(t => t.date?.startsWith(curMonthStr) && t.type === 'EXPENSE')
+    const mtdDailyExp = allTxns.filter(t => t.date?.startsWith(viewMonthStr) && t.type === 'EXPENSE')
       .reduce((s,t) => s + (t.amount||0), 0);
-    const mtdMonthlyExp = allMExp.filter(e => e.year === curYear && e.month === curMonth)
+    const mtdMonthlyExp = allMExp.filter(e => e.year === viewYear && e.month === viewMonth)
       .reduce((s,e) => s + (e.amount||0), 0);
     const mtdExpenses = mtdDailyExp + mtdMonthlyExp;
     const mtdNet = mtdIncome - mtdExpenses;
     const mtdMargin = mtdIncome > 0 ? Math.round((mtdNet / mtdIncome) * 100) : 0;
 
     // Last month for comparison
-    const prevMonth = curMonth === 1 ? 12 : curMonth - 1;
-    const prevYear  = curMonth === 1 ? curYear - 1 : curYear;
+    const prevMonth = viewMonth === 1 ? 12 : viewMonth - 1;
+    const prevYear  = viewMonth === 1 ? viewYear - 1 : viewYear;
     const prevMonthStr = `${prevYear}-${String(prevMonth).padStart(2,'0')}`;
     const prevMonthIncome = allTxns.filter(t => t.date?.startsWith(prevMonthStr) && t.type === 'INCOME')
       .reduce((s,t) => s + (t.serviceAmount||0) + (t.tipAmount||0), 0);
@@ -718,21 +747,21 @@ async function buildDashboard() {
       ? Math.round(((mtdIncome - prevMonthIncome) / prevMonthIncome) * 100) : 0;
 
     // ---- YTD ----
-    const yearStr = String(curYear);
+    const yearStr = String(viewYear);
     const ytdIncome = allTxns.filter(t => t.date?.startsWith(yearStr) && t.type === 'INCOME')
       .reduce((s,t) => s + (t.serviceAmount||0) + (t.tipAmount||0), 0);
     const ytdDailyExp = allTxns.filter(t => t.date?.startsWith(yearStr) && t.type === 'EXPENSE')
       .reduce((s,t) => s + (t.amount||0), 0);
-    const ytdMonthlyExp = allMExp.filter(e => e.year === curYear)
+    const ytdMonthlyExp = allMExp.filter(e => e.year === viewYear)
       .reduce((s,e) => s + (e.amount||0), 0);
     const ytdExpenses = ytdDailyExp + ytdMonthlyExp;
     const ytdRentCollected = allRentPmts.filter(p => p.datePaid?.startsWith(yearStr))
       .reduce((s,p) => s + (p.amount||0), 0);
 
     // ---- Avg per client (personal services only) ----
-    const mtdSums = allSums.filter(s => s.date?.startsWith(curMonthStr));
+    const mtdSums = allSums.filter(s => s.date?.startsWith(viewMonthStr));
     const mtdClients = mtdSums.reduce((s,d) => s + (d.clientsSeen||0), 0);
-    const mtdPersonalIncome = allTxns.filter(t => t.date?.startsWith(curMonthStr) && isPersonalService(t))
+    const mtdPersonalIncome = allTxns.filter(t => t.date?.startsWith(viewMonthStr) && isPersonalService(t))
       .reduce((s,t) => s + (t.serviceAmount||0) + (t.tipAmount||0), 0);
     const avgPerClient = mtdClients > 0 ? mtdPersonalIncome / mtdClients : 0;
 
@@ -743,25 +772,25 @@ async function buildDashboard() {
     const prevAvgPerClient = prevMoClients > 0 ? prevMoPersonalIncome / prevMoClients : 0;
 
     // ---- Tip rate (personal services only) ----
-    const mtdServices = allTxns.filter(t => t.date?.startsWith(curMonthStr) && isPersonalService(t))
+    const mtdServices = allTxns.filter(t => t.date?.startsWith(viewMonthStr) && isPersonalService(t))
       .reduce((s,t) => s + (t.serviceAmount||0), 0);
-    const mtdTips = allTxns.filter(t => t.date?.startsWith(curMonthStr) && isPersonalService(t))
+    const mtdTips = allTxns.filter(t => t.date?.startsWith(viewMonthStr) && isPersonalService(t))
       .reduce((s,t) => s + (t.tipAmount||0), 0);
     const tipRate = mtdServices > 0 ? ((mtdTips / mtdServices) * 100).toFixed(1) : '0.0';
 
     // ---- Top service (personal services only) ----
     const serviceRevMap = {};
-    allTxns.filter(t => t.date?.startsWith(curMonthStr) && isPersonalService(t)).forEach(t => {
+    allTxns.filter(t => t.date?.startsWith(viewMonthStr) && isPersonalService(t)).forEach(t => {
       if (!serviceRevMap[t.category]) serviceRevMap[t.category] = 0;
       serviceRevMap[t.category] += (t.serviceAmount||0) + (t.tipAmount||0);
     });
     const topService = Object.entries(serviceRevMap).sort((a,b) => b[1] - a[1])[0];
 
     // ---- Forecasting ----
-    const daysInMonth = new Date(curYear, curMonth, 0).getDate();
-    const dayOfMonth = now.getDate();
+    const daysInMonth = new Date(viewYear, viewMonth, 0).getDate();
+    const dayOfMonth = isCurrentMonth ? now.getDate() : daysInViewMonth;
     // Count actual working days (days with income entries) this month
-    const workingDays = new Set(allTxns.filter(t => t.date?.startsWith(curMonthStr) && t.type === 'INCOME').map(t => t.date)).size;
+    const workingDays = new Set(allTxns.filter(t => t.date?.startsWith(viewMonthStr) && t.type === 'INCOME').map(t => t.date)).size;
     const dailyAvg = workingDays > 0 ? mtdIncome / workingDays : 0;
     // Estimate remaining working days (use ratio of working days so far)
     const workdayRatio = dayOfMonth > 0 ? workingDays / dayOfMonth : 0;
@@ -779,8 +808,8 @@ async function buildDashboard() {
     // ---- Month trend (last 6 months) ----
     const trendMonths = [];
     for (let i = 5; i >= 0; i--) {
-      let tM = curMonth - i;
-      let tY = curYear;
+      let tM = viewMonth - i;
+      let tY = viewYear;
       while (tM <= 0) { tM += 12; tY--; }
       const ms = `${tY}-${String(tM).padStart(2,'0')}`;
       const inc = allTxns.filter(t => t.date?.startsWith(ms) && t.type === 'INCOME')
@@ -790,7 +819,7 @@ async function buildDashboard() {
     const maxTrend = Math.max(...trendMonths.map(m => m.income), 1);
 
     // ---- Booth rent this week ----
-    const ws = getWeekStart(today);
+    const ws = getWeekStart(viewToday);
     const weekRentPmts = allRentPmts.filter(p => p.weekStart === ws);
     const rentCollected = weekRentPmts.reduce((s,p) => s + (p.amount||0), 0);
     const rentExpected  = allRenters.reduce((s,r) => s + (r.weeklyRate||0), 0);
@@ -833,17 +862,19 @@ async function buildDashboard() {
       }
     });
 
-    // Rent due reminder (Saturday)
-    const todayDay = now.getDay(); // 0=Sun
-    if ((todayDay >= 4 || todayDay === 0) && rentersPaid < allRenters.length && allRenters.length > 0) {
-      const dueDayName = todayDay === 6 ? 'today' : todayDay === 0 ? 'yesterday' : 'Saturday';
-      alerts.push({
-        type: 'warn',
-        icon: '⚠️',
-        title: `Booth rent due ${dueDayName}`,
-        sub: `${rentersPaid} of ${allRenters.length} renters paid · ${fmt(rentOutstanding)} outstanding`,
-        priority: 2
-      });
+    // Rent due reminder (Saturday) - only for current month
+    if (isCurrentMonth) {
+      const todayDay = now.getDay(); // 0=Sun
+      if ((todayDay >= 4 || todayDay === 0) && rentersPaid < allRenters.length && allRenters.length > 0) {
+        const dueDayName = todayDay === 6 ? 'today' : todayDay === 0 ? 'yesterday' : 'Saturday';
+        alerts.push({
+          type: 'warn',
+          icon: '⚠️',
+          title: `Booth rent due ${dueDayName}`,
+          sub: `${rentersPaid} of ${allRenters.length} renters paid · ${fmt(rentOutstanding)} outstanding`,
+          priority: 2
+        });
+      }
     }
 
     // Tips trend (personal services only)
@@ -901,17 +932,28 @@ async function buildDashboard() {
     // ---- Build HTML ----
     let html = '';
 
+    // == MONTH NAVIGATION ==
+    const isAtCurrentMonth = isCurrentMonth;
+    const monthLabel = `${monthName(viewMonth)} ${viewYear}`;
+    html += `
+    <div style="display:flex;align-items:center;justify-content:center;gap:16px;padding:12px 16px 4px;">
+      <button onclick="dashboardNav(-1)" style="background:none;border:none;font-size:24px;color:var(--plum);cursor:pointer;padding:8px 12px;min-width:44px;min-height:44px;display:flex;align-items:center;justify-content:center;">‹</button>
+      <div style="font-size:17px;font-weight:700;color:var(--text);min-width:160px;text-align:center;">${monthLabel}${isCurrentMonth ? '' : ''}</div>
+      <button onclick="dashboardNav(1)" style="background:none;border:none;font-size:24px;color:${isAtCurrentMonth ? 'var(--border-light)' : 'var(--plum)'};cursor:pointer;padding:8px 12px;min-width:44px;min-height:44px;display:flex;align-items:center;justify-content:center;" ${isAtCurrentMonth ? 'disabled' : ''}>›</button>
+    </div>`;
+
     // == WEEK PACE HERO ==
     const paceDir = weekPaceChange >= 0 ? 'up' : 'down';
     const paceArrow = weekPaceChange >= 0 ? '↑' : '↓';
+    const weekLabel = isCurrentMonth ? "This Week's Pace" : "Last Week of Month";
     html += `
     <div style="margin:12px 16px;background:var(--bg-card);border-radius:16px;padding:20px;box-shadow:0 1px 4px rgba(0,0,0,0.04);">
-      <div style="font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--text-muted);font-weight:600;margin-bottom:8px;">This Week's Pace</div>
+      <div style="font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--text-muted);font-weight:600;margin-bottom:8px;">${weekLabel}</div>
       <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:6px;">
         <div style="font-size:32px;font-weight:800;color:var(--text);letter-spacing:-1px;">${fmt(thisWeekTotal)}</div>
         ${lastWeekSamePoint > 0 ? `<div style="font-size:15px;font-weight:700;padding:2px 8px;border-radius:6px;background:${paceDir==='up'?'#E8F5E8':'#FDE8E8'};color:${paceDir==='up'?'var(--success)':'var(--danger)'};">${paceArrow} ${Math.abs(weekPaceChange)}%</div>` : ''}
       </div>
-      <div style="font-size:13px;color:var(--text-muted);margin-bottom:14px;">vs ${fmt(lastWeekSamePoint)} last week ${lastWeekTotal > lastWeekSamePoint ? `(${fmt(lastWeekTotal)} final)` : ''}</div>
+      <div style="font-size:13px;color:var(--text-muted);margin-bottom:14px;">vs ${fmt(lastWeekSamePoint)} prior week ${lastWeekTotal > lastWeekSamePoint ? `(${fmt(lastWeekTotal)} final)` : ''}</div>
 
       <div style="display:flex;align-items:flex-end;gap:6px;height:60px;">
         ${dayNames.map((d, i) => {
@@ -936,12 +978,12 @@ async function buildDashboard() {
     html += `
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:0 16px;margin-bottom:12px;">
       <div style="background:var(--bg-card);border-radius:12px;padding:14px;box-shadow:0 1px 4px rgba(0,0,0,0.04);">
-        <div style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted);font-weight:600;margin-bottom:4px;">Month to Date</div>
+        <div style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted);font-weight:600;margin-bottom:4px;">${isCurrentMonth ? 'Month to Date' : mShort[viewMonth] + ' Total'}</div>
         <div style="font-size:22px;font-weight:700;color:var(--success);">${fmt(mtdIncome)}</div>
         ${prevMonthIncome > 0 ? `<div style="font-size:11px;color:var(--text-muted);margin-top:2px;">${monthChange >= 0 ? '↑' : '↓'} ${Math.abs(monthChange)}% vs ${mShort[prevMonth]}</div>` : ''}
       </div>
       <div style="background:var(--bg-card);border-radius:12px;padding:14px;box-shadow:0 1px 4px rgba(0,0,0,0.04);">
-        <div style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted);font-weight:600;margin-bottom:4px;">Net Profit MTD</div>
+        <div style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted);font-weight:600;margin-bottom:4px;">${isCurrentMonth ? 'Net Profit MTD' : 'Net Profit'}</div>
         <div style="font-size:22px;font-weight:700;color:var(--plum);">${fmt(mtdNet)}</div>
         <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">${mtdMargin}% margin</div>
       </div>
@@ -977,11 +1019,11 @@ async function buildDashboard() {
     // == FORECAST ==
     html += `
     <div style="margin:12px 16px;background:var(--bg-card);border-radius:16px;padding:20px;box-shadow:0 1px 4px rgba(0,0,0,0.04);">
-      <div style="font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--text-muted);font-weight:600;margin-bottom:12px;">📊 Pace Projections</div>
+      <div style="font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--text-muted);font-weight:600;margin-bottom:12px;">${isCurrentMonth ? '📊 Pace Projections' : '📊 Month Summary & Projections'}</div>
 
       <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border-light);">
         <div>
-          <div style="font-size:14px;font-weight:500;">Projected This Month</div>
+          <div style="font-size:14px;font-weight:500;">${isCurrentMonth ? 'Projected This Month' : mShort[viewMonth] + ' Final Income'}</div>
           <div style="font-size:11px;color:var(--text-muted);">Based on ${workingDays} working days avg of ${fmt(dailyAvg)}</div>
         </div>
         <div style="font-size:18px;font-weight:700;color:var(--success);text-align:right;">${fmt(projectedMonth)}</div>
@@ -1017,7 +1059,7 @@ async function buildDashboard() {
           <div style="height:100%;border-radius:4px;background:linear-gradient(90deg,var(--plum),#C49BA5);width:${Math.min(100, Math.round((ytdTotalRevenue / Math.max(projectedTotalRevenue,1)) * 100))}%;"></div>
         </div>
         <div style="text-align:right;font-size:10px;color:var(--text-muted);margin-top:4px;">
-          ${curMonth} of 12 months (${Math.round((curMonth / 12) * 100)}% of year)
+          ${viewMonth} of 12 months (${Math.round((viewMonth / 12) * 100)}% of year)
         </div>
       </div>
     </div>`;
@@ -1070,7 +1112,7 @@ async function buildDashboard() {
       <div style="background:var(--bg-card);border-radius:12px;padding:14px;box-shadow:0 1px 4px rgba(0,0,0,0.04);text-align:center;">
         <div style="font-size:24px;margin-bottom:6px;">💵</div>
         <div style="font-size:18px;font-weight:700;">${mtdMargin}%</div>
-        <div style="font-size:11px;color:var(--text-muted);">Profit margin MTD</div>
+        <div style="font-size:11px;color:var(--text-muted);">Profit margin${isCurrentMonth ? ' MTD' : ''}</div>
       </div>
     </div>`;
 
