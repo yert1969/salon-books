@@ -266,7 +266,6 @@ async function signInWithGoogle() {
 
 async function signOutUser() {
   if (!confirm('Sign out of Mane Frame?')) return;
-  _appBooted = false;
   await auth.signOut();
   // onAuthStateChanged fires → shows login screen
 }
@@ -1045,29 +1044,8 @@ async function renderEntriesView() {
     }
   }
 
-  const entriesTab = state.entriesTab || 'add';
-
-  // If Browse & Search tab is selected, render that instead
-  if (entriesTab === 'search') {
-    content.innerHTML = `
-      ${backupNudge}
-      <div style="display:flex;gap:0;padding:0 16px 8px;">
-        <button class="tab-btn" onclick="switchEntriesTab('add')" style="flex:1;">Add Entry</button>
-        <button class="tab-btn active" onclick="switchEntriesTab('search')" style="flex:1;">Browse &amp; Search</button>
-      </div>
-      <div id="entries-tab-content"></div>
-    `;
-    await renderSearchTab(document.getElementById('entries-tab-content'));
-    return;
-  }
-
   content.innerHTML = `
     ${backupNudge}
-
-    <div style="display:flex;gap:0;padding:0 16px 8px;">
-      <button class="tab-btn active" onclick="switchEntriesTab('add')" style="flex:1;">Add Entry</button>
-      <button class="tab-btn" onclick="switchEntriesTab('search')" style="flex:1;">Browse &amp; Search</button>
-    </div>
 
     <div class="daily-date-bar">
       <button class="date-nav-btn" onclick="changeDate(-1)">‹</button>
@@ -1116,11 +1094,6 @@ async function renderEntriesView() {
     </div>
     `}
 
-    <div class="fab-row" style="padding:0 16px 12px;">
-      <button class="fab fab-income"  onclick="openAddTransactionModal('INCOME')"><span style="font-size:18px">+</span> Income</button>
-      <button class="fab fab-expense" onclick="openAddTransactionModal('EXPENSE')"><span style="font-size:18px">+</span> Expense</button>
-    </div>
-
     <div style="padding:0 16px 8px;">
       <div class="section-label">Income</div>
       ${income.length === 0 ? `
@@ -1145,6 +1118,11 @@ async function renderEntriesView() {
           <div class="empty-text">No monthly expenses this month.</div>
         </div>
       ` : monthlyExp.map(e => renderMonthlyExpenseItem(e)).join('')}
+    </div>
+
+    <div class="fab-row">
+      <button class="fab fab-income"  onclick="openAddTransactionModal('INCOME')"><span style="font-size:18px">+</span> Income</button>
+      <button class="fab fab-expense" onclick="openAddTransactionModal('EXPENSE')"><span style="font-size:18px">+</span> Expense</button>
     </div>
 
     <div style="height:16px;"></div>
@@ -1502,26 +1480,11 @@ async function renderRecentTransactions() {
     }
   }
   
-  // Get all daily transactions
+  // Get all transactions sorted by creation time (newest first)
   let allTransactions = await db.transactions.toArray();
-
-  // Also include monthly expenses (normalized to look like transactions)
-  const allMonthly = await db.monthlyExpenses.toArray();
-  allMonthly.forEach(e => {
-    allTransactions.push({
-      ...e,
-      _isMonthly: true,
-      type: 'EXPENSE',
-      date: `${e.year}-${String(e.month).padStart(2,'0')}-01`,
-      amount: e.amount || 0,
-      serviceAmount: 0,
-      tipAmount: 0,
-    });
-  });
-
   allTransactions.sort((a, b) => {
-    const aTime = a.createdAt?.toDate?.() || new Date(a.date + 'T12:00:00' || 0);
-    const bTime = b.createdAt?.toDate?.() || new Date(b.date + 'T12:00:00' || 0);
+    const aTime = a.createdAt?.toDate?.() || new Date(0);
+    const bTime = b.createdAt?.toDate?.() || new Date(0);
     return bTime - aTime;
   });
   
@@ -1577,7 +1540,7 @@ async function renderRecentTransactions() {
   if (recentTransactions.length === 0) {
     container.innerHTML = `
       <div style="text-align:center; padding:20px; color:var(--text-muted); font-size:14px;">
-        ${searchText || filterType !== 'all' || filterCategory !== 'all' || amountFilter ? 'No matching transactions' : 'No transactions yet'}
+        ${searchText || filterType !== 'all' || filterCategory !== 'all' || filterAmount ? 'No matching transactions' : 'No transactions yet'}
       </div>
     `;
     if (loadMoreContainer) loadMoreContainer.innerHTML = '';
@@ -1589,30 +1552,24 @@ async function renderRecentTransactions() {
   const today = todayStr();
   
   recentTransactions.forEach(t => {
-    const groupDate = t._isMonthly ? `monthly-${t.year}-${String(t.month).padStart(2,'0')}` : t.date;
-    if (!groupedByDate[groupDate]) {
-      groupedByDate[groupDate] = { items: [], isMonthlyGroup: t._isMonthly, month: t.month, year: t.year, date: t.date };
+    if (!groupedByDate[t.date]) {
+      groupedByDate[t.date] = [];
     }
-    groupedByDate[groupDate].items.push(t);
+    groupedByDate[t.date].push(t);
   });
   
   // Render grouped transactions
-  const groupKeys = Object.keys(groupedByDate).sort((a, b) => b.localeCompare(a));
+  const dates = Object.keys(groupedByDate).sort((a, b) => b.localeCompare(a));
   
-  container.innerHTML = groupKeys.map(key => {
-    const group = groupedByDate[key];
-    let dateLabel;
-    if (group.isMonthlyGroup) {
-      dateLabel = `${monthName(group.month)} ${group.year} — Monthly Expenses`;
-    } else {
-      const dateObj = new Date(group.date + 'T00:00:00');
-      const dayOfWeek = dateObj.toLocaleDateString('en-US', { weekday: 'short' });
-      const monthDay = dateObj.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' });
-      const yr = dateObj.toLocaleDateString('en-US', { year: '2-digit' });
-      dateLabel = group.date === today ? 'Today' : `${dayOfWeek}, ${monthDay}/${yr}`;
-    }
+  container.innerHTML = dates.map(date => {
+    const dateObj = new Date(date + 'T00:00:00');
+    const dayOfWeek = dateObj.toLocaleDateString('en-US', { weekday: 'short' });
+    const monthDay = dateObj.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' });
+    const year = dateObj.toLocaleDateString('en-US', { year: '2-digit' });
     
-    const transactions = group.items;
+    const dateLabel = date === today ? 'Today' : `${dayOfWeek}, ${monthDay}/${year}`;
+    
+    const transactions = groupedByDate[date];
     
     return `
       <div style="margin-bottom:16px;">
@@ -1621,18 +1578,14 @@ async function renderRecentTransactions() {
         </div>
         ${transactions.map(t => {
           const isIncome = t.type === 'INCOME';
-          const isMonthly = !!t._isMonthly;
           const amount = isIncome ? (t.serviceAmount || 0) + (t.tipAmount || 0) : (t.amount || 0);
           const amountColor = isIncome ? 'var(--success)' : 'var(--danger)';
           const tipText = isIncome && t.tipAmount > 0 ? ` + $${t.tipAmount.toFixed(2)} tip` : '';
-          const monthlyBadge = isMonthly ? '<span style="font-size:10px;background:var(--plum);color:#fff;padding:1px 6px;border-radius:4px;margin-left:6px;">Monthly</span>' : '';
-          const editFn = isMonthly ? `openEditMonthlyExpenseModal('${t.id}')` : `editTransaction('${t.id}')`;
-          const deleteFn = isMonthly ? `deleteMonthlyExpenseEntry('${t.id}')` : `deleteTransaction('${t.id}')`;
           
           return `
             <div style="display:flex; justify-content:space-between; align-items:center; padding:10px 0; border-bottom:1px solid var(--border-light);">
               <div style="flex:1;">
-                <div style="font-size:15px; font-weight:500; color:var(--text);">${t.category}${monthlyBadge}</div>
+                <div style="font-size:15px; font-weight:500; color:var(--text);">${t.category}</div>
                 ${t.notes ? `<div style="font-size:13px; color:var(--text-muted); margin-top:2px;">${t.notes}</div>` : ''}
               </div>
               <div style="text-align:right; display:flex; align-items:center; gap:4px;">
@@ -1641,8 +1594,8 @@ async function renderRecentTransactions() {
                     ${isIncome && t.serviceAmount > 0 ? `$${t.serviceAmount.toFixed(2)}` : `$${amount.toFixed(2)}`}${tipText}
                   </div>
                 </div>
-                <button onclick="${editFn}" style="background:none; border:none; color:var(--plum); font-size:28px; padding:8px 12px; cursor:pointer; min-width:44px; min-height:44px; display:flex; align-items:center; justify-content:center;">✎</button>
-                <button onclick="${deleteFn}" style="background:none; border:none; color:var(--danger); font-size:24px; padding:8px 12px; cursor:pointer; min-width:44px; min-height:44px; display:flex; align-items:center; justify-content:center;">✕</button>
+                <button onclick="editTransaction('${t.id}')" style="background:none; border:none; color:var(--plum); font-size:28px; padding:8px 12px; cursor:pointer; min-width:44px; min-height:44px; display:flex; align-items:center; justify-content:center;">✎</button>
+                <button onclick="deleteTransaction('${t.id}')" style="background:none; border:none; color:var(--danger); font-size:24px; padding:8px 12px; cursor:pointer; min-width:44px; min-height:44px; display:flex; align-items:center; justify-content:center;">✕</button>
               </div>
             </div>
           `;
@@ -1662,7 +1615,7 @@ async function renderRecentTransactions() {
     } else if (recentTransactions.length > 0) {
       loadMoreContainer.innerHTML = `
         <div style="text-align:center; padding:16px; color:var(--text-muted); font-size:13px;">
-          ${allTransactions.length} ${allTransactions.length === 1 ? 'entry' : 'entries'} shown
+          ${allTransactions.length} ${allTransactions.length === 1 ? 'transaction' : 'transactions'} shown
         </div>
       `;
     } else {
@@ -1670,6 +1623,7 @@ async function renderRecentTransactions() {
     }
   }
 }
+
 function loadMoreTransactions() {
   state.transactionsToShow = (state.transactionsToShow || 30) + 30;
   renderRecentTransactions();
@@ -1793,6 +1747,8 @@ async function deleteTransaction(id) {
 
   try {
     await db.transactions.delete(id);
+    await firestore.collection('users').doc(auth.currentUser.uid)
+      .collection('transactions').doc(id).delete();
     showToast('Entry deleted');
     renderEntriesView();
   } catch (error) {
@@ -1853,7 +1809,11 @@ async function updateTransaction() {
       updatedTransaction.amount = expenseAmount;
     }
     
-    // Update in DB
+    // Update in Firestore
+    await firestore.collection('users').doc(auth.currentUser.uid)
+      .collection('transactions').doc(id).update(updatedTransaction);
+    
+    // Update in local DB
     await db.transactions.update(id, updatedTransaction);
     
     // Clear editing state
@@ -1970,7 +1930,8 @@ async function saveEntryTransaction() {
         createdAt: firebase.firestore.Timestamp.now()
       };
       
-      await db.transactions.add(transaction);
+      const docRef = await firestore.collection('users').doc(auth.currentUser.uid).collection('transactions').add(transaction);
+      await db.transactions.add({ id: docRef.id, ...transaction });
       
       // Switch to daily view showing the date where entry was added
       state.entriesViewMode = 'daily';
@@ -1989,7 +1950,8 @@ async function saveEntryTransaction() {
         createdAt: firebase.firestore.Timestamp.now()
       };
       
-      await db.transactions.add(transaction);
+      const docRef = await firestore.collection('users').doc(auth.currentUser.uid).collection('transactions').add(transaction);
+      await db.transactions.add({ id: docRef.id, ...transaction });
       
       // Switch to daily view showing the date where entry was added
       state.entriesViewMode = 'daily';
@@ -2010,7 +1972,8 @@ async function saveEntryTransaction() {
         createdAt: firebase.firestore.Timestamp.now()
       };
       
-      await db.monthlyExpenses.add(expense);
+      const docRef = await firestore.collection('users').doc(auth.currentUser.uid).collection('monthlyExpenses').add(expense);
+      await db.monthlyExpenses.add({ id: docRef.id, ...expense });
       
       // Switch to monthly view showing the month where entry was added
       state.entriesViewMode = 'monthly';
@@ -2372,6 +2335,7 @@ async function deleteDailyEntry(id) {
   if (!confirm(`Delete ${transaction.category} (${fmt(amount)})?`)) return;
   
   try {
+    await firestore.collection('users').doc(auth.currentUser.uid).collection('transactions').doc(id).delete();
     await db.transactions.delete(id);
     showToast('Deleted');
     renderEntriesContent();
@@ -2388,6 +2352,7 @@ async function deleteMonthlyExpenseEntry(id) {
   if (!confirm(`Delete ${e.category} (${fmt(e.amount)})?`)) return;
   
   try {
+    await firestore.collection('users').doc(auth.currentUser.uid).collection('monthlyExpenses').doc(id).delete();
     await db.monthlyExpenses.delete(id);
     showToast('Deleted');
     renderEntriesContent();
@@ -2610,11 +2575,15 @@ async function deleteMonthlyExpenseFromEntries(id) {
   if (!confirmed) return;
   try {
     await db.monthlyExpenses.delete(id);
+    await firestore.collection('users').doc(auth.currentUser.uid)
+      .collection('monthlyExpenses').doc(id).delete();
     showToast('Monthly expense deleted');
     renderEntriesView();
   } catch (err) {
     console.error('Error deleting monthly expense:', err);
-    showToast('Error deleting');
+    await db.monthlyExpenses.delete(id);
+    showToast('Monthly expense deleted');
+    renderEntriesView();
   }
 }
 
@@ -2776,7 +2745,9 @@ async function saveTransaction(type) {
     const year  = parseInt(document.getElementById('txn-year').value);
     const expense = { category, amount, notes, month, year };
     try {
-      await db.monthlyExpenses.add(expense);
+      const docRef = await firestore.collection('users').doc(auth.currentUser.uid)
+        .collection('monthlyExpenses').add(expense);
+      await db.monthlyExpenses.add({ id: docRef.id, ...expense });
       closeModal();
       showToast('Monthly expense saved ✓');
       renderEntriesView();
@@ -2811,14 +2782,21 @@ async function saveTransaction(type) {
   }
 
   try {
-    await db.transactions.add(record);
+    const docRef = await firestore.collection('users').doc(auth.currentUser.uid)
+      .collection('transactions').add(record);
+    await db.transactions.add({ id: docRef.id, ...record });
     if (date !== state.selectedDate) state.selectedDate = date;
     closeModal();
     showToast(isIncome ? 'Income saved ✓' : 'Expense saved ✓');
     renderEntriesView();
   } catch (err) {
     console.error('Error saving transaction:', err);
-    showToast('Error saving entry');
+    // Fallback: save locally only
+    await db.transactions.add(record);
+    if (date !== state.selectedDate) state.selectedDate = date;
+    closeModal();
+    showToast(isIncome ? 'Income saved ✓' : 'Expense saved ✓');
+    renderEntriesView();
   }
 }
 
@@ -2948,7 +2926,12 @@ async function updateTransaction(id, type) {
       const expense = { category, amount, notes, month, year };
 
       await db.transactions.delete(id);
-      await db.monthlyExpenses.add(expense);
+      await firestore.collection('users').doc(auth.currentUser.uid)
+        .collection('transactions').doc(id).delete();
+
+      const docRef = await firestore.collection('users').doc(auth.currentUser.uid)
+        .collection('monthlyExpenses').add(expense);
+      await db.monthlyExpenses.add({ id: docRef.id, ...expense });
 
       closeModal();
       showToast('Moved to monthly expenses ✓');
@@ -2975,6 +2958,8 @@ async function updateTransaction(id, type) {
     }
 
     await db.transactions.update(id, changes);
+    await firestore.collection('users').doc(auth.currentUser.uid)
+      .collection('transactions').doc(id).update(changes);
     if (date !== state.selectedDate) state.selectedDate = date;
 
     closeModal();
@@ -3346,7 +3331,6 @@ async function renderReportsView() {
     { id: 'annual',   label: 'Annual' },
     { id: 'yoy',      label: 'Year vs Year' },
     { id: 'category', label: 'By Category' },
-    { id: 'booth-rent', label: 'Booth Rent' },
     { id: 'export',   label: '📥 Export CSV' },
   ];
 
@@ -3607,18 +3591,6 @@ async function renderReportInner() {
         <div class="report-body" id="report-output"></div>
       `;
       await runCategoryReport();
-      break;
-    }
-
-    case 'booth-rent': {
-      el.innerHTML = `
-        <div class="report-controls">
-          <input type="number" class="report-input" id="r-br-year" value="${yearNow}" min="2020" max="2099" style="max-width:100px" inputmode="numeric">
-          <button class="report-btn" onclick="runBoothRentReport()">View</button>
-        </div>
-        <div class="report-body" id="report-output"></div>
-      `;
-      await runBoothRentReport();
       break;
     }
 
@@ -4702,204 +4674,6 @@ function drawPie(canvasId, labels, values, centerLabel) {
   }
 }
 
-// ---- Booth Rent Report ----
-async function runBoothRentReport() {
-  const year = parseInt(document.getElementById('r-br-year')?.value) || new Date().getFullYear();
-
-  const allRenters  = await db.renters.toArray();
-  const allPayments = await db.rentPayments.toArray();
-
-  // Filter payments to selected year
-  const yearPayments = allPayments.filter(p => p.datePaid && p.datePaid.startsWith(String(year)));
-
-  // Build per-renter stats
-  const renterStats = allRenters.map(r => {
-    const pmts = yearPayments.filter(p => p.renterId === r.id);
-    const totalPaid = pmts.reduce((s, p) => s + (p.amount || 0), 0);
-    const onTime = pmts.filter(p => getRentStatus(p.weekStart, p.datePaid) === 'ontime').length;
-    const late   = pmts.filter(p => getRentStatus(p.weekStart, p.datePaid) === 'late').length;
-    const total  = pmts.length;
-    const onTimePct = total > 0 ? Math.round((onTime / total) * 100) : 0;
-
-    // Monthly breakdown
-    const months = {};
-    for (let m = 1; m <= 12; m++) {
-      const ms = `${year}-${String(m).padStart(2, '0')}`;
-      const mPmts = pmts.filter(p => p.datePaid.startsWith(ms));
-      months[m] = {
-        paid: mPmts.reduce((s, p) => s + (p.amount || 0), 0),
-        count: mPmts.length,
-        onTime: mPmts.filter(p => getRentStatus(p.weekStart, p.datePaid) === 'ontime').length,
-        late: mPmts.filter(p => getRentStatus(p.weekStart, p.datePaid) === 'late').length,
-      };
-    }
-
-    // Average days to pay (from week start Monday to datePaid)
-    let totalDays = 0;
-    pmts.forEach(p => {
-      const ws = new Date(p.weekStart + 'T12:00:00');
-      const pd = new Date(p.datePaid + 'T12:00:00');
-      totalDays += Math.round((pd - ws) / 86400000);
-    });
-    const avgDaysToPay = total > 0 ? (totalDays / total).toFixed(1) : '—';
-
-    // Longest on-time streak
-    const sorted = [...pmts].sort((a, b) => a.weekStart.localeCompare(b.weekStart));
-    let maxStreak = 0, curStreak = 0, currentStreak = 0;
-    sorted.forEach((p, i) => {
-      if (getRentStatus(p.weekStart, p.datePaid) === 'ontime') {
-        curStreak++;
-        if (curStreak > maxStreak) maxStreak = curStreak;
-        if (i === sorted.length - 1) currentStreak = curStreak;
-      } else {
-        curStreak = 0;
-        if (i === sorted.length - 1) currentStreak = 0;
-      }
-    });
-
-    // Expected weeks: count Mondays in the year from renter start to now (or end of year)
-    const rStart = r.startDate || `${year}-01-01`;
-    const rangeStart = rStart > `${year}-01-01` ? rStart : `${year}-01-01`;
-    const rangeEnd = `${year}-12-31` < todayStr() ? `${year}-12-31` : todayStr();
-    let expectedWeeks = 0;
-    let cursor = getWeekStart(rangeStart);
-    while (cursor <= rangeEnd) {
-      if (cursor >= rangeStart) expectedWeeks++;
-      cursor = addDays(cursor, 7);
-    }
-    const expectedAmt = expectedWeeks * (r.weeklyRate || 0);
-    const collectionRate = expectedAmt > 0 ? Math.round((totalPaid / expectedAmt) * 100) : 0;
-
-    return {
-      id: r.id, name: r.name, booth: r.booth, rate: r.weeklyRate || 0,
-      status: r.status, startDate: r.startDate,
-      totalPaid, onTime, late, total, onTimePct, months,
-      avgDaysToPay, maxStreak, currentStreak,
-      expectedWeeks, expectedAmt, collectionRate,
-    };
-  });
-
-  // Grand totals
-  const grandPaid     = renterStats.reduce((s, r) => s + r.totalPaid, 0);
-  const grandExpected = renterStats.reduce((s, r) => s + r.expectedAmt, 0);
-  const grandOnTime   = renterStats.reduce((s, r) => s + r.onTime, 0);
-  const grandLate     = renterStats.reduce((s, r) => s + r.late, 0);
-  const grandTotal    = renterStats.reduce((s, r) => s + r.total, 0);
-  const grandOnTimePct = grandTotal > 0 ? Math.round((grandOnTime / grandTotal) * 100) : 0;
-  const grandCollRate  = grandExpected > 0 ? Math.round((grandPaid / grandExpected) * 100) : 0;
-
-  // Month short names for table headers
-  const mShort = ['','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-
-  // Determine which months have data (for compact table)
-  const activeMo = [];
-  for (let m = 1; m <= 12; m++) {
-    if (renterStats.some(r => r.months[m].count > 0)) activeMo.push(m);
-  }
-  if (activeMo.length === 0) activeMo.push(new Date().getMonth() + 1);
-
-  const el = document.getElementById('report-output');
-  el.innerHTML = `
-    <div class="report-section-title">${year} Booth Rent Summary</div>
-
-    <div class="report-stat-grid">
-      <div class="report-stat"><div class="report-stat-label">Total Collected</div><div class="report-stat-value green">${fmt(grandPaid)}</div></div>
-      <div class="report-stat"><div class="report-stat-label">Expected</div><div class="report-stat-value">${fmt(grandExpected)}</div></div>
-      <div class="report-stat"><div class="report-stat-label">Collection Rate</div><div class="report-stat-value ${grandCollRate >= 95 ? 'green' : grandCollRate >= 80 ? 'gold' : 'red'}">${grandCollRate}%</div></div>
-      <div class="report-stat"><div class="report-stat-label">On Time</div><div class="report-stat-value green">${grandOnTime} of ${grandTotal}</div></div>
-      <div class="report-stat"><div class="report-stat-label">Late</div><div class="report-stat-value ${grandLate > 0 ? 'red' : 'green'}">${grandLate}</div></div>
-      <div class="report-stat"><div class="report-stat-label">On-Time Rate</div><div class="report-stat-value ${grandOnTimePct >= 90 ? 'green' : grandOnTimePct >= 75 ? 'gold' : 'red'}">${grandOnTimePct}%</div></div>
-    </div>
-
-    ${renterStats.filter(r => r.total > 0 || r.status === 'active').map(r => `
-      <div class="report-white-card">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-          <div>
-            <div class="report-section-title" style="margin-bottom:2px;">${r.name}${r.booth ? ` <span style="font-weight:400;color:var(--text-muted);font-size:12px;">Booth ${r.booth}</span>` : ''}</div>
-            <div style="font-size:12px;color:var(--text-muted);">${fmt(r.rate)}/week · ${r.status === 'active' ? '🟢 Active' : '⚪ Inactive'}${r.startDate ? ` · Since ${formatDateDisplay(r.startDate)}` : ''}</div>
-          </div>
-          <div style="text-align:right;">
-            <div style="font-size:20px;font-weight:700;color:var(--success);">${fmt(r.totalPaid)}</div>
-            <div style="font-size:11px;color:var(--text-muted);">of ${fmt(r.expectedAmt)} expected</div>
-          </div>
-        </div>
-
-        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px;">
-          <div style="flex:1;min-width:70px;background:var(--bg-input);border-radius:8px;padding:8px;text-align:center;">
-            <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;">On-Time</div>
-            <div style="font-size:16px;font-weight:700;color:${r.onTimePct >= 90 ? 'var(--success)' : r.onTimePct >= 75 ? 'var(--gold)' : 'var(--danger)'};">${r.onTimePct}%</div>
-            <div style="font-size:10px;color:var(--text-muted);">${r.onTime} of ${r.total}</div>
-          </div>
-          <div style="flex:1;min-width:70px;background:var(--bg-input);border-radius:8px;padding:8px;text-align:center;">
-            <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;">Late</div>
-            <div style="font-size:16px;font-weight:700;color:${r.late > 0 ? 'var(--danger)' : 'var(--success)'};">${r.late}</div>
-            <div style="font-size:10px;color:var(--text-muted);">payment${r.late !== 1 ? 's' : ''}</div>
-          </div>
-          <div style="flex:1;min-width:70px;background:var(--bg-input);border-radius:8px;padding:8px;text-align:center;">
-            <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;">Avg Days</div>
-            <div style="font-size:16px;font-weight:700;">${r.avgDaysToPay}</div>
-            <div style="font-size:10px;color:var(--text-muted);">to pay</div>
-          </div>
-          <div style="flex:1;min-width:70px;background:var(--bg-input);border-radius:8px;padding:8px;text-align:center;">
-            <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;">Collection</div>
-            <div style="font-size:16px;font-weight:700;color:${r.collectionRate >= 95 ? 'var(--success)' : r.collectionRate >= 80 ? 'var(--gold)' : 'var(--danger)'};">${r.collectionRate}%</div>
-            <div style="font-size:10px;color:var(--text-muted);">of expected</div>
-          </div>
-          <div style="flex:1;min-width:70px;background:var(--bg-input);border-radius:8px;padding:8px;text-align:center;">
-            <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;">Streak</div>
-            <div style="font-size:16px;font-weight:700;color:var(--success);">${r.currentStreak}</div>
-            <div style="font-size:10px;color:var(--text-muted);">current on-time</div>
-          </div>
-        </div>
-
-        <div style="overflow-x:auto;">
-          <table style="width:100%;border-collapse:collapse;font-size:12px;">
-            <thead>
-              <tr style="border-bottom:2px solid var(--plum);">
-                <th style="text-align:left;padding:6px 4px;color:var(--text-muted);font-size:10px;text-transform:uppercase;">Month</th>
-                ${activeMo.map(m => `<th style="text-align:center;padding:6px 4px;color:var(--text-muted);font-size:10px;">${mShort[m]}</th>`).join('')}
-                <th style="text-align:right;padding:6px 4px;color:var(--text-muted);font-size:10px;text-transform:uppercase;">Total</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td style="padding:6px 4px;font-weight:500;">Paid</td>
-                ${activeMo.map(m => {
-                  const md = r.months[m];
-                  return `<td style="text-align:center;padding:6px 4px;color:${md.paid > 0 ? 'var(--success)' : 'var(--text-muted)'};">${md.paid > 0 ? fmt(md.paid) : '—'}</td>`;
-                }).join('')}
-                <td style="text-align:right;padding:6px 4px;font-weight:700;color:var(--success);">${fmt(r.totalPaid)}</td>
-              </tr>
-              <tr style="border-top:1px solid var(--bg-input);">
-                <td style="padding:6px 4px;font-weight:500;">Weeks</td>
-                ${activeMo.map(m => {
-                  const md = r.months[m];
-                  return `<td style="text-align:center;padding:6px 4px;">${md.count > 0 ? md.count : '—'}</td>`;
-                }).join('')}
-                <td style="text-align:right;padding:6px 4px;font-weight:700;">${r.total}</td>
-              </tr>
-              <tr style="border-top:1px solid var(--bg-input);">
-                <td style="padding:6px 4px;font-weight:500;">On Time</td>
-                ${activeMo.map(m => {
-                  const md = r.months[m];
-                  if (md.count === 0) return '<td style="text-align:center;padding:6px 4px;color:var(--text-muted);">—</td>';
-                  const pct = Math.round((md.onTime / md.count) * 100);
-                  return `<td style="text-align:center;padding:6px 4px;color:${pct >= 90 ? 'var(--success)' : pct >= 75 ? 'var(--gold)' : 'var(--danger)'};">${pct}%</td>`;
-                }).join('')}
-                <td style="text-align:right;padding:6px 4px;font-weight:700;color:${r.onTimePct >= 90 ? 'var(--success)' : 'var(--danger)'};">${r.onTimePct}%</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    `).join('')}
-
-    ${renterStats.filter(r => r.total > 0 || r.status === 'active').length === 0 ? `
-      <p style="color:var(--text-muted);text-align:center;padding:30px 0;">No booth rent data for ${year}.</p>
-    ` : ''}
-  `;
-}
-
 async function exportCSV() {
   const from = document.getElementById('r-exp-from')?.value;
   const to   = document.getElementById('r-exp-to')?.value;
@@ -5074,9 +4848,6 @@ async function renderSettingsView() {
         <button class="btn-secondary" style="width:100%;" onclick="triggerRestoreFilePicker()">
           ⬆ Restore from Backup File
         </button>
-        <button class="btn-secondary" style="width:100%;margin-top:8px;background:var(--plum);color:white;" onclick="triggerImportHistoryPicker()">
-          📥 Import Historical Transactions
-        </button>
         <div style="background:#fff3cd;border:1px solid #ffc107;padding:10px;border-radius:6px;margin-top:12px;font-size:11px;color:#856404;line-height:1.4;">
           <strong>⚠️ Important:</strong><br>
           • Restore replaces ALL current data<br>
@@ -5124,16 +4895,6 @@ async function renderSettingsView() {
 
     <div style="height: 24px;"></div>
   `;
-
-  if (!document.getElementById('import-history-input')) {
-    const impInp = document.createElement('input');
-    impInp.type = 'file';
-    impInp.id   = 'import-history-input';
-    impInp.accept = '.csv';
-    impInp.style.display = 'none';
-    impInp.addEventListener('change', e => importHistoryCSV(e.target.files[0]));
-    document.body.appendChild(impInp);
-  }
 
   if (!document.getElementById('restore-file-input')) {
     const inp = document.createElement('input');
@@ -5498,8 +5259,7 @@ async function renderRentersView() {
             </div>
             <div class="renter-amount">
               <div style="font-weight:700;color:${p ? 'var(--success)' : 'var(--text-muted)'}">${p ? fmt(p.amount) : fmt(r.weeklyRate || 0)}</div>
-              ${!p ? `<button class="renter-pay-btn" onclick="event.stopPropagation();openLogPaymentModal('${r.id}')">Log Payment</button>`
-                   : `<button class="renter-pay-btn" style="background:var(--bg-card);color:var(--text-muted);font-size:10px;padding:2px 8px;" onclick="event.stopPropagation();openEditRentPayment('${p.id}','${r.id}')">Edit</button>`}
+              ${!p ? `<button class="renter-pay-btn" onclick="event.stopPropagation();openLogPaymentModal('${r.id}')">Log Payment</button>` : ''}
             </div>
           </div>`;
         }).join('')
@@ -5582,60 +5342,6 @@ async function saveRentPayment(renterId) {
   renderRentersView();
 }
 
-async function openEditRentPayment(paymentId, renterId) {
-  const p = await db.rentPayments.get(paymentId);
-  if (!p) return;
-  const r = await db.renters.get(renterId);
-  const renterName = r ? r.name : 'Renter';
-
-  openModal(`
-    <h2 class="modal-title">Edit Rent Payment</h2>
-    <p style="color:var(--text-muted);font-size:13px;margin-bottom:14px;">${renterName} · Week of ${formatWeekRange(p.weekStart)}</p>
-
-    <label class="form-label">Amount Paid ($)</label>
-    <input type="number" inputmode="decimal" class="form-input" id="erp-amount"
-      value="${p.amount || 0}" step="0.01" min="0">
-
-    <label class="form-label">Date Paid</label>
-    <input type="date" class="form-input" id="erp-date" value="${p.datePaid || ''}">
-
-    <label class="form-label">Payment Method</label>
-    <select class="form-select" id="erp-method">
-      ${['Cash','Venmo','Zelle','Card','Check','Other'].map(m =>
-        `<option${m === p.paymentMethod ? ' selected' : ''}>${m}</option>`
-      ).join('')}
-    </select>
-
-    <label class="form-label">Notes (optional)</label>
-    <input type="text" class="form-input" id="erp-notes" value="${p.notes || ''}" placeholder="Any notes…">
-
-    <button class="btn-primary" style="width:100%;margin-top:8px;" onclick="updateRentPayment('${paymentId}')">Save Changes</button>
-    <button class="btn-danger-sm" style="width:100%;margin-top:8px;" onclick="deleteRentPayment('${paymentId}')">Delete Payment</button>
-  `);
-}
-
-async function updateRentPayment(paymentId) {
-  const amount    = parseFloat(document.getElementById('erp-amount').value);
-  const datePaid  = document.getElementById('erp-date').value;
-  const method    = document.getElementById('erp-method').value;
-  const notes     = document.getElementById('erp-notes').value.trim();
-
-  if (!amount || !datePaid) { showToast('Please fill in amount and date'); return; }
-
-  await db.rentPayments.update(paymentId, { amount, datePaid, paymentMethod: method, notes });
-  closeModal();
-  showToast('Payment updated ✓');
-  renderRentersView();
-}
-
-async function deleteRentPayment(paymentId) {
-  if (!confirm('Delete this rent payment?')) return;
-  await db.rentPayments.delete(paymentId);
-  closeModal();
-  showToast('Payment deleted');
-  renderRentersView();
-}
-
 function openRenterDetail(renterId) {
   db.renters.get(renterId).then(async r => {
     if (!r) return;
@@ -5652,7 +5358,7 @@ function openRenterDetail(renterId) {
           const statusClass = { ontime: 'status-ontime', late: 'status-late' }[status];
           const icon        = status === 'ontime' ? '✅' : '⚠️';
           return `
-          <div class="renter-history-row" onclick="openEditRentPayment('${p.id}','${renterId}')" style="cursor:pointer;">
+          <div class="renter-history-row">
             <span>${icon}</span>
             <div style="flex:1">
               <div style="font-size:12px;font-weight:500;">${formatWeekRange(p.weekStart)}</div>
@@ -5662,7 +5368,6 @@ function openRenterDetail(renterId) {
               <div style="font-weight:700;color:var(--success);font-size:13px;">${fmt(p.amount)}</div>
               <div class="${statusClass}" style="font-size:10px;">${status === 'ontime' ? 'On Time' : 'Late'}</div>
             </div>
-            <div style="font-size:16px;color:var(--text-muted);margin-left:4px;">✎</div>
           </div>`;
         }).join('');
 
@@ -5820,336 +5525,6 @@ async function exportBackup() {
     console.error(err);
   }
 }
-
-function triggerImportHistoryPicker() {
-  document.getElementById('import-history-input').value = '';
-  document.getElementById('import-history-input').click();
-}
-
-// ─────────────────────────────────────────────────────────────────
-// ROLLBACK HELPER — saves a full snapshot before any import
-// Returns a snapshot object; pass to rollbackImport() to undo
-// ─────────────────────────────────────────────────────────────────
-// IMPORT SAFETY NET
-//
-// Three-layer protection:
-//   1. snapshotBeforeImport()     — captures full pre-import state
-//   2. rollbackImport(manifest)   — deletes every added record and
-//                                   restores any dailySummary rows
-//                                   that were bumped (not just new)
-//   3. window._lastImportRollback — plain serialisable object that
-//                                   survives spread/JSON so the
-//                                   manual Undo button always works
-//
-// Firestore IDs live inside the manifest object (not as custom
-// array properties) so they are never silently lost.
-// ─────────────────────────────────────────────────────────────────
-// IMPORT SAFETY NET
-//
-// db is a pure Firestore wrapper — no IndexedDB/Dexie.
-// Every add() returns a Firestore string doc ID.
-// Rollback deletes those specific doc IDs from Firestore.
-//
-// manifest (built during import, stored on window for manual undo):
-// {
-//   addedTxIds:       string[]  — Firestore transaction doc IDs added
-//   addedSumIds:      string[]  — Firestore dailySummary doc IDs added
-//   bumpedSumEntries: { id: string, previousClientsSeen: number }[]
-// }
-// ─────────────────────────────────────────────────────────────────
-
-async function rollbackImport(manifest) {
-  const errors = [];
-
-  // Delete added transactions one at a time (db.delete is reliable)
-  for (const id of manifest.addedTxIds) {
-    try { await db.transactions.delete(id); }
-    catch(e) { errors.push('tx delete ' + id + ': ' + e.message); }
-  }
-
-  // Delete added dailySummary rows
-  for (const id of manifest.addedSumIds) {
-    try { await db.dailySummary.delete(id); }
-    catch(e) { errors.push('sum delete ' + id + ': ' + e.message); }
-  }
-
-  // Restore dailySummary rows whose clientsSeen count we bumped
-  for (const entry of manifest.bumpedSumEntries) {
-    try { await db.dailySummary.update(entry.id, { clientsSeen: entry.previousClientsSeen }); }
-    catch(e) { errors.push('sum restore ' + entry.id + ': ' + e.message); }
-  }
-
-  if (errors.length > 0) {
-    console.error('Rollback errors:', errors);
-    throw new Error(errors.join('; '));
-  }
-}
-
-// ─────────────────────────────────────────────────────────────────
-// MAIN IMPORT FUNCTION
-// ─────────────────────────────────────────────────────────────────
-async function importHistoryCSV(file) {
-  if (!file) return;
-
-  const confirmed = confirm(
-    '📥 Import Historical Transactions\n\n' +
-    'This will ADD records to the existing database.\n\n' +
-    '• Duplicate detection is ON — existing records are skipped\n' +
-    '• Auto-rollback fires if anything fails mid-import\n' +
-    '• Manual Undo button stays live on the success screen\n\n' +
-    'Continue?'
-  );
-  if (!confirmed) return;
-
-  openModal(`
-    <h2 class="modal-title">📥 Importing Transactions</h2>
-    <div style="text-align:center; padding:24px 16px;">
-      <div style="font-size:40px; margin-bottom:12px;">⏳</div>
-      <div style="font-size:15px; font-weight:600; margin-bottom:4px;" id="import-progress-text">Reading file...</div>
-      <div style="font-size:12px; color:var(--text-muted); margin-bottom:16px;" id="import-progress-sub">Please wait</div>
-      <div style="width:100%; background:var(--border); border-radius:4px; height:10px; overflow:hidden;">
-        <div id="import-progress-bar" style="width:0%; height:100%; background:var(--plum); transition:width 0.4s;"></div>
-      </div>
-    </div>
-  `);
-
-  const setProgress = (pct, msg, sub='') => {
-    const bar   = document.getElementById('import-progress-bar');
-    const text  = document.getElementById('import-progress-text');
-    const subEl = document.getElementById('import-progress-sub');
-    if (bar)   bar.style.width   = pct + '%';
-    if (text)  text.textContent  = msg;
-    if (subEl) subEl.textContent = sub;
-  };
-
-  // Every write goes through manifest — rollback uses these IDs surgically
-  const manifest = {
-    addedTxIds:       [],   // Firestore doc IDs of transactions added
-    addedSumIds:      [],   // Firestore doc IDs of dailySummary rows added
-    bumpedSumEntries: [],   // { id, previousClientsSeen } rows we updated
-  };
-
-  try {
-    // ── Step 1: Parse CSV ──
-    setProgress(8, 'Reading CSV...', file.name);
-    const text    = await file.text();
-    const lines   = text.trim().split('\n');
-    const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''));
-
-    const parseCSVLine = (line) => {
-      const cols = [];
-      let cur = '', inQ = false;
-      for (const ch of line) {
-        if (ch === '"') { inQ = !inQ; }
-        else if (ch === ',' && !inQ) { cols.push(cur.trim()); cur = ''; }
-        else { cur += ch; }
-      }
-      cols.push(cur.trim());
-      return cols;
-    };
-
-    const csvRows = [];
-    for (let i = 1; i < lines.length; i++) {
-      const cols = parseCSVLine(lines[i]);
-      if (cols.length < 3) continue;
-      const row = {};
-      headers.forEach((h, idx) => { row[h] = cols[idx] || ''; });
-      csvRows.push(row);
-    }
-    setProgress(18, `Parsed ${csvRows.length} rows`, 'Checking for duplicates...');
-
-    // ── Step 2: Three-key deduplication against existing data ──
-    // Key A: date + cents + paymentMethod  — same tx, different name
-    // Key B: date + cents + clientName     — same tx, different method
-    // Key C: date + paymentMethod + name   — same tx, slightly different amount
-    const existing = await db.transactions.toArray();
-    const normName = s => (s || '').toLowerCase().replace(/[^a-z]/g, '');
-
-    const seenA = new Set(existing.map(t =>
-      `${t.date}_${Math.round((t.serviceAmount||0)*100)}_${(t.paymentMethod||'').toLowerCase()}`
-    ));
-    const seenB = new Set(existing.map(t =>
-      `${t.date}_${Math.round((t.serviceAmount||0)*100)}_${normName(t.notes)}`
-    ));
-    const seenC = new Set(existing.map(t =>
-      `${t.date}_${(t.paymentMethod||'').toLowerCase()}_${normName(t.notes)}`
-    ));
-
-    let skipped = 0, needsAmount = 0;
-    const toAdd = [];
-
-    for (const row of csvRows) {
-      const date          = (row.date          || '').trim();
-      const category      = (row.category      || "Women's haircut").trim();
-      const serviceAmount = parseFloat(row.serviceAmount) || 0;
-      const tipAmount     = parseFloat(row.tipAmount)     || 0;
-      const paymentMethod = (row.paymentMethod || 'Cash').trim();
-      const notes         = (row.notes         || '').trim();
-      const type          = (row.type          || 'INCOME').trim();
-
-      if (!date) continue;
-      if (paymentMethod.toLowerCase() === 'cash' && serviceAmount === 0) needsAmount++;
-
-      const cents = Math.round(serviceAmount * 100);
-      const pm    = paymentMethod.toLowerCase();
-      const nn    = normName(notes);
-      const kA    = `${date}_${cents}_${pm}`;
-      const kB    = `${date}_${cents}_${nn}`;
-      const kC    = `${date}_${pm}_${nn}`;
-
-      if (seenA.has(kA) || seenB.has(kB) || seenC.has(kC)) { skipped++; continue; }
-
-      // Register in all three sets to block intra-CSV duplication too
-      seenA.add(kA); seenB.add(kB); seenC.add(kC);
-      toAdd.push({ date, type, category, serviceAmount, tipAmount,
-                   amount: serviceAmount, paymentMethod, notes });
-    }
-
-    setProgress(28, `${toAdd.length} new records to import`, `${skipped} duplicates skipped`);
-    if (toAdd.length === 0) {
-      closeModal();
-      showToast(`Nothing new to import — ${skipped} duplicates found`);
-      return;
-    }
-
-    // ── Step 3: Write transactions — collect each Firestore ID for rollback ──
-    setProgress(35, 'Writing transactions...', `0 / ${toAdd.length}`);
-    for (let i = 0; i < toAdd.length; i++) {
-      const newId = await db.transactions.add(toAdd[i]);
-      manifest.addedTxIds.push(newId);
-      if (i % 10 === 0) {
-        setProgress(
-          35 + Math.round((i / toAdd.length) * 40),
-          'Writing transactions...',
-          `${i} / ${toAdd.length}`
-        );
-      }
-    }
-    setProgress(76, `${toAdd.length} transactions written`, 'Updating daily client counts...');
-
-    // ── Step 4: Upsert dailySummary client counts ──
-    // Count rows per date across the full CSV (including skipped dupes,
-    // so the number reflects actual clients seen that day)
-    const clientsPerDate = {};
-    for (const row of csvRows) {
-      const d = (row.date || '').trim();
-      if (d) clientsPerDate[d] = (clientsPerDate[d] || 0) + 1;
-    }
-
-    for (const [date, count] of Object.entries(clientsPerDate)) {
-      const existing = await db.dailySummary.where('date').equals(date).first();
-      if (existing) {
-        if (count > (existing.clientsSeen || 0)) {
-          manifest.bumpedSumEntries.push({
-            id: existing.id,
-            previousClientsSeen: existing.clientsSeen || 0,
-          });
-          await db.dailySummary.update(existing.id, { clientsSeen: count });
-        }
-        // if existing count is already >= imported count, leave it alone
-      } else {
-        const newId = await db.dailySummary.add({ date, clientsSeen: count, hoursWorked: 0 });
-        manifest.addedSumIds.push(newId);
-      }
-    }
-
-    setProgress(100, 'Done!', '');
-    await new Promise(r => setTimeout(r, 400));
-    closeModal();
-
-    // Store manifest as plain JSON-safe object for manual undo
-    window._lastImportRollback = {
-      manifest: JSON.parse(JSON.stringify(manifest)),
-      count: toAdd.length,
-    };
-
-    openModal(`
-      <h2 class="modal-title">✅ Import Complete</h2>
-      <div style="padding:12px 0 16px; text-align:center;">
-        <div style="font-size:36px; margin-bottom:10px;">🎉</div>
-        <div style="font-size:22px; font-weight:700; color:var(--plum); margin-bottom:4px;">${toAdd.length}</div>
-        <div style="font-size:14px; color:var(--text-muted); margin-bottom:16px;">transactions imported</div>
-        <div style="display:flex; gap:10px; justify-content:center; font-size:13px; margin-bottom:20px; flex-wrap:wrap;">
-          <div style="background:var(--bg-secondary); border-radius:8px; padding:10px 14px; text-align:center;">
-            <div style="font-weight:700;">${skipped}</div>
-            <div style="color:var(--text-muted); font-size:11px;">duplicates skipped</div>
-          </div>
-          <div style="background:var(--bg-secondary); border-radius:8px; padding:10px 14px; text-align:center;">
-            <div style="font-weight:700;">${needsAmount}</div>
-            <div style="color:var(--text-muted); font-size:11px;">cash $0 entries</div>
-          </div>
-          <div style="background:var(--bg-secondary); border-radius:8px; padding:10px 14px; text-align:center;">
-            <div style="font-weight:700;">${Object.keys(clientsPerDate).length}</div>
-            <div style="color:var(--text-muted); font-size:11px;">days updated</div>
-          </div>
-        </div>
-      </div>
-      ${needsAmount > 0 ? `
-      <div style="background:#FFF8E1; border:1px solid #F9A825; border-radius:8px; padding:10px 12px; font-size:12px; color:#5D4037; margin-bottom:12px;">
-        <strong>⚠️ ${needsAmount} cash entries have $0</strong> — find them on the Entries screen
-        (look for "ENTER AMOUNT" in the notes) and tap each one to fill in the actual amount.
-      </div>` : ''}
-      <div style="background:#E8F5E9; border:1px solid #2D7A4C; border-radius:8px; padding:10px 12px; font-size:12px; color:#1B5E20; margin-bottom:16px;">
-        <strong>🛡️ Full rollback available</strong> — tap "Undo Import" below to remove every
-        record just added. This option disappears when you navigate away.
-      </div>
-      <button class="btn-submit" style="width:100%; margin-bottom:10px;"
-        onclick="closeModal(); navigate('entries')">
-        Go to Entries →
-      </button>
-      <button class="btn-secondary" style="width:100%; color:#C13838; border-color:#C13838;"
-        onclick="undoLastImport()">
-        ↩ Undo Import (remove all ${toAdd.length} records)
-      </button>
-    `);
-
-  } catch(err) {
-    console.error('Import error:', err);
-    if (manifest.addedTxIds.length > 0 || manifest.addedSumIds.length > 0 ||
-        manifest.bumpedSumEntries.length > 0) {
-      try {
-        setProgress(0, 'Import failed — rolling back...', 'Removing partial writes');
-        await rollbackImport(manifest);
-        closeModal();
-        showToast('Import failed — all changes rolled back. Nothing was modified.');
-      } catch(rbErr) {
-        console.error('Rollback also encountered errors:', rbErr);
-        closeModal();
-        showToast('Import failed and rollback had issues — restore from your backup file.');
-      }
-    } else {
-      closeModal();
-      showToast('Import failed before any data was written: ' + err.message);
-    }
-  }
-}
-
-// Called from the success modal "Undo Import" button
-async function undoLastImport() {
-  const data = window._lastImportRollback;
-  if (!data) { showToast('Nothing to undo'); return; }
-
-  const confirmed = confirm(
-    `↩ Undo Import\n\nThis will remove all ${data.count} imported transactions and restore ` +
-    `any daily client counts that were changed.\n\nContinue?`
-  );
-  if (!confirmed) return;
-
-  closeModal();
-  showToast('Rolling back import...');
-
-  try {
-    await rollbackImport(data.manifest);
-    window._lastImportRollback = null;
-    showToast(`✓ Rolled back — ${data.count} records removed, all counts restored`);
-    if (state.currentView === 'entries') renderEntriesView();
-  } catch(err) {
-    console.error('Undo error:', err);
-    showToast('Undo encountered issues — check console. Some records may need manual cleanup.');
-  }
-}
-
-
 
 async function importBackup(file) {
   if (!file) return;
@@ -6467,12 +5842,7 @@ document.addEventListener('DOMContentLoaded', () => {
 // ----------------------------------------------------------------
 
 // Called after Firebase confirms the user is signed in.
-let _appBooted = false;
-
 async function bootApp() {
-  if (_appBooted) return;
-  _appBooted = true;
-
   await loadCategories();
   await updateRentersTabVisibility();
 
