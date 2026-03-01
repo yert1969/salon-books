@@ -1843,9 +1843,10 @@ async function editTransaction(id) {
   // Store the transaction ID being edited FIRST (before re-rendering)
   state.editingTransactionId = id;
   
-  // Switch to Add Entry tab and re-render (this will hide the list)
+  // Switch to Add Entry tab and re-render the full view
   state.entriesTab = 'add';
-  await renderEntriesTabContent();
+  navigate('entries');
+  await renderEntriesView();
   
   // Now populate form with transaction data
   if (transaction.type === 'INCOME') {
