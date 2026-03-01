@@ -3594,6 +3594,12 @@ async function renderReportsView() {
   content.innerHTML = `
     <div class="report-type-tabs">${tabs}</div>
     <div id="report-inner"></div>
+    <div id="report-export-bar" style="display:none;padding:12px 16px;text-align:center;">
+      <div style="display:flex;gap:8px;justify-content:center;">
+        <button onclick="printReport()" style="flex:1;max-width:180px;padding:10px 16px;background:var(--plum);color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;">🖨 Print / PDF</button>
+        <button onclick="copyReportText()" style="flex:1;max-width:180px;padding:10px 16px;background:var(--bg-card);color:var(--text);border:1px solid var(--border);border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;">📋 Copy Text</button>
+      </div>
+    </div>
   `;
 
   await renderReportInner();
@@ -3896,6 +3902,85 @@ async function renderReportInner() {
       break;
     }
   }
+
+  // Show export bar for all report types except 'export' itself
+  const exportBar = document.getElementById('report-export-bar');
+  if (exportBar) {
+    exportBar.style.display = state.reportType === 'export' ? 'none' : 'block';
+  }
+}
+
+// ---- Report Export Functions ----
+function printReport() {
+  const reportEl = document.getElementById('report-output');
+  if (!reportEl || !reportEl.innerHTML.trim()) { showToast('No report to print'); return; }
+
+  const printWin = window.open('', '_blank');
+  if (!printWin) { showToast('Please allow popups to print'); return; }
+
+  const bizName = document.getElementById('biz-name')?.value || 'Mane Frame';
+
+  printWin.document.write(`
+    <!DOCTYPE html>
+    <html><head><title>${bizName} Report</title>
+    <style>
+      body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; padding: 24px; color: #222; max-width: 800px; margin: 0 auto; }
+      table { width: 100%; border-collapse: collapse; }
+      td, th { padding: 6px 8px; font-size: 13px; }
+      .report-section-title { font-size: 18px; font-weight: 700; margin-bottom: 12px; }
+      hr { border: none; border-top: 1px solid #ddd; }
+      @media print {
+        body { padding: 12px; }
+        button { display: none !important; }
+      }
+    </style>
+    </head><body>
+    <div style="text-align:center;margin-bottom:16px;">
+      <div style="font-size:20px;font-weight:700;">${bizName}</div>
+    </div>
+    ${reportEl.innerHTML}
+    </body></html>
+  `);
+  printWin.document.close();
+  setTimeout(() => { printWin.print(); }, 300);
+}
+
+function copyReportText() {
+  const reportEl = document.getElementById('report-output');
+  if (!reportEl || !reportEl.innerHTML.trim()) { showToast('No report to copy'); return; }
+
+  // Extract readable text from tables and content
+  const clone = reportEl.cloneNode(true);
+
+  // Convert tables to text-friendly format
+  clone.querySelectorAll('table').forEach(table => {
+    let text = '';
+    table.querySelectorAll('tr').forEach(row => {
+      const cells = Array.from(row.querySelectorAll('td, th'));
+      const line = cells.map(c => c.textContent.trim()).filter(Boolean).join('  |  ');
+      if (line) text += line + '\n';
+    });
+    const pre = document.createElement('pre');
+    pre.textContent = text;
+    table.replaceWith(pre);
+  });
+
+  const textContent = clone.textContent
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+
+  navigator.clipboard.writeText(textContent).then(() => {
+    showToast('Report copied to clipboard ✓');
+  }).catch(() => {
+    // Fallback
+    const ta = document.createElement('textarea');
+    ta.value = textContent;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    showToast('Report copied to clipboard ✓');
+  });
 }
 
 // ---- Daily Report ----
