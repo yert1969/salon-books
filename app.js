@@ -3915,34 +3915,133 @@ function printReport() {
   const reportEl = document.getElementById('report-output');
   if (!reportEl || !reportEl.innerHTML.trim()) { showToast('No report to print'); return; }
 
+  // Clone and clean up for print
+  const clone = reportEl.cloneNode(true);
+
+  // Remove any canvas elements (pie charts won't render in print)
+  clone.querySelectorAll('canvas').forEach(c => {
+    const placeholder = document.createElement('div');
+    placeholder.textContent = '[Chart — see app for visual]';
+    placeholder.style.cssText = 'text-align:center;padding:12px;color:#999;font-style:italic;';
+    c.replaceWith(placeholder);
+  });
+
+  // Remove delete buttons, edit icons
+  clone.querySelectorAll('button, .chip-delete').forEach(b => b.remove());
+
   const printWin = window.open('', '_blank');
   if (!printWin) { showToast('Please allow popups to print'); return; }
 
-  const bizName = document.getElementById('biz-name')?.value || 'Mane Frame';
+  const bizName = document.getElementById('biz-name')?.value || 'The Mane Frame';
+  const printDate = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
 
-  printWin.document.write(`
-    <!DOCTYPE html>
-    <html><head><title>${bizName} Report</title>
-    <style>
-      body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; padding: 24px; color: #222; max-width: 800px; margin: 0 auto; }
-      table { width: 100%; border-collapse: collapse; }
-      td, th { padding: 6px 8px; font-size: 13px; }
-      .report-section-title { font-size: 18px; font-weight: 700; margin-bottom: 12px; }
-      hr { border: none; border-top: 1px solid #ddd; }
-      @media print {
-        body { padding: 12px; }
-        button { display: none !important; }
-      }
-    </style>
-    </head><body>
-    <div style="text-align:center;margin-bottom:16px;">
-      <div style="font-size:20px;font-weight:700;">${bizName}</div>
-    </div>
-    ${reportEl.innerHTML}
-    </body></html>
-  `);
+  printWin.document.write(`<!DOCTYPE html>
+<html><head><title>${bizName} Report</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    color: #222; max-width: 700px; margin: 0 auto; padding: 32px 24px;
+    font-size: 13px; line-height: 1.5;
+  }
+
+  /* Header */
+  .print-header {
+    text-align: center; border-bottom: 2px solid #5D3854; padding-bottom: 16px; margin-bottom: 24px;
+  }
+  .print-header h1 { font-size: 22px; font-weight: 700; color: #5D3854; margin-bottom: 2px; }
+  .print-header .print-date { font-size: 11px; color: #888; }
+
+  /* Section titles */
+  .report-section-title {
+    font-size: 16px; font-weight: 700; color: #333; margin: 20px 0 10px; padding-bottom: 4px;
+    border-bottom: 1px solid #ddd;
+  }
+
+  /* Stat grids */
+  .report-stat-grid {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 12px 0 20px;
+  }
+  .report-stat {
+    text-align: center; padding: 10px 8px; border: 1px solid #e0e0e0; border-radius: 6px;
+    background: #fafafa; page-break-inside: avoid;
+  }
+  .report-stat-label { font-size: 10px; text-transform: uppercase; letter-spacing: .5px; color: #888; font-weight: 600; margin-bottom: 2px; }
+  .report-stat-value { font-size: 18px; font-weight: 700; }
+  .report-stat-value.green { color: #2D7A4C; }
+  .report-stat-value.gold { color: #B8860B; }
+  .report-stat-value.red { color: #C13838; }
+  .report-stat-value.plum { color: #5D3854; }
+
+  /* White cards */
+  .report-white-card {
+    border: 1px solid #e0e0e0; border-radius: 8px; padding: 16px; margin: 16px 0;
+    page-break-inside: avoid;
+  }
+  .report-white-card .report-section-title { margin-top: 0; border-bottom: none; }
+
+  /* Row items */
+  .report-row {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 8px 0; border-bottom: 1px solid #eee;
+  }
+  .report-row:last-child { border-bottom: none; }
+  .report-row-label { font-size: 13px; font-weight: 500; }
+  .report-row-sub { font-size: 11px; color: #888; }
+  .report-row-value { font-size: 14px; font-weight: 600; }
+  .report-row-value.income { color: #2D7A4C; }
+  .report-row-value.expense { color: #C13838; }
+
+  /* Comparison cards */
+  .comparison-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 16px 0; }
+  .comparison-card {
+    text-align: center; padding: 12px; border: 1px solid #e0e0e0; border-radius: 6px;
+    page-break-inside: avoid;
+  }
+  .comparison-label { font-size: 10px; text-transform: uppercase; color: #888; font-weight: 600; }
+  .comparison-percent { font-size: 20px; font-weight: 700; }
+  .comparison-amount { font-size: 12px; color: #888; }
+
+  /* Tables (P&L etc) */
+  table { width: 100%; border-collapse: collapse; margin: 8px 0; }
+  th { text-align: left; padding: 8px 6px; font-size: 11px; color: #888; font-weight: 600;
+       border-bottom: 2px solid #5D3854; text-transform: uppercase; letter-spacing: .5px; }
+  td { padding: 6px; font-size: 13px; border-bottom: 1px solid #eee; }
+  th:not(:first-child), td:not(:first-child) { text-align: right; }
+
+  /* Pie chart area */
+  .pie-chart-wrap { text-align: center; padding: 8px; }
+
+  /* Booth rent cards */
+  [style*="border-radius:16px"], [style*="border-radius: 16px"] { border: 1px solid #e0e0e0 !important; }
+
+  /* Utility overrides for inline styles */
+  [style*="background:var("] { background: #fafafa !important; }
+  [style*="color:var(--success)"] { color: #2D7A4C !important; }
+  [style*="color:var(--danger)"] { color: #C13838 !important; }
+  [style*="color:var(--plum)"] { color: #5D3854 !important; }
+  [style*="color:var(--gold)"] { color: #B8860B !important; }
+  [style*="color:var(--text-muted)"] { color: #888 !important; }
+  [style*="color:var(--text)"] { color: #222 !important; }
+  [style*="border-left:3px"] { border-left: 3px solid #ccc !important; }
+
+  hr { border: none; border-top: 1px solid #ddd; margin: 8px 0; }
+
+  @media print {
+    body { padding: 16px; }
+    .print-header { margin-bottom: 16px; padding-bottom: 12px; }
+    .report-white-card, .report-stat, .comparison-card { break-inside: avoid; }
+  }
+</style>
+</head><body>
+  <div class="print-header">
+    <h1>${bizName}</h1>
+    <div class="print-date">Printed ${printDate}</div>
+  </div>
+  ${clone.innerHTML}
+</body></html>`);
   printWin.document.close();
-  setTimeout(() => { printWin.print(); }, 300);
+  setTimeout(() => { printWin.print(); }, 400);
 }
 
 function copyReportText() {
