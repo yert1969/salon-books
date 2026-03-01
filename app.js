@@ -4757,14 +4757,16 @@ async function runBoothRentReport() {
       }
     });
 
-    // Expected weeks: count distinct weekStart values from ALL payments for this renter in the year
-    // plus any weeks between the latest payment and today where rent would be due
-    const yearPaymentsAll = allPayments.filter(p => p.renterId === r.id && p.weekStart && p.weekStart.startsWith(String(year)));
-    const paidWeekStarts = new Set(yearPaymentsAll.map(p => p.weekStart));
-    
-    // Also count unpaid weeks: from renter start (or Jan 1) to today
+    // Expected weeks: count rent weeks from Jan 1 (or renter start if later) to today (or Dec 31 if past year)
+    // A renter owes rent for every week where the Saturday due date falls in the range.
+    // If startDate is clearly wrong (after first payment), use the earlier date.
+    const firstPaymentDate = pmts.length > 0
+      ? pmts.reduce((earliest, p) => (!earliest || p.weekStart < earliest) ? p.weekStart : earliest, null)
+      : null;
     const rStart = r.startDate || `${year}-01-01`;
-    const rangeStart = rStart > `${year}-01-01` ? rStart : `${year}-01-01`;
+    // Use whichever is earlier: startDate or first payment week — covers renters added late to the app
+    const effectiveStart = firstPaymentDate && firstPaymentDate < rStart ? firstPaymentDate : rStart;
+    const rangeStart = effectiveStart > `${year}-01-01` ? effectiveStart : `${year}-01-01`;
     const rangeEnd = `${year}-12-31` < todayStr() ? `${year}-12-31` : todayStr();
     let expectedWeeks = 0;
     let cursor = getWeekStart(rangeStart);
