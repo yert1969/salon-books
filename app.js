@@ -1621,7 +1621,7 @@ async function renderRecentTransactionsSimple() {
                     ${isIncome && t.serviceAmount > 0 ? `$${t.serviceAmount.toFixed(2)}` : `$${amount.toFixed(2)}`}${tipText}
                   </div>
                 </div>
-                <button onclick="editTransaction('${t.id}')" style="background:none; border:none; color:var(--plum); font-size:28px; padding:8px 12px; cursor:pointer; min-width:44px; min-height:44px; display:flex; align-items:center; justify-content:center;">✎</button>
+                <button onclick="openEditTransactionModal('${t.id}')" style="background:none; border:none; color:var(--plum); font-size:28px; padding:8px 12px; cursor:pointer; min-width:44px; min-height:44px; display:flex; align-items:center; justify-content:center;">✎</button>
                 <button onclick="deleteTransaction('${t.id}')" style="background:none; border:none; color:var(--danger); font-size:24px; padding:8px 12px; cursor:pointer; min-width:44px; min-height:44px; display:flex; align-items:center; justify-content:center;">✕</button>
               </div>
             </div>
@@ -1783,7 +1783,7 @@ async function renderRecentTransactions() {
           const amountColor = isIncome ? 'var(--success)' : 'var(--danger)';
           const tipText = isIncome && t.tipAmount > 0 ? ` + $${t.tipAmount.toFixed(2)} tip` : '';
           const monthlyBadge = isMonthly ? '<span style="font-size:10px;background:var(--plum);color:#fff;padding:1px 6px;border-radius:4px;margin-left:6px;">Monthly</span>' : '';
-          const editFn = isMonthly ? `openEditMonthlyExpenseModal('${t.id}')` : `editTransaction('${t.id}')`;
+          const editFn = isMonthly ? `openEditMonthlyExpenseModal('${t.id}')` : `openEditTransactionModal('${t.id}')`;
           const deleteFn = isMonthly ? `deleteMonthlyExpenseEntry('${t.id}')` : `deleteTransaction('${t.id}')`;
           
           return `
