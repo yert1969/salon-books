@@ -3580,6 +3580,7 @@ async function renderReportsView() {
     { id: 'yoy',      label: 'Year vs Year' },
     { id: 'category', label: 'By Category' },
     { id: 'booth-rent', label: 'Booth Rent' },
+    { id: 'pnl',       label: 'P&L' },
     { id: 'export',   label: '📥 Export CSV' },
   ];
 
@@ -3852,6 +3853,21 @@ async function renderReportInner() {
         <div class="report-body" id="report-output"></div>
       `;
       await runBoothRentReport();
+      break;
+    }
+
+    case 'pnl': {
+      const monthOpts = Array.from({length:12},(_,i)=>
+        `<option value="${i+1}" ${i+1===monthNow?'selected':''}>${monthName(i+1)}</option>`).join('');
+      el.innerHTML = `
+        <div class="report-controls">
+          <select class="report-input" id="r-pnl-month" style="flex:2;">${monthOpts}</select>
+          <input type="number" class="report-input" id="r-pnl-year" value="${yearNow}" min="2020" max="2099" style="max-width:100px" inputmode="numeric">
+          <button class="report-btn" onclick="runPnlReport()">View</button>
+        </div>
+        <div class="report-body" id="report-output"></div>
+      `;
+      await runPnlReport();
       break;
     }
 
@@ -5140,6 +5156,222 @@ async function runBoothRentReport() {
     ${renterStats.filter(r => r.total > 0 || r.status === 'active').length === 0 ? `
       <p style="color:var(--text-muted);text-align:center;padding:30px 0;">No booth rent data for ${year}.</p>
     ` : ''}
+  `;
+}
+
+// ---- P&L REPORT ----
+async function runPnlReport() {
+  const month = parseInt(document.getElementById('r-pnl-month')?.value) || new Date().getMonth() + 1;
+  const year  = parseInt(document.getElementById('r-pnl-year')?.value) || new Date().getFullYear();
+  const el = document.getElementById('report-output');
+  if (!el) return;
+
+  const allTxns    = await db.transactions.toArray();
+  const allMExp    = await db.monthlyExpenses.toArray();
+  const allRenters = await db.renters.toArray();
+  const allRentPmts = await db.rentPayments.toArray();
+
+  const ms = `${year}-${String(month).padStart(2,'0')}`;
+  const yearStr = String(year);
+
+  // ---- Auto-categorize expense types ----
+  // Direct costs: supplies, products, tools directly tied to service delivery
+  const directCostKeywords = ['supplies', 'products', 'tools', 'equipment', 'color', 'product'];
+  const isDirect = (cat) => directCostKeywords.some(k => cat.toLowerCase().includes(k));
+
+  // ---- REVENUE ----
+  // Employee income categories
+  const employeeCategories = ['Chasity (Vagaro Income)'];
+
+  const monthTxns = allTxns.filter(t => t.date?.startsWith(ms));
+  const ytdTxns   = allTxns.filter(t => t.date?.startsWith(yearStr));
+
+  // Revenue by source
+  const revenueLines = {};
+
+  // Annette's service income (group by category)
+  monthTxns.filter(t => t.type === 'INCOME' && !employeeCategories.includes(t.category)).forEach(t => {
+    const key = t.category || 'Other';
+    if (!revenueLines[key]) revenueLines[key] = { month: 0, ytd: 0, type: 'service' };
+    revenueLines[key].month += (t.serviceAmount || 0);
+    revenueLines[key].ytd += 0; // filled below
+  });
+  // YTD for service
+  ytdTxns.filter(t => t.type === 'INCOME' && !employeeCategories.includes(t.category)).forEach(t => {
+    const key = t.category || 'Other';
+    if (!revenueLines[key]) revenueLines[key] = { month: 0, ytd: 0, type: 'service' };
+    revenueLines[key].ytd += (t.serviceAmount || 0);
+  });
+
+  // Tips (combined)
+  const monthTips = monthTxns.filter(t => t.type === 'INCOME' && !employeeCategories.includes(t.category))
+    .reduce((s,t) => s + (t.tipAmount || 0), 0);
+  const ytdTips = ytdTxns.filter(t => t.type === 'INCOME' && !employeeCategories.includes(t.category))
+    .reduce((s,t) => s + (t.tipAmount || 0), 0);
+
+  // Employee income
+  const monthEmployee = monthTxns.filter(t => t.type === 'INCOME' && employeeCategories.includes(t.category))
+    .reduce((s,t) => s + (t.serviceAmount || 0) + (t.tipAmount || 0), 0);
+  const ytdEmployee = ytdTxns.filter(t => t.type === 'INCOME' && employeeCategories.includes(t.category))
+    .reduce((s,t) => s + (t.serviceAmount || 0) + (t.tipAmount || 0), 0);
+
+  // Booth rent collected
+  const monthRent = allRentPmts.filter(p => p.datePaid?.startsWith(ms))
+    .reduce((s,p) => s + (p.amount || 0), 0);
+  const ytdRent = allRentPmts.filter(p => p.datePaid?.startsWith(yearStr))
+    .reduce((s,p) => s + (p.amount || 0), 0);
+
+  // Service totals
+  const monthServiceTotal = Object.values(revenueLines).reduce((s,r) => s + r.month, 0);
+  const ytdServiceTotal = Object.values(revenueLines).reduce((s,r) => s + r.ytd, 0);
+  const monthGrossRevenue = monthServiceTotal + monthTips + monthEmployee + monthRent;
+  const ytdGrossRevenue = ytdServiceTotal + ytdTips + ytdEmployee + ytdRent;
+
+  // ---- EXPENSES ----
+  const directLines = {};
+  const overheadLines = {};
+
+  // Daily expenses this month
+  monthTxns.filter(t => t.type === 'EXPENSE').forEach(t => {
+    const cat = t.category || 'Other';
+    const bucket = isDirect(cat) ? directLines : overheadLines;
+    if (!bucket[cat]) bucket[cat] = { month: 0, ytd: 0 };
+    bucket[cat].month += (t.amount || 0);
+  });
+  // Daily expenses YTD
+  ytdTxns.filter(t => t.type === 'EXPENSE').forEach(t => {
+    const cat = t.category || 'Other';
+    const bucket = isDirect(cat) ? directLines : overheadLines;
+    if (!bucket[cat]) bucket[cat] = { month: 0, ytd: 0 };
+    bucket[cat].ytd += (t.amount || 0);
+  });
+
+  // Monthly expenses this month
+  allMExp.filter(e => e.year === year && e.month === month).forEach(e => {
+    const cat = e.category || 'Other';
+    const bucket = isDirect(cat) ? directLines : overheadLines;
+    if (!bucket[cat]) bucket[cat] = { month: 0, ytd: 0 };
+    bucket[cat].month += (e.amount || 0);
+  });
+  // Monthly expenses YTD
+  allMExp.filter(e => e.year === year && e.month <= month).forEach(e => {
+    const cat = e.category || 'Other';
+    const bucket = isDirect(cat) ? directLines : overheadLines;
+    if (!bucket[cat]) bucket[cat] = { month: 0, ytd: 0 };
+    bucket[cat].ytd += (e.amount || 0);
+  });
+
+  // Totals
+  const monthDirectTotal = Object.values(directLines).reduce((s,r) => s + r.month, 0);
+  const ytdDirectTotal = Object.values(directLines).reduce((s,r) => s + r.ytd, 0);
+  const monthOverheadTotal = Object.values(overheadLines).reduce((s,r) => s + r.month, 0);
+  const ytdOverheadTotal = Object.values(overheadLines).reduce((s,r) => s + r.ytd, 0);
+  const monthTotalExpenses = monthDirectTotal + monthOverheadTotal;
+  const ytdTotalExpenses = ytdDirectTotal + ytdOverheadTotal;
+
+  const monthGrossProfit = monthGrossRevenue - monthDirectTotal;
+  const ytdGrossProfit = ytdGrossRevenue - ytdDirectTotal;
+  const monthNetIncome = monthGrossRevenue - monthTotalExpenses;
+  const ytdNetIncome = ytdGrossRevenue - ytdTotalExpenses;
+
+  // ---- Helper to render a line row ----
+  const pctOf = (val, total) => total > 0 ? `${((val / total) * 100).toFixed(1)}%` : '—';
+  const row = (label, mVal, yVal, bold, color) => `
+    <tr style="${bold ? 'font-weight:700;' : ''}${color ? 'color:' + color + ';' : ''}border-bottom:1px solid var(--border-light);">
+      <td style="padding:6px 0;font-size:13px;${bold ? '' : 'padding-left:12px;'}">${label}</td>
+      <td style="padding:6px 4px;text-align:right;font-size:13px;">${fmt(mVal)}</td>
+      <td style="padding:6px 4px;text-align:right;font-size:11px;color:var(--text-muted);">${pctOf(mVal, monthGrossRevenue)}</td>
+      <td style="padding:6px 4px;text-align:right;font-size:13px;">${fmt(yVal)}</td>
+      <td style="padding:6px 4px;text-align:right;font-size:11px;color:var(--text-muted);">${pctOf(yVal, ytdGrossRevenue)}</td>
+    </tr>`;
+  const dividerRow = `<tr><td colspan="5" style="padding:0;"><hr style="border:none;border-top:2px solid var(--border-light);margin:4px 0;"></td></tr>`;
+  const subtotalRow = (label, mVal, yVal, color) => `
+    <tr style="font-weight:700;${color ? 'color:'+color+';' : ''}">
+      <td style="padding:8px 0;font-size:14px;">${label}</td>
+      <td style="padding:8px 4px;text-align:right;font-size:14px;">${fmt(mVal)}</td>
+      <td style="padding:8px 4px;text-align:right;font-size:12px;color:var(--text-muted);">${pctOf(mVal, monthGrossRevenue)}</td>
+      <td style="padding:8px 4px;text-align:right;font-size:14px;">${fmt(yVal)}</td>
+      <td style="padding:8px 4px;text-align:right;font-size:12px;color:var(--text-muted);">${pctOf(yVal, ytdGrossRevenue)}</td>
+    </tr>`;
+
+  // Sort line items by month amount desc
+  const sortedRevenue = Object.entries(revenueLines).sort((a,b) => b[1].month - a[1].month);
+  const sortedDirect = Object.entries(directLines).sort((a,b) => b[1].month - a[1].month);
+  const sortedOverhead = Object.entries(overheadLines).sort((a,b) => b[1].month - a[1].month);
+
+  el.innerHTML = `
+    <div class="report-section-title">${monthName(month)} ${year} — Profit & Loss</div>
+
+    <div style="overflow-x:auto;">
+    <table style="width:100%;border-collapse:collapse;margin-top:8px;">
+      <thead>
+        <tr style="border-bottom:2px solid var(--plum);">
+          <th style="text-align:left;padding:8px 0;font-size:12px;color:var(--text-muted);font-weight:600;"></th>
+          <th style="text-align:right;padding:8px 4px;font-size:12px;color:var(--text-muted);font-weight:600;">${monthName(month).substring(0,3)}</th>
+          <th style="text-align:right;padding:8px 4px;font-size:11px;color:var(--text-muted);font-weight:600;">%</th>
+          <th style="text-align:right;padding:8px 4px;font-size:12px;color:var(--text-muted);font-weight:600;">YTD</th>
+          <th style="text-align:right;padding:8px 4px;font-size:11px;color:var(--text-muted);font-weight:600;">%</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td colspan="5" style="padding:10px 0 4px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--plum);">Revenue</td></tr>
+        ${sortedRevenue.map(([cat, v]) => row(cat, v.month, v.ytd)).join('')}
+        ${monthTips > 0 || ytdTips > 0 ? row('Tips', monthTips, ytdTips) : ''}
+        ${monthEmployee > 0 || ytdEmployee > 0 ? row('Employee Income (Chasity)', monthEmployee, ytdEmployee) : ''}
+        ${monthRent > 0 || ytdRent > 0 ? row('Booth Rent Collected', monthRent, ytdRent) : ''}
+        ${dividerRow}
+        ${subtotalRow('Total Revenue', monthGrossRevenue, ytdGrossRevenue, 'var(--success)')}
+
+        <tr><td colspan="5" style="padding:14px 0 4px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--danger);">Cost of Goods / Direct Costs</td></tr>
+        ${sortedDirect.length > 0 ? sortedDirect.map(([cat, v]) => row(cat, v.month, v.ytd)).join('') : '<tr><td colspan="5" style="padding:6px 12px;font-size:13px;color:var(--text-muted);font-style:italic;">None this period</td></tr>'}
+        ${dividerRow}
+        ${subtotalRow('Total Direct Costs', monthDirectTotal, ytdDirectTotal, 'var(--danger)')}
+        ${subtotalRow('Gross Profit', monthGrossProfit, ytdGrossProfit, monthGrossProfit >= 0 ? 'var(--success)' : 'var(--danger)')}
+
+        <tr><td colspan="5" style="padding:14px 0 4px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--gold);">Operating Expenses</td></tr>
+        ${sortedOverhead.length > 0 ? sortedOverhead.map(([cat, v]) => row(cat, v.month, v.ytd)).join('') : '<tr><td colspan="5" style="padding:6px 12px;font-size:13px;color:var(--text-muted);font-style:italic;">None this period</td></tr>'}
+        ${dividerRow}
+        ${subtotalRow('Total Operating Expenses', monthOverheadTotal, ytdOverheadTotal, 'var(--danger)')}
+
+        <tr><td colspan="5" style="padding:0;"><hr style="border:none;border-top:3px double var(--plum);margin:8px 0;"></td></tr>
+        <tr style="font-weight:800;font-size:16px;">
+          <td style="padding:10px 0;color:var(--text);">Net Income</td>
+          <td style="padding:10px 4px;text-align:right;color:${monthNetIncome >= 0 ? 'var(--success)' : 'var(--danger)'};">${fmt(monthNetIncome)}</td>
+          <td style="padding:10px 4px;text-align:right;font-size:13px;color:var(--text-muted);">${pctOf(monthNetIncome, monthGrossRevenue)}</td>
+          <td style="padding:10px 4px;text-align:right;color:${ytdNetIncome >= 0 ? 'var(--success)' : 'var(--danger)'};">${fmt(ytdNetIncome)}</td>
+          <td style="padding:10px 4px;text-align:right;font-size:13px;color:var(--text-muted);">${pctOf(ytdNetIncome, ytdGrossRevenue)}</td>
+        </tr>
+      </tbody>
+    </table>
+    </div>
+
+    <div style="margin-top:20px;padding:16px;background:var(--bg-input);border-radius:12px;">
+      <div style="font-size:12px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;">Key Metrics</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <div>
+          <div style="font-size:11px;color:var(--text-muted);">Gross Margin</div>
+          <div style="font-size:18px;font-weight:700;color:${monthGrossProfit/monthGrossRevenue >= 0.7 ? 'var(--success)' : 'var(--gold)'};">${pctOf(monthGrossProfit, monthGrossRevenue)}</div>
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--text-muted);">Net Margin</div>
+          <div style="font-size:18px;font-weight:700;color:${monthNetIncome/monthGrossRevenue >= 0.4 ? 'var(--success)' : monthNetIncome >= 0 ? 'var(--gold)' : 'var(--danger)'};">${pctOf(monthNetIncome, monthGrossRevenue)}</div>
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--text-muted);">Revenue Mix — Services</div>
+          <div style="font-size:18px;font-weight:700;color:var(--plum);">${pctOf(monthServiceTotal + monthTips, monthGrossRevenue)}</div>
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--text-muted);">Revenue Mix — Booth Rent</div>
+          <div style="font-size:18px;font-weight:700;color:var(--plum);">${pctOf(monthRent, monthGrossRevenue)}</div>
+        </div>
+      </div>
+    </div>
+
+    <div style="margin-top:12px;font-size:11px;color:var(--text-muted);line-height:1.5;">
+      <strong>Direct Costs</strong> include: Supplies, Products, Tools/Equipment.<br>
+      <strong>Operating Expenses</strong> include all other expense categories.<br>
+      Expense classification is automatic — edit categories in Settings to adjust.
+    </div>
   `;
 }
 
