@@ -7474,9 +7474,35 @@ async function gatherBusinessSnapshot() {
   const clientList = Object.values(clientMap).sort((a,b) => b.spend - a.spend).slice(0, 15)
     .map(c => `${c.name}: ${c.visits} visits, $${c.spend.toFixed(2)} total, last visit ${c.lastVisit}`);
 
-  // Booth renters
+  // Booth renters with payment history
   const activeRenters = allRenters.filter(r => r.status === 'active');
-  const renterInfo = activeRenters.map(r => `${r.name}: $${r.weeklyRate}/wk`);
+  const renterInfo = activeRenters.map(r => {
+    const pmts = allRentPmts.filter(p => p.renterId === r.id).sort((a,b) => b.weekStart.localeCompare(a.weekStart));
+    const totalPaid = pmts.reduce((s,p) => s + (p.amount || 0), 0);
+    const lastPaid = pmts.length > 0 ? pmts[0].datePaid : 'never';
+
+    // Check last 8 weeks for on-time pattern
+    let onTime = 0;
+    let late = 0;
+    let missed = 0;
+    const recentWeeks = [];
+    for (let i = 0; i < 8; i++) {
+      const ws = addDays(getWeekStart(todayStr()), -(i * 7));
+      const pmt = pmts.find(p => p.weekStart === ws);
+      if (pmt) {
+        // Consider "on time" if paid within 2 days of week start
+        const wsDate = new Date(ws + 'T12:00:00');
+        const paidDate = new Date(pmt.datePaid + 'T12:00:00');
+        const daysLate = Math.floor((paidDate - wsDate) / 86400000);
+        if (daysLate <= 2) { onTime++; recentWeeks.push('on-time'); }
+        else { late++; recentWeeks.push(`late(${daysLate}d)`); }
+      } else {
+        missed++;
+        recentWeeks.push('missed');
+      }
+    }
+    return `${r.name}: $${r.weeklyRate}/wk, ${pmts.length} total payments ($${totalPaid.toFixed(0)}), last paid ${lastPaid}, last 8 weeks: ${onTime} on-time, ${late} late, ${missed} missed [${recentWeeks.join(', ')}]`;
+  });
 
   return `
 BUSINESS SNAPSHOT (as of ${now.toLocaleDateString()}):
