@@ -3581,6 +3581,7 @@ async function renderReportsView() {
     { id: 'category', label: 'By Category' },
     { id: 'booth-rent', label: 'Booth Rent' },
     { id: 'pnl',       label: 'P&L' },
+    { id: 'clients',   label: '👤 Clients' },
     { id: 'export',   label: '📥 Export CSV' },
   ];
 
@@ -3877,6 +3878,23 @@ async function renderReportInner() {
       break;
     }
 
+    case 'clients': {
+      el.innerHTML = `
+        <div class="report-controls" style="gap:8px;">
+          <input type="text" class="report-input" id="r-client-search" placeholder="Search clients…" style="flex:1;" oninput="runClientBook()">
+          <select class="report-input" id="r-client-sort" style="max-width:140px;" onchange="runClientBook()">
+            <option value="recent">Last Visit</option>
+            <option value="spend">Total Spend</option>
+            <option value="visits">Most Visits</option>
+            <option value="alpha">A → Z</option>
+          </select>
+        </div>
+        <div class="report-body" id="report-output"></div>
+      `;
+      await runClientBook();
+      break;
+    }
+
     case 'export': {
       el.innerHTML = `
         <div class="report-controls" style="flex-wrap:wrap; gap:8px;">
@@ -3903,11 +3921,170 @@ async function renderReportInner() {
     }
   }
 
-  // Show export bar for all report types except 'export' itself
+  // Show export bar for all report types except 'export' and 'clients'
   const exportBar = document.getElementById('report-export-bar');
   if (exportBar) {
-    exportBar.style.display = state.reportType === 'export' ? 'none' : 'block';
+    exportBar.style.display = (state.reportType === 'export' || state.reportType === 'clients') ? 'none' : 'block';
   }
+}
+
+// ---- Client Book ----
+async function runClientBook() {
+  const el = document.getElementById('report-output');
+  if (!el) return;
+
+  const search = (document.getElementById('r-client-search')?.value || '').trim().toLowerCase();
+  const sortBy = document.getElementById('r-client-sort')?.value || 'recent';
+
+  const allTxns = await db.transactions.toArray();
+
+  // Employee categories to exclude
+  const employeeCategories = ['Chasity (Vagaro Income)'];
+
+  // Build client map from all income transactions with clientName
+  const clientMap = {};
+  allTxns.filter(t => t.type === 'INCOME' && t.clientName && t.clientName.trim() && !employeeCategories.includes(t.category)).forEach(t => {
+    const name = t.clientName.trim();
+    // Normalize key: lowercase for grouping, keep original for display
+    const key = name.toLowerCase();
+    if (!clientMap[key]) {
+      clientMap[key] = {
+        name: name, // Keep first-seen casing
+        visits: [],
+        totalSpend: 0,
+        services: {},
+      };
+    }
+    const ticket = (t.serviceAmount || 0) + (t.tipAmount || 0);
+    clientMap[key].visits.push({
+      date: t.date,
+      category: t.category,
+      serviceAmount: t.serviceAmount || 0,
+      tipAmount: t.tipAmount || 0,
+      total: ticket,
+    });
+    clientMap[key].totalSpend += ticket;
+    // Track service frequency
+    if (t.category) {
+      clientMap[key].services[t.category] = (clientMap[key].services[t.category] || 0) + 1;
+    }
+  });
+
+  // Convert to array and compute stats
+  let clients = Object.values(clientMap).map(c => {
+    c.visits.sort((a, b) => b.date.localeCompare(a.date)); // newest first
+    const lastVisit = c.visits[0]?.date || '';
+    const daysSince = lastVisit ? Math.floor((new Date() - new Date(lastVisit + 'T12:00:00')) / 86400000) : 999;
+    const avgTicket = c.visits.length > 0 ? c.totalSpend / c.visits.length : 0;
+    const topService = Object.entries(c.services).sort((a, b) => b[1] - a[1])[0];
+
+    return {
+      name: c.name,
+      visitCount: c.visits.length,
+      totalSpend: c.totalSpend,
+      avgTicket,
+      lastVisit,
+      daysSince,
+      topService: topService ? topService[0] : '—',
+      visits: c.visits,
+    };
+  });
+
+  // Filter by search
+  if (search) {
+    clients = clients.filter(c => c.name.toLowerCase().includes(search));
+  }
+
+  // Sort
+  switch (sortBy) {
+    case 'recent':  clients.sort((a, b) => a.daysSince - b.daysSince); break;
+    case 'spend':   clients.sort((a, b) => b.totalSpend - a.totalSpend); break;
+    case 'visits':  clients.sort((a, b) => b.visitCount - a.visitCount); break;
+    case 'alpha':   clients.sort((a, b) => a.name.localeCompare(b.name)); break;
+  }
+
+  if (clients.length === 0) {
+    el.innerHTML = `
+      <div style="text-align:center;padding:40px 20px;color:var(--text-muted);">
+        <div style="font-size:40px;margin-bottom:12px;">👤</div>
+        <div style="font-size:15px;font-weight:500;margin-bottom:6px;">${search ? 'No clients match your search' : 'No client data yet'}</div>
+        <div style="font-size:13px;">Add client names when entering income to build your client book.</div>
+      </div>
+    `;
+    return;
+  }
+
+  // Summary stats
+  const totalClients = clients.length;
+  const avgSpendAll = clients.reduce((s, c) => s + c.totalSpend, 0) / totalClients;
+  const avgVisitsAll = clients.reduce((s, c) => s + c.visitCount, 0) / totalClients;
+  const overdue = clients.filter(c => c.daysSince >= 28).length;
+
+  el.innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px;">
+      <div style="background:var(--bg-card);border-radius:10px;padding:12px;text-align:center;box-shadow:0 1px 3px rgba(0,0,0,0.04);">
+        <div style="font-size:22px;font-weight:700;color:var(--plum);">${totalClients}</div>
+        <div style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted);font-weight:600;">Total Clients</div>
+      </div>
+      <div style="background:var(--bg-card);border-radius:10px;padding:12px;text-align:center;box-shadow:0 1px 3px rgba(0,0,0,0.04);">
+        <div style="font-size:22px;font-weight:700;color:var(--success);">${fmt(avgSpendAll)}</div>
+        <div style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted);font-weight:600;">Avg Lifetime Spend</div>
+      </div>
+      <div style="background:var(--bg-card);border-radius:10px;padding:12px;text-align:center;box-shadow:0 1px 3px rgba(0,0,0,0.04);">
+        <div style="font-size:22px;font-weight:700;">${avgVisitsAll.toFixed(1)}</div>
+        <div style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted);font-weight:600;">Avg Visits</div>
+      </div>
+      <div style="background:var(--bg-card);border-radius:10px;padding:12px;text-align:center;box-shadow:0 1px 3px rgba(0,0,0,0.04);">
+        <div style="font-size:22px;font-weight:700;color:${overdue > 0 ? 'var(--danger)' : 'var(--success)'};">${overdue}</div>
+        <div style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted);font-weight:600;">Overdue (4+ wks)</div>
+      </div>
+    </div>
+
+    ${clients.map(c => {
+      const lastVisitLabel = c.daysSince === 0 ? 'Today' :
+        c.daysSince === 1 ? 'Yesterday' :
+        c.daysSince < 7 ? `${c.daysSince} days ago` :
+        c.daysSince < 30 ? `${Math.floor(c.daysSince / 7)} wk${Math.floor(c.daysSince/7)>1?'s':''} ago` :
+        `${Math.floor(c.daysSince / 30)} mo${Math.floor(c.daysSince/30)>1?'s':''} ago`;
+      const overdueFlag = c.daysSince >= 28;
+
+      return `
+      <div class="client-card" style="background:var(--bg-card);border-radius:12px;padding:14px 16px;margin-bottom:8px;box-shadow:0 1px 3px rgba(0,0,0,0.04);cursor:pointer;" onclick="toggleClientDetail('client-${c.name.replace(/[^a-zA-Z0-9]/g,'_')}')">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <div>
+            <div style="font-size:15px;font-weight:600;color:var(--text);">${c.name}</div>
+            <div style="font-size:12px;color:var(--text-muted);margin-top:2px;">
+              ${c.visitCount} visit${c.visitCount !== 1 ? 's' : ''} · ${c.topService} · ${lastVisitLabel}
+              ${overdueFlag ? '<span style="color:var(--danger);font-weight:600;"> ⏰</span>' : ''}
+            </div>
+          </div>
+          <div style="text-align:right;">
+            <div style="font-size:16px;font-weight:700;color:var(--success);">${fmt(c.totalSpend)}</div>
+            <div style="font-size:11px;color:var(--text-muted);">${fmt(c.avgTicket)} avg</div>
+          </div>
+        </div>
+        <div id="client-${c.name.replace(/[^a-zA-Z0-9]/g,'_')}" style="display:none;margin-top:12px;padding-top:12px;border-top:1px solid var(--border-light);">
+          <div style="font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted);font-weight:600;margin-bottom:8px;">Visit History</div>
+          ${c.visits.slice(0, 10).map(v => `
+            <div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;border-bottom:1px solid var(--border-light);">
+              <div>
+                <span style="color:var(--text);">${formatDateShort(v.date)}</span>
+                <span style="color:var(--text-muted);margin-left:6px;">${v.category}</span>
+              </div>
+              <div style="font-weight:600;color:var(--success);">${fmt(v.total)}${v.tipAmount > 0 ? ` <span style="font-weight:400;font-size:11px;color:var(--gold);">(${fmt(v.tipAmount)} tip)</span>` : ''}</div>
+            </div>
+          `).join('')}
+          ${c.visits.length > 10 ? `<div style="font-size:12px;color:var(--text-muted);text-align:center;padding:6px 0;">+ ${c.visits.length - 10} more visits</div>` : ''}
+        </div>
+      </div>`;
+    }).join('')}
+  `;
+}
+
+function toggleClientDetail(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.style.display = el.style.display === 'none' ? 'block' : 'none';
 }
 
 // ---- Report Export Functions ----
