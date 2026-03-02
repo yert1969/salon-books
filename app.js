@@ -7528,21 +7528,10 @@ async function sendAskQuery() {
   try {
     const snapshot = await gatherBusinessSnapshot();
 
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
-        max_tokens: 1000,
-        system: `You are a smart business analyst for a hair salon called "Mane Frame" owned by Annette. You have access to the salon's financial data below. Answer questions concisely and specifically using the actual numbers. Be warm and conversational but data-driven. Use dollar amounts and percentages where relevant. Keep responses to 2-4 short paragraphs max. Don't use markdown headers or bullet points — write in natural flowing sentences.
-
-${snapshot}`,
-        messages: [{ role: "user", content: question }],
-      })
-    });
-
-    const data = await response.json();
-    const answer = data.content?.map(b => b.text || '').join('') || 'Sorry, I couldn\'t process that question. Try rephrasing it.';
+    // Call Firebase Cloud Function (API key is server-side)
+    const askAI = firebase.functions().httpsCallable('askAI');
+    const result = await askAI({ question, snapshot });
+    const answer = result.data.answer || 'Sorry, I couldn\'t process that question.';
 
     // Replace loading with answer
     const loadingEl = document.getElementById(loadingId);
@@ -7557,7 +7546,7 @@ ${snapshot}`,
     if (loadingEl) {
       loadingEl.innerHTML = `
         <div style="font-size:14px;color:var(--danger, #C13838);line-height:1.5;">
-          Couldn't reach the AI service. This feature requires an internet connection and API access. Error: ${error.message || 'Unknown'}
+          Couldn't get a response. ${error.message || 'Please try again.'}
         </div>
       `;
     }
