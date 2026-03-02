@@ -7381,7 +7381,7 @@ function openAskOverlay() {
 
 function closeAskOverlay() {
   const overlay = document.getElementById('ai-ask-overlay');
-  if (overlay) overlay.style.display = 'none';
+  if (overlay) overlay.remove();
   window._aiChatHistory = null;
 }
 
