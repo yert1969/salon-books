@@ -7382,6 +7382,7 @@ function openAskOverlay() {
 function closeAskOverlay() {
   const overlay = document.getElementById('ai-ask-overlay');
   if (overlay) overlay.style.display = 'none';
+  window._aiChatHistory = null;
 }
 
 function askSuggestion(btn) {
@@ -7526,12 +7527,16 @@ async function sendAskQuery() {
   messagesEl.scrollTop = messagesEl.scrollHeight;
 
   try {
-    const snapshot = await gatherBusinessSnapshot();
+    if (!window._aiChatHistory) window._aiChatHistory = [];
+    const snapshot = window._aiChatHistory.length === 0 ? await gatherBusinessSnapshot() : '';
+    window._aiChatHistory.push({ role: 'user', content: question });
 
     // Call Firebase Cloud Function (API key is server-side)
     const askAI = firebase.functions().httpsCallable('askAI');
-    const result = await askAI({ question, snapshot });
+    const result = await askAI({ question, snapshot, history: window._aiChatHistory });
     const answer = result.data.answer || 'Sorry, I couldn\'t process that question.';
+
+    window._aiChatHistory.push({ role: 'assistant', content: answer });
 
     // Replace loading with answer
     const loadingEl = document.getElementById(loadingId);
