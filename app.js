@@ -1480,7 +1480,7 @@ async function renderSearchTab(container) {
       <h3 style="font-size:16px; margin-bottom:16px; font-weight:600;">Search & Filter</h3>
       
       <div style="margin-bottom:16px;">
-        <input type="text" id="transaction-search" class="form-input" placeholder="Search by category or notes..." 
+        <input type="text" id="transaction-search" class="form-input" placeholder="Search by category, notes, or client name..." 
           style="width:100%; padding:10px; font-size:14px; margin-bottom:8px;"
           oninput="filterTransactions()">
         
@@ -1494,6 +1494,17 @@ async function renderSearchTab(container) {
           <select id="filter-category" class="form-select" style="flex:1; min-width:120px; padding:8px; font-size:13px;" onchange="filterTransactions()">
             <option value="all">All Categories</option>
           </select>
+        </div>
+        
+        <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px;">
+          <div style="flex:1; min-width:130px;">
+            <label style="font-size:11px; color:var(--text-muted); display:block; margin-bottom:3px;">From Date</label>
+            <input type="date" id="filter-date-from" class="form-input" style="width:100%; padding:8px; font-size:13px;" onchange="filterTransactions()">
+          </div>
+          <div style="flex:1; min-width:130px;">
+            <label style="font-size:11px; color:var(--text-muted); display:block; margin-bottom:3px;">To Date</label>
+            <input type="date" id="filter-date-to" class="form-input" style="width:100%; padding:8px; font-size:13px;" onchange="filterTransactions()">
+          </div>
         </div>
         
         <div style="margin-bottom:8px;">
@@ -1582,6 +1593,10 @@ function clearFilters() {
   if (categoryFilter) categoryFilter.value = 'all';
   if (amountTypeFilter) amountTypeFilter.value = '';
   if (amountInputsContainer) amountInputsContainer.innerHTML = '';
+  const dateFrom = document.getElementById('filter-date-from');
+  const dateTo = document.getElementById('filter-date-to');
+  if (dateFrom) dateFrom.value = '';
+  if (dateTo) dateTo.value = '';
   
   state.transactionsToShow = 30; // Reset pagination
   filterTransactions();
@@ -1684,6 +1699,8 @@ async function renderRecentTransactions() {
   const filterType = document.getElementById('filter-type')?.value || 'all';
   const filterCategory = document.getElementById('filter-category')?.value || 'all';
   const filterAmountType = document.getElementById('filter-amount-type')?.value || '';
+  const filterDateFrom = document.getElementById('filter-date-from')?.value || '';
+  const filterDateTo = document.getElementById('filter-date-to')?.value || '';
   
   // Get amount values based on filter type
   let amountFilter = null;
@@ -1730,6 +1747,10 @@ async function renderRecentTransactions() {
     
     // Category filter
     if (filterCategory !== 'all' && t.category !== filterCategory) return false;
+    
+    // Date filters
+    if (filterDateFrom && t.date < filterDateFrom) return false;
+    if (filterDateTo && t.date > filterDateTo) return false;
     
     // Search filter (search in category, notes, and client name)
     if (searchText) {
@@ -2004,7 +2025,12 @@ async function deleteTransaction(id) {
   try {
     await db.transactions.delete(id);
     showToast('Entry deleted');
-    renderEntriesView();
+    const searchContainer = document.getElementById('search-transactions');
+    if (searchContainer) {
+      await renderRecentTransactions();
+    } else {
+      renderEntriesView();
+    }
   } catch (error) {
     console.error('Error deleting transaction:', error);
     showToast('Error deleting transaction');
@@ -2607,7 +2633,12 @@ async function deleteMonthlyExpenseEntry(id) {
   try {
     await db.monthlyExpenses.delete(id);
     showToast('Deleted');
-    renderEntriesContent();
+    const searchContainer = document.getElementById('search-transactions');
+    if (searchContainer) {
+      await renderRecentTransactions();
+    } else {
+      renderEntriesContent();
+    }
   } catch (err) {
     console.error('Delete error:', err);
     showToast('Error deleting');
@@ -3183,7 +3214,12 @@ async function updateTransaction(id, type) {
 
       closeModal();
       showToast('Moved to monthly expenses ✓');
-      renderEntriesView();
+      const searchContainer2 = document.getElementById('search-transactions');
+      if (searchContainer2) {
+        await renderRecentTransactions();
+      } else {
+        renderEntriesView();
+      }
       return;
     }
 
@@ -3212,7 +3248,20 @@ async function updateTransaction(id, type) {
 
     closeModal();
     showToast('Entry updated ✓');
-    renderEntriesView();
+    
+    // If we're on Browse & Search tab, just refresh the results list (preserving filters + scroll)
+    const searchContainer = document.getElementById('search-transactions');
+    if (searchContainer) {
+      const scrollY = document.querySelector('.app-content')?.scrollTop || window.scrollY;
+      await renderRecentTransactions();
+      requestAnimationFrame(() => {
+        const appContent = document.querySelector('.app-content');
+        if (appContent) appContent.scrollTop = scrollY;
+        else window.scrollTo(0, scrollY);
+      });
+    } else {
+      renderEntriesView();
+    }
 
   } catch (err) {
     console.error('Error updating transaction:', err);
@@ -3559,7 +3608,20 @@ async function updateMonthlyExpense(id) {
 
   closeModal();
   showToast('Expense updated ✓');
-  if (state.currentView === 'entries') { renderEntriesView(); } else { renderMonthlyView(); }
+  const searchContainer = document.getElementById('search-transactions');
+  if (searchContainer) {
+    const scrollY = document.querySelector('.app-content')?.scrollTop || window.scrollY;
+    await renderRecentTransactions();
+    requestAnimationFrame(() => {
+      const appContent = document.querySelector('.app-content');
+      if (appContent) appContent.scrollTop = scrollY;
+      else window.scrollTo(0, scrollY);
+    });
+  } else if (state.currentView === 'entries') {
+    renderEntriesView();
+  } else {
+    renderMonthlyView();
+  }
 }
 
 // ----------------------------------------------------------------
