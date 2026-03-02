@@ -7312,6 +7312,260 @@ function confirmDialog(message, title = 'Mane Frame') {
 
 // Add swipe-down gesture to close modal
 let modalTouchStart = null;
+// ----------------------------------------------------------------
+// AI ASK — Natural language queries
+// ----------------------------------------------------------------
+
+function injectAskButton() {
+  // Remove if already exists
+  if (document.getElementById('ai-ask-btn')) return;
+
+  const btn = document.createElement('button');
+  btn.id = 'ai-ask-btn';
+  btn.innerHTML = '✨';
+  btn.title = 'Ask anything about your business';
+  btn.style.cssText = `
+    position:fixed; bottom:80px; right:16px; z-index:900;
+    width:52px; height:52px; border-radius:50%; border:none;
+    background:linear-gradient(135deg, #5D3854, #8B6B82); color:#fff;
+    font-size:24px; cursor:pointer; box-shadow:0 4px 16px rgba(93,56,84,0.4);
+    display:flex; align-items:center; justify-content:center;
+    transition: transform 0.2s, box-shadow 0.2s;
+  `;
+  btn.onmousedown = () => { btn.style.transform = 'scale(0.92)'; };
+  btn.onmouseup = () => { btn.style.transform = 'scale(1)'; };
+  btn.onclick = openAskOverlay;
+  document.body.appendChild(btn);
+}
+
+function openAskOverlay() {
+  if (document.getElementById('ai-ask-overlay')) {
+    document.getElementById('ai-ask-overlay').style.display = 'flex';
+    document.getElementById('ai-ask-input')?.focus();
+    return;
+  }
+
+  const overlay = document.createElement('div');
+  overlay.id = 'ai-ask-overlay';
+  overlay.style.cssText = `
+    position:fixed; inset:0; z-index:1000; background:var(--bg, #f5f0f0);
+    display:flex; flex-direction:column;
+  `;
+  overlay.innerHTML = `
+    <div style="display:flex;align-items:center;padding:12px 16px;border-bottom:1px solid var(--border-light, #e0d6d6);background:var(--bg-card, #fff);">
+      <button onclick="closeAskOverlay()" style="background:none;border:none;font-size:24px;color:var(--text-muted, #999);cursor:pointer;padding:4px 12px 4px 0;">←</button>
+      <div style="flex:1;font-size:17px;font-weight:700;color:var(--text, #333);">✨ Ask Mane Frame</div>
+    </div>
+    <div id="ai-chat-messages" style="flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:12px;">
+      <div style="background:var(--bg-card, #fff);border-radius:12px;padding:14px 16px;max-width:85%;box-shadow:0 1px 3px rgba(0,0,0,0.04);">
+        <div style="font-size:14px;color:var(--text, #333);line-height:1.5;">
+          Ask me anything about your business! For example:
+        </div>
+        <div style="margin-top:8px;display:flex;flex-direction:column;gap:6px;">
+          <button class="ai-suggestion" onclick="askSuggestion(this)" style="text-align:left;background:rgba(93,56,84,0.06);border:1px solid rgba(93,56,84,0.15);border-radius:8px;padding:8px 12px;font-size:13px;color:var(--plum, #5D3854);cursor:pointer;">How did I do last month?</button>
+          <button class="ai-suggestion" onclick="askSuggestion(this)" style="text-align:left;background:rgba(93,56,84,0.06);border:1px solid rgba(93,56,84,0.15);border-radius:8px;padding:8px 12px;font-size:13px;color:var(--plum, #5D3854);cursor:pointer;">Who are my top clients?</button>
+          <button class="ai-suggestion" onclick="askSuggestion(this)" style="text-align:left;background:rgba(93,56,84,0.06);border:1px solid rgba(93,56,84,0.15);border-radius:8px;padding:8px 12px;font-size:13px;color:var(--plum, #5D3854);cursor:pointer;">What should I focus on to grow revenue?</button>
+        </div>
+      </div>
+    </div>
+    <div style="padding:12px 16px;border-top:1px solid var(--border-light, #e0d6d6);background:var(--bg-card, #fff);display:flex;gap:8px;">
+      <input type="text" id="ai-ask-input" placeholder="Ask about your business…"
+        style="flex:1;padding:12px 16px;border:1px solid var(--border, #ccc);border-radius:24px;font-size:14px;outline:none;background:var(--bg-input, #f9f6f6);"
+        onkeydown="if(event.key==='Enter')sendAskQuery()">
+      <button onclick="sendAskQuery()" style="background:var(--plum, #5D3854);color:#fff;border:none;border-radius:50%;width:44px;height:44px;font-size:18px;cursor:pointer;flex-shrink:0;">→</button>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  document.getElementById('ai-ask-input')?.focus();
+}
+
+function closeAskOverlay() {
+  const overlay = document.getElementById('ai-ask-overlay');
+  if (overlay) overlay.style.display = 'none';
+}
+
+function askSuggestion(btn) {
+  const input = document.getElementById('ai-ask-input');
+  if (input) {
+    input.value = btn.textContent;
+    sendAskQuery();
+  }
+}
+
+async function gatherBusinessSnapshot() {
+  const allTxns = await db.transactions.toArray();
+  const allMExp = await db.monthlyExpenses.toArray();
+  const allSums = await db.dailySummary.toArray();
+  const allRenters = await db.renters.toArray();
+  const allRentPmts = await db.rentPayments.toArray();
+
+  const now = new Date();
+  const curYear = now.getFullYear();
+  const curMonth = now.getMonth() + 1;
+  const yearStr = String(curYear);
+  const employeeCategories = ['Chasity (Vagaro Income)'];
+
+  // Monthly summaries for last 6 months
+  const monthlySummaries = [];
+  for (let i = 0; i < 6; i++) {
+    let m = curMonth - i;
+    let y = curYear;
+    while (m <= 0) { m += 12; y--; }
+    const ms = `${y}-${String(m).padStart(2,'0')}`;
+    const mTxns = allTxns.filter(t => t.date?.startsWith(ms));
+    const mIncome = mTxns.filter(t => t.type === 'INCOME');
+    const mExpenses = mTxns.filter(t => t.type === 'EXPENSE');
+    const mMonthlyExp = allMExp.filter(e => e.year === y && e.month === m);
+
+    const services = mIncome.filter(t => !employeeCategories.includes(t.category))
+      .reduce((s,t) => s + (t.serviceAmount||0), 0);
+    const tips = mIncome.filter(t => !employeeCategories.includes(t.category))
+      .reduce((s,t) => s + (t.tipAmount||0), 0);
+    const employeeInc = mIncome.filter(t => employeeCategories.includes(t.category))
+      .reduce((s,t) => s + (t.serviceAmount||0) + (t.tipAmount||0), 0);
+    const dailyExp = mExpenses.reduce((s,t) => s + (t.amount||0), 0);
+    const monthlyExp = mMonthlyExp.reduce((s,e) => s + (e.amount||0), 0);
+    const rentCollected = allRentPmts.filter(p => p.datePaid?.startsWith(ms))
+      .reduce((s,p) => s + (p.amount||0), 0);
+
+    const mSums = allSums.filter(s => s.date?.startsWith(ms));
+    const clients = mSums.reduce((s,d) => s + (d.clientsSeen||0), 0);
+
+    monthlySummaries.push({
+      month: monthName(m), year: y,
+      services, tips, employeeIncome: employeeInc,
+      dailyExpenses: dailyExp, monthlyExpenses: monthlyExp,
+      totalIncome: services + tips + employeeInc + rentCollected,
+      totalExpenses: dailyExp + monthlyExp,
+      netProfit: services + tips + employeeInc + rentCollected - dailyExp - monthlyExp,
+      rentCollected, clients,
+    });
+  }
+
+  // Top expense categories this year
+  const expByCat = {};
+  allTxns.filter(t => t.date?.startsWith(yearStr) && t.type === 'EXPENSE').forEach(t => {
+    expByCat[t.category] = (expByCat[t.category] || 0) + (t.amount || 0);
+  });
+  allMExp.filter(e => e.year === curYear).forEach(e => {
+    expByCat[e.category] = (expByCat[e.category] || 0) + (e.amount || 0);
+  });
+  const topExpenses = Object.entries(expByCat).sort((a,b) => b[1] - a[1]).slice(0, 10)
+    .map(([cat, amt]) => `${cat}: $${amt.toFixed(2)}`);
+
+  // Income by service category this year
+  const incByCat = {};
+  allTxns.filter(t => t.date?.startsWith(yearStr) && t.type === 'INCOME' && !employeeCategories.includes(t.category)).forEach(t => {
+    incByCat[t.category] = (incByCat[t.category] || 0) + (t.serviceAmount||0) + (t.tipAmount||0);
+  });
+  const topServices = Object.entries(incByCat).sort((a,b) => b[1] - a[1]).slice(0, 8)
+    .map(([cat, amt]) => `${cat}: $${amt.toFixed(2)}`);
+
+  // Client summary
+  const clientMap = {};
+  allTxns.filter(t => t.type === 'INCOME' && t.clientName?.trim() && !employeeCategories.includes(t.category)).forEach(t => {
+    const key = t.clientName.trim().toLowerCase();
+    if (!clientMap[key]) clientMap[key] = { name: t.clientName.trim(), visits: 0, spend: 0, lastVisit: '' };
+    clientMap[key].visits++;
+    clientMap[key].spend += (t.serviceAmount||0) + (t.tipAmount||0);
+    if (t.date > clientMap[key].lastVisit) clientMap[key].lastVisit = t.date;
+  });
+  const clientList = Object.values(clientMap).sort((a,b) => b.spend - a.spend).slice(0, 15)
+    .map(c => `${c.name}: ${c.visits} visits, $${c.spend.toFixed(2)} total, last visit ${c.lastVisit}`);
+
+  // Booth renters
+  const activeRenters = allRenters.filter(r => r.status === 'active');
+  const renterInfo = activeRenters.map(r => `${r.name}: $${r.weeklyRate}/wk`);
+
+  return `
+BUSINESS SNAPSHOT (as of ${now.toLocaleDateString()}):
+Owner: Annette | Business: Hair Salon ("Mane Frame")
+Employee: Chasity (income tracked separately as "Chasity (Vagaro Income)")
+
+MONTHLY PERFORMANCE (last 6 months):
+${monthlySummaries.map(m => `${m.month} ${m.year}: Income $${m.totalIncome.toFixed(0)} (Services $${m.services.toFixed(0)}, Tips $${m.tips.toFixed(0)}, Employee $${m.employeeIncome.toFixed(0)}, Rent $${m.rentCollected.toFixed(0)}) | Expenses $${m.totalExpenses.toFixed(0)} (Daily $${m.dailyExpenses.toFixed(0)}, Monthly $${m.monthlyExpenses.toFixed(0)}) | Net $${m.netProfit.toFixed(0)} | Clients: ${m.clients}`).join('\n')}
+
+TOP INCOME CATEGORIES (YTD):
+${topServices.join('\n')}
+
+TOP EXPENSE CATEGORIES (YTD):
+${topExpenses.join('\n')}
+
+BOOTH RENTERS (${activeRenters.length} active):
+${renterInfo.join('\n') || 'None'}
+
+CLIENT BOOK (top ${clientList.length} by spend):
+${clientList.join('\n') || 'No client names tracked yet'}
+`.trim();
+}
+
+async function sendAskQuery() {
+  const input = document.getElementById('ai-ask-input');
+  const question = input?.value.trim();
+  if (!question) return;
+
+  const messagesEl = document.getElementById('ai-chat-messages');
+
+  // Add user message
+  messagesEl.innerHTML += `
+    <div style="align-self:flex-end;background:var(--plum, #5D3854);color:#fff;border-radius:12px;padding:10px 14px;max-width:85%;font-size:14px;line-height:1.4;">
+      ${question}
+    </div>
+  `;
+
+  // Clear input
+  input.value = '';
+
+  // Add loading indicator
+  const loadingId = 'ai-loading-' + Date.now();
+  messagesEl.innerHTML += `
+    <div id="${loadingId}" style="background:var(--bg-card, #fff);border-radius:12px;padding:14px 16px;max-width:85%;box-shadow:0 1px 3px rgba(0,0,0,0.04);">
+      <div style="font-size:14px;color:var(--text-muted, #999);">Thinking…</div>
+    </div>
+  `;
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+
+  try {
+    const snapshot = await gatherBusinessSnapshot();
+
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 1000,
+        system: `You are a smart business analyst for a hair salon called "Mane Frame" owned by Annette. You have access to the salon's financial data below. Answer questions concisely and specifically using the actual numbers. Be warm and conversational but data-driven. Use dollar amounts and percentages where relevant. Keep responses to 2-4 short paragraphs max. Don't use markdown headers or bullet points — write in natural flowing sentences.
+
+${snapshot}`,
+        messages: [{ role: "user", content: question }],
+      })
+    });
+
+    const data = await response.json();
+    const answer = data.content?.map(b => b.text || '').join('') || 'Sorry, I couldn\'t process that question. Try rephrasing it.';
+
+    // Replace loading with answer
+    const loadingEl = document.getElementById(loadingId);
+    if (loadingEl) {
+      loadingEl.innerHTML = `
+        <div style="font-size:14px;color:var(--text, #333);line-height:1.6;white-space:pre-wrap;">${answer}</div>
+      `;
+    }
+  } catch (error) {
+    console.error('AI Ask error:', error);
+    const loadingEl = document.getElementById(loadingId);
+    if (loadingEl) {
+      loadingEl.innerHTML = `
+        <div style="font-size:14px;color:var(--danger, #C13838);line-height:1.5;">
+          Couldn't reach the AI service. This feature requires an internet connection and API access. Error: ${error.message || 'Unknown'}
+        </div>
+      `;
+    }
+  }
+
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   const modal = document.getElementById('modal');
   const modalHandle = document.querySelector('.modal-handle');
@@ -7350,6 +7604,7 @@ async function bootApp() {
   await loadCategories();
   await loadDirectCostCategories();
   await updateRentersTabVisibility();
+  injectAskButton();
 
   const pinSetting  = await db.settings.get('pin');
   const pinEnabled  = await db.settings.get('pinEnabled');
