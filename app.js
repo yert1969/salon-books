@@ -7431,6 +7431,8 @@ async function gatherBusinessSnapshot() {
 
     const mSums = allSums.filter(s => s.date?.startsWith(ms));
     const clients = mSums.reduce((s,d) => s + (d.clientsSeen||0), 0);
+    const incomeEntries = mIncome.filter(t => !employeeCategories.includes(t.category)).length;
+    const uniqueClients = new Set(mIncome.filter(t => t.clientName?.trim() && !employeeCategories.includes(t.category)).map(t => t.clientName.trim().toLowerCase())).size;
 
     monthlySummaries.push({
       month: monthName(m), year: y,
@@ -7439,7 +7441,7 @@ async function gatherBusinessSnapshot() {
       totalIncome: services + tips + employeeInc + rentCollected,
       totalExpenses: dailyExp + monthlyExp,
       netProfit: services + tips + employeeInc + rentCollected - dailyExp - monthlyExp,
-      rentCollected, clients,
+      rentCollected, clients, incomeEntries, uniqueClients,
     });
   }
 
@@ -7510,7 +7512,7 @@ Owner: Annette | Business: Hair Salon ("Mane Frame")
 Employee: Chasity (income tracked separately as "Chasity (Vagaro Income)")
 
 MONTHLY PERFORMANCE (last 6 months):
-${monthlySummaries.map(m => `${m.month} ${m.year}: Income $${m.totalIncome.toFixed(0)} (Services $${m.services.toFixed(0)}, Tips $${m.tips.toFixed(0)}, Employee $${m.employeeIncome.toFixed(0)}, Rent $${m.rentCollected.toFixed(0)}) | Expenses $${m.totalExpenses.toFixed(0)} (Daily $${m.dailyExpenses.toFixed(0)}, Monthly $${m.monthlyExpenses.toFixed(0)}) | Net $${m.netProfit.toFixed(0)} | Clients: ${m.clients}`).join('\n')}
+${monthlySummaries.map(m => `${m.month} ${m.year}: Income $${m.totalIncome.toFixed(0)} (Services $${m.services.toFixed(0)}, Tips $${m.tips.toFixed(0)}, Employee $${m.employeeIncome.toFixed(0)}, Rent $${m.rentCollected.toFixed(0)}) | Expenses $${m.totalExpenses.toFixed(0)} (Daily $${m.dailyExpenses.toFixed(0)}, Monthly $${m.monthlyExpenses.toFixed(0)}) | Net $${m.netProfit.toFixed(0)} | Clients logged: ${m.clients}, Income entries: ${m.incomeEntries}, Unique named clients: ${m.uniqueClients}`).join('\n')}
 
 TOP INCOME CATEGORIES (YTD):
 ${topServices.join('\n')}
