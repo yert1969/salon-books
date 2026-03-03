@@ -801,7 +801,7 @@ async function buildDashboard() {
     const monthsWithData = new Set(allTxns.filter(t => t.date?.startsWith(yearStr) && t.type === 'INCOME').map(t => t.date?.substring(0,7))).size;
     const avgMonthlyIncome = monthsWithData > 0 ? ytdIncome / monthsWithData : mtdIncome;
     const projectedAnnualIncome = avgMonthlyIncome * 12;
-    const projectedAnnualRent = allRenters.reduce((s,r) => s + (r.weeklyRate||0), 0) * 52;
+    const projectedAnnualRent = allRenters.reduce((s,r) => s + getCurrentRate(r), 0) * 52;
     const projectedTotalRevenue = projectedAnnualIncome + projectedAnnualRent;
     const ytdTotalRevenue = ytdIncome + ytdRentCollected;
 
@@ -822,7 +822,7 @@ async function buildDashboard() {
     const ws = getWeekStart(viewToday);
     const weekRentPmts = allRentPmts.filter(p => p.weekStart === ws);
     const rentCollected = weekRentPmts.reduce((s,p) => s + (p.amount||0), 0);
-    const rentExpected  = allRenters.reduce((s,r) => s + (r.weeklyRate||0), 0);
+    const rentExpected  = allRenters.reduce((s,r) => s + getRateForWeek(r, ws), 0);
     const rentersPaid   = new Set(weekRentPmts.map(p => p.renterId)).size;
     const rentOutstanding = Math.max(0, rentExpected - rentCollected);
 
@@ -850,7 +850,12 @@ async function buildDashboard() {
         const lateCount = last6.filter(p => getRentStatus(p.weekStart, p.datePaid) === 'late').length;
 
         if (weeksOverdue > 0) {
-          const owes = weeksOverdue * (r.weeklyRate || 0);
+          let owes = 0;
+          let checkWS2 = ws;
+          for (let w = 0; w < weeksOverdue; w++) {
+            owes += getRateForWeek(r, checkWS2);
+            checkWS2 = addDays(checkWS2, -7);
+          }
           alerts.push({
             type: 'danger',
             icon: '🔴',
@@ -1040,7 +1045,7 @@ async function buildDashboard() {
       <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border-light);">
         <div>
           <div style="font-size:14px;font-weight:500;">Projected Annual Booth Rent</div>
-          <div style="font-size:11px;color:var(--text-muted);">${allRenters.length} renters × ${fmt(allRenters.length > 0 ? allRenters[0].weeklyRate || 140 : 140)}/wk × 52 wks</div>
+          <div style="font-size:11px;color:var(--text-muted);">${allRenters.length} renters × ${fmt(allRenters.length > 0 ? getCurrentRate(allRenters[0]) || 140 : 140)}/wk × 52 wks</div>
         </div>
         <div style="font-size:18px;font-weight:700;color:var(--success);text-align:right;">${fmt(projectedAnnualRent)}</div>
       </div>
@@ -4588,7 +4593,7 @@ async function runMonthlyReport() {
   const monthRent   = allRentPmts.filter(p => p.datePaid && p.datePaid.startsWith(monthStr));
   const rentTotal   = monthRent.reduce((s,p)=>s+(p.amount||0),0);
   const renters     = await db.renters.where('status').equals('active').toArray();
-  const expectedRent = renters.reduce((s,r)=>s+(r.weeklyRate||0),0) * 4;
+  const expectedRent = renters.reduce((s,r)=>s+getCurrentRate(r),0) * 4;
 
   // Net profit calculation: Services + Tips + Booth Rent (income from renters) - Expenses
   const net       = svcTotal + tipTotal + rentTotal - totalExp;
@@ -5446,12 +5451,20 @@ async function runBoothRentReport() {
       expectedWeeks++;
       cursor = addDays(cursor, 7);
     }
-    const expectedAmt = expectedWeeks * (r.weeklyRate || 0);
+    const expectedAmt = (() => {
+      let total = 0;
+      let cursor = getWeekStart(rangeStart);
+      while (cursor <= rangeEnd) {
+        total += getRateForWeek(r, cursor);
+        cursor = addDays(cursor, 7);
+      }
+      return total;
+    })();
     const outstanding = Math.max(0, expectedAmt - totalPaid);
     const overpaid = Math.max(0, totalPaid - expectedAmt);
 
     return {
-      id: r.id, name: r.name, booth: r.booth, rate: r.weeklyRate || 0,
+      id: r.id, name: r.name, booth: r.booth, rate: getCurrentRate(r),
       status: r.status, startDate: r.startDate,
       totalPaid, onTime, late, total, onTimePct, months,
       avgDaysToPay, maxStreak, currentStreak,
@@ -6334,6 +6347,43 @@ function getWeekDue(weekStart) { return addDays(weekStart, 5); } // Saturday
 function nextWeekStart(ws) { return addDays(ws, 7); }
 function prevWeekStart(ws) { return addDays(ws, -7); }
 
+// Rate history helpers
+// rateHistory is an array of { rate, effectiveDate } sorted by effectiveDate asc
+// Falls back to r.weeklyRate if no rateHistory exists (backward compat)
+function getRateForWeek(r, weekStart) {
+  const hist = r.rateHistory;
+  if (!hist || hist.length === 0) return r.weeklyRate || 0;
+  // Find the most recent rate effective on or before weekStart
+  let rate = hist[0].rate; // default to earliest rate
+  for (const entry of hist) {
+    if (entry.effectiveDate <= weekStart) {
+      rate = entry.rate;
+    } else {
+      break;
+    }
+  }
+  return rate;
+}
+
+function getCurrentRate(r) {
+  return getRateForWeek(r, todayStr());
+}
+
+function sortRateHistory(hist) {
+  return (hist || []).slice().sort((a, b) => a.effectiveDate.localeCompare(b.effectiveDate));
+}
+
+// Migrate a renter's flat weeklyRate to rateHistory format if needed
+function ensureRateHistory(r) {
+  if (!r.rateHistory || r.rateHistory.length === 0) {
+    r.rateHistory = [{ rate: r.weeklyRate || 0, effectiveDate: r.startDate || '2024-01-01' }];
+  }
+  r.rateHistory = sortRateHistory(r.rateHistory);
+  // Keep weeklyRate in sync with current rate for backward compat
+  r.weeklyRate = getCurrentRate(r);
+  return r;
+}
+
 function formatWeekRange(ws) {
   const end = addDays(ws, 6);
   const s   = new Date(ws  + 'T12:00:00');
@@ -6370,7 +6420,7 @@ async function renderRentersView() {
   const payMap = {};
   payments.forEach(p => { payMap[p.renterId] = p; });
 
-  const expectedTotal  = renters.reduce((s, r) => s + (r.weeklyRate || 0), 0);
+  const expectedTotal  = renters.reduce((s, r) => s + getRateForWeek(r, state.renterWeekStart), 0);
   const collectedTotal = payments.reduce((s, p) => s + (p.amount || 0), 0);
   const outstanding    = expectedTotal - collectedTotal;
 
@@ -6425,11 +6475,11 @@ async function renderRentersView() {
               <div class="renter-meta">
                 ${p
                   ? `Paid ${formatDateDisplay(p.datePaid)} · ${p.paymentMethod} · <span class="${statusClass}">${statusLabel}</span>`
-                  : `<span class="${statusClass}">Not yet paid</span> · Due ${fmt(r.weeklyRate || 0)}`}
+                  : `<span class="${statusClass}">Not yet paid</span> · Due ${fmt(getRateForWeek(r, state.renterWeekStart))}`}
               </div>
             </div>
             <div class="renter-amount">
-              <div style="font-weight:700;color:${p ? 'var(--success)' : 'var(--text-muted)'}">${p ? fmt(p.amount) : fmt(r.weeklyRate || 0)}</div>
+              <div style="font-weight:700;color:${p ? 'var(--success)' : 'var(--text-muted)'}">${p ? fmt(p.amount) : fmt(getRateForWeek(r, state.renterWeekStart))}</div>
               ${!p ? `<button class="renter-pay-btn" onclick="event.stopPropagation();openLogPaymentModal('${r.id}')">Log Payment</button>`
                    : `<button class="renter-pay-btn" style="background:var(--bg-card);color:var(--text-muted);font-size:10px;padding:2px 8px;" onclick="event.stopPropagation();openEditRentPayment('${p.id}','${r.id}')">Edit</button>`}
             </div>
@@ -6457,7 +6507,7 @@ function openLogPaymentModal(renterId) {
 
       <label class="form-label">Amount Paid ($)</label>
       <input type="number" inputmode="decimal" class="form-input" id="rp-amount"
-        value="${r.weeklyRate || 140}" step="0.01" min="0">
+        value="${getRateForWeek(r, state.renterWeekStart) || 140}" step="0.01" min="0">
 
       <label class="form-label">Date Paid</label>
       <input type="date" class="form-input" id="rp-date" value="${todayStr()}">
@@ -6598,11 +6648,17 @@ function openRenterDetail(renterId) {
           </div>`;
         }).join('');
 
+    ensureRateHistory(r);
+    const curRate = getCurrentRate(r);
+    const rateNote = r.rateHistory && r.rateHistory.length > 1
+      ? ` <span style="font-size:11px;color:var(--text-muted);">(was ${fmt(r.rateHistory[0].rate)})</span>`
+      : '';
+
     openModal(`
       <h2 class="modal-title">${r.name}</h2>
       <div style="display:flex;gap:12px;margin-bottom:14px;font-size:13px;color:var(--text-muted);">
         ${r.booth ? `<span>Booth ${r.booth}</span>` : ''}
-        <span>${fmt(r.weeklyRate || 0)}/week</span>
+        <span>${fmt(curRate)}/week${rateNote}</span>
         <span>Since ${r.startDate ? formatDateDisplay(r.startDate) : '—'}</span>
       </div>
 
@@ -6654,6 +6710,7 @@ async function saveNewRenter() {
     name,
     booth:      booth || null,
     weeklyRate: rate || 140,
+    rateHistory: [{ rate: rate || 140, effectiveDate: start || todayStr() }],
     startDate:  start,
     notes,
     status:     'active',
@@ -6670,6 +6727,19 @@ async function saveNewRenter() {
 function openEditRenterModal(renterId) {
   db.renters.get(renterId).then(r => {
     if (!r) return;
+    ensureRateHistory(r);
+    
+    const rateHistoryHTML = r.rateHistory.map((entry, idx) => `
+      <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:${idx === r.rateHistory.length - 1 ? 'rgba(93,56,84,0.08)' : 'var(--bg-input, #f9f6f6)'};border-radius:8px;margin-bottom:6px;">
+        <div style="flex:1;">
+          <span style="font-weight:600;font-size:14px;color:var(--text);">${fmt(entry.rate)}/wk</span>
+          <span style="font-size:12px;color:var(--text-muted);margin-left:8px;">starting ${formatDateDisplay(entry.effectiveDate)}</span>
+          ${idx === r.rateHistory.length - 1 ? '<span style="font-size:10px;background:var(--plum);color:#fff;padding:1px 6px;border-radius:4px;margin-left:6px;">Current</span>' : ''}
+        </div>
+        ${r.rateHistory.length > 1 ? `<button onclick="removeRateEntry('${renterId}', ${idx})" style="background:none;border:none;color:var(--danger);font-size:18px;cursor:pointer;padding:4px;">✕</button>` : ''}
+      </div>
+    `).join('');
+
     openModal(`
       <h2 class="modal-title">Edit Renter</h2>
 
@@ -6679,8 +6749,24 @@ function openEditRenterModal(renterId) {
       <label class="form-label">Booth #</label>
       <input type="text" class="form-input" id="er-booth" value="${r.booth || ''}">
 
-      <label class="form-label">Weekly Rate ($)</label>
-      <input type="number" inputmode="decimal" class="form-input" id="er-rate" value="${r.weeklyRate || 140}">
+      <label class="form-label" style="margin-bottom:6px;">Weekly Rate</label>
+      <div id="er-rate-history">
+        ${rateHistoryHTML}
+      </div>
+      <div id="er-add-rate-form" style="display:none;margin-bottom:8px;">
+        <div style="display:flex;gap:8px;align-items:end;">
+          <div style="flex:1;">
+            <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:3px;">New Rate ($)</label>
+            <input type="number" inputmode="decimal" class="form-input" id="er-new-rate" placeholder="0.00" step="0.01" min="0" style="padding:8px;">
+          </div>
+          <div style="flex:1;">
+            <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:3px;">Effective Date</label>
+            <input type="date" class="form-input" id="er-new-rate-date" value="${todayStr()}" style="padding:8px;">
+          </div>
+          <button onclick="addRateEntry('${r.id}')" style="background:var(--plum);color:#fff;border:none;border-radius:8px;padding:8px 14px;font-size:13px;cursor:pointer;white-space:nowrap;">Add</button>
+        </div>
+      </div>
+      <button onclick="document.getElementById('er-add-rate-form').style.display='block';this.style.display='none';" class="btn-secondary" style="width:100%;padding:8px;font-size:12px;margin-bottom:12px;" id="er-show-rate-btn">+ Add Rate Change</button>
 
       <label class="form-label">Start Date</label>
       <input type="date" class="form-input" id="er-start" value="${r.startDate || ''}">
@@ -6693,16 +6779,57 @@ function openEditRenterModal(renterId) {
   });
 }
 
+async function addRateEntry(renterId) {
+  const newRate = parseFloat(document.getElementById('er-new-rate').value);
+  const newDate = document.getElementById('er-new-rate-date').value;
+  if (!newRate || newRate <= 0) { showToast('Enter a valid rate'); return; }
+  if (!newDate) { showToast('Enter an effective date'); return; }
+
+  const r = await db.renters.get(renterId);
+  ensureRateHistory(r);
+  
+  // Check for duplicate date
+  if (r.rateHistory.some(e => e.effectiveDate === newDate)) {
+    showToast('A rate already exists for that date'); return;
+  }
+
+  r.rateHistory.push({ rate: newRate, effectiveDate: newDate });
+  r.rateHistory = sortRateHistory(r.rateHistory);
+  r.weeklyRate = getCurrentRate(r);
+
+  await db.renters.update(renterId, { rateHistory: r.rateHistory, weeklyRate: r.weeklyRate });
+  showToast('Rate added ✓');
+  openEditRenterModal(renterId); // Refresh modal
+}
+
+async function removeRateEntry(renterId, idx) {
+  const r = await db.renters.get(renterId);
+  ensureRateHistory(r);
+  if (r.rateHistory.length <= 1) { showToast('Must have at least one rate'); return; }
+  
+  r.rateHistory.splice(idx, 1);
+  r.rateHistory = sortRateHistory(r.rateHistory);
+  r.weeklyRate = getCurrentRate(r);
+
+  await db.renters.update(renterId, { rateHistory: r.rateHistory, weeklyRate: r.weeklyRate });
+  showToast('Rate removed');
+  openEditRenterModal(renterId); // Refresh modal
+}
+
 async function saveEditRenter(renterId) {
   const name  = document.getElementById('er-name').value.trim();
   const booth = document.getElementById('er-booth').value.trim();
-  const rate  = parseFloat(document.getElementById('er-rate').value);
   const startDate = document.getElementById('er-start').value || null;
   const notes = document.getElementById('er-notes').value.trim();
 
   if (!name) { showToast('Name is required'); return; }
 
-  await db.renters.update(renterId, { name, booth: booth || null, weeklyRate: rate, startDate, notes });
+  // Rate history is managed by addRateEntry/removeRateEntry — just read current state
+  const r = await db.renters.get(renterId);
+  ensureRateHistory(r);
+  const weeklyRate = getCurrentRate(r);
+
+  await db.renters.update(renterId, { name, booth: booth || null, weeklyRate, startDate, notes });
   closeModal();
   showToast('Renter updated ✓');
   renderRentersView();
@@ -7565,7 +7692,7 @@ async function gatherBusinessSnapshot() {
         recentWeeks.push('missed');
       }
     }
-    return `${r.name}: $${r.weeklyRate}/wk, ${pmts.length} total payments ($${totalPaid.toFixed(0)}), last paid ${lastPaid}, last 8 weeks: ${onTime} on-time, ${late} late, ${missed} missed [${recentWeeks.join(', ')}]`;
+    return `${r.name}: $${getCurrentRate(r)}/wk, ${pmts.length} total payments ($${totalPaid.toFixed(0)}), last paid ${lastPaid}, last 8 weeks: ${onTime} on-time, ${late} late, ${missed} missed [${recentWeeks.join(', ')}]`;
   });
 
   return `
