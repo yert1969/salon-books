@@ -432,14 +432,18 @@ async function loadCategories() {
           }
 
           if (fbCategories) {
-            // MERGE: take the union of local + Firebase so we never lose categories
+            // MERGE: take the union of local + Firebase + defaults so we never lose categories
+            const defaults = _defaultCategoryMap();
             if (localCategories) {
               state.categories = {
-                INCOME: [...new Set([...fbCategories.INCOME, ...localCategories.INCOME])],
-                EXPENSE: [...new Set([...fbCategories.EXPENSE, ...localCategories.EXPENSE])],
+                INCOME: [...new Set([...defaults.INCOME, ...fbCategories.INCOME, ...localCategories.INCOME])],
+                EXPENSE: [...new Set([...defaults.EXPENSE, ...fbCategories.EXPENSE, ...localCategories.EXPENSE])],
               };
             } else {
-              state.categories = fbCategories;
+              state.categories = {
+                INCOME: [...new Set([...defaults.INCOME, ...fbCategories.INCOME])],
+                EXPENSE: [...new Set([...defaults.EXPENSE, ...fbCategories.EXPENSE])],
+              };
             }
 
             // Use defaults if still empty
