@@ -362,12 +362,17 @@ function _defaultCategoryMap() {
     INCOME: [
       'Haircut', 'Color', 'Highlights', 'Blowout', 'Treatment',
       'Nails', 'Waxing', 'Retail Product', 'Other',
+      'Chasity (Vagaro Income)', "Women's haircut", 'Roots, hilites haircut',
+      'Full highlights haircut', 'Roots & haircut', 'Roots and hilites with haircut',
+      'Partial highlights haircut', "Men's haircut", 'Highlites and Haircut',
     ],
     EXPENSE: [
       'Supplies', 'Products', 'Tools/Equipment', 'Advertising',
-      'Education', 'Meals', 'Employee Pay', 'Rent', 'Electric', 
-      'Water', 'Gas', 'Insurance', 'Cleaning Service', 
+      'Education', 'Meals', 'Employee Pay', 'Rent', 'Electric',
+      'Water', 'Gas', 'Insurance', 'Cleaning Service',
       'Booking Software', 'Phone', 'Marketing', 'Other',
+      'Numa', 'Aflac', 'Vagaro', 'YouTube TV', 'Garbage Collection',
+      'AT&T Internet', 'State Farm',
     ],
   };
 }
