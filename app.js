@@ -6614,21 +6614,27 @@ async function openCatchUpModal(renterId, totalAmount, datePaid, method, notes) 
   const allPmts = await db.rentPayments.where('renterId').equals(renterId).toArray();
   const paidWeeks = new Set(allPmts.map(p => p.weekStart));
 
-  // Find unpaid weeks going back up to 16 weeks, plus current week
+  // Find unpaid AND underpaid weeks going back up to 16 weeks, plus current week
   const unpaidWeeks = [];
   const ws = state.rentersWeekStart;
   for (let i = 0; i < 16; i++) {
     const weekStart = addDays(ws, -(i * 7));
     // Don't go before renter's start date
     if (r.startDate && weekStart < getWeekStart(r.startDate)) break;
-    if (!paidWeeks.has(weekStart)) {
-      const rate = getRateForWeek(r, weekStart);
-      unpaidWeeks.push({ weekStart, rate });
+    const rate = getRateForWeek(r, weekStart);
+    const existingPmt = allPmts.find(p => p.weekStart === weekStart);
+    if (!existingPmt) {
+      // Fully unpaid
+      unpaidWeeks.push({ weekStart, rate, amountDue: rate, paid: 0, status: 'unpaid' });
+    } else if (existingPmt.amount < rate - 0.01) {
+      // Underpaid — still owes the difference
+      const stillOwes = rate - existingPmt.amount;
+      unpaidWeeks.push({ weekStart, rate, amountDue: stillOwes, paid: existingPmt.amount, status: 'partial' });
     }
   }
 
   if (unpaidWeeks.length === 0) {
-    // No missed weeks — just log as a single payment on current week
+    // No missed or short weeks — just log as a single payment on current week
     await db.rentPayments.add({
       renterId, weekStart: ws, amount: totalAmount, datePaid, paymentMethod: method, notes,
     });
@@ -6638,27 +6644,27 @@ async function openCatchUpModal(renterId, totalAmount, datePaid, method, notes) 
     return;
   }
 
-  // Auto-select: current week first, then oldest unpaid weeks (matches allocation order)
+  // Auto-select: current week first, then oldest unpaid/underpaid weeks
   let remaining = totalAmount;
   const selections = [];
   const currentWS = state.rentersWeekStart;
   
   // Current week first
   const currentWeekEntry = unpaidWeeks.find(w => w.weekStart === currentWS);
-  if (currentWeekEntry && remaining >= currentWeekEntry.rate) {
+  if (currentWeekEntry && remaining >= currentWeekEntry.amountDue) {
     selections.push(currentWeekEntry.weekStart);
-    remaining -= currentWeekEntry.rate;
+    remaining -= currentWeekEntry.amountDue;
   }
   
-  // Then oldest unpaid weeks
+  // Then oldest unpaid/underpaid weeks
   const oldestFirst = [...unpaidWeeks].reverse().filter(w => w.weekStart !== currentWS);
   for (const week of oldestFirst) {
-    if (remaining >= week.rate) {
+    if (remaining >= week.amountDue) {
       selections.push(week.weekStart);
-      remaining -= week.rate;
+      remaining -= week.amountDue;
     }
   }
-  // If there's a remainder, also select the next unpaid week for partial
+  // If there's a remainder, also select the next week for partial
   if (remaining > 0.01) {
     const nextUnpaid = oldestFirst.find(w => !selections.includes(w.weekStart));
     if (nextUnpaid) selections.push(nextUnpaid.weekStart);
@@ -6667,16 +6673,20 @@ async function openCatchUpModal(renterId, totalAmount, datePaid, method, notes) 
   const weeksHTML = unpaidWeeks.map(w => {
     const checked = selections.includes(w.weekStart) ? 'checked' : '';
     const label = formatWeekRange(w.weekStart);
+    const statusLabel = w.weekStart === ws ? 'Current week'
+      : w.status === 'partial' ? `Partial — ${fmt(w.paid)} of ${fmt(w.rate)} paid`
+      : 'Unpaid';
+    const statusColor = w.status === 'partial' ? 'color:var(--plum);' : '';
     return `
       <label style="display:flex;align-items:center;gap:10px;padding:10px;background:var(--bg-input, #f9f6f6);border-radius:8px;margin-bottom:6px;cursor:pointer;">
-        <input type="checkbox" class="catchup-week" value="${w.weekStart}" data-rate="${w.rate}" ${checked}
+        <input type="checkbox" class="catchup-week" value="${w.weekStart}" data-rate="${w.amountDue}" data-fullrate="${w.rate}" data-status="${w.status}" ${checked}
           onchange="updateCatchUpSummary('${renterId}', ${totalAmount})"
           style="width:20px;height:20px;accent-color:var(--plum);">
         <div style="flex:1;">
           <div style="font-size:14px;font-weight:500;">${label}</div>
-          <div style="font-size:12px;color:var(--text-muted);">${w.weekStart === ws ? 'Current week' : 'Missed'}</div>
+          <div style="font-size:12px;${statusColor}color:var(--text-muted);">${statusLabel}</div>
         </div>
-        <div style="font-weight:600;font-size:14px;">${fmt(w.rate)}</div>
+        <div style="font-weight:600;font-size:14px;">${fmt(w.amountDue)}</div>
       </label>
     `;
   }).join('');
@@ -6744,13 +6754,18 @@ async function saveCatchUpPayment(renterId, totalAmount) {
   let allocated = 0;
   const weeks = [];
   checks.forEach(cb => {
-    weeks.push({ weekStart: cb.value, rate: parseFloat(cb.dataset.rate) });
+    weeks.push({
+      weekStart: cb.value,
+      amountDue: parseFloat(cb.dataset.rate), // This is amountDue (could be partial)
+      fullRate: parseFloat(cb.dataset.fullrate || cb.dataset.rate),
+      status: cb.dataset.status || 'unpaid',
+    });
     allocated += parseFloat(cb.dataset.rate);
   });
 
   const remainder = totalAmount - allocated;
 
-  // Allocation order: current week first (full rate), then oldest unpaid weeks get remainder
+  // Allocation order: current week first, then oldest unpaid/underpaid weeks
   const currentWS = state.rentersWeekStart;
   const currentWeek = weeks.find(w => w.weekStart === currentWS);
   const otherWeeks = weeks.filter(w => w.weekStart !== currentWS).sort((a, b) => a.weekStart.localeCompare(b.weekStart));
@@ -6765,13 +6780,13 @@ async function saveCatchUpPayment(renterId, totalAmount) {
     for (let i = 0; i < orderedWeeks.length; i++) {
       const w = orderedWeeks[i];
       let payAmount;
-      if (remaining >= w.rate) {
-        payAmount = w.rate;
+      if (remaining >= w.amountDue) {
+        payAmount = w.amountDue;
       } else {
-        payAmount = remaining; // Partial payment on this week
+        payAmount = remaining; // Partial
       }
       remaining -= payAmount;
-      if (payAmount <= 0) break; // Nothing left to allocate
+      if (payAmount <= 0) break;
 
       const notesParts = [catchUpTag];
       if (userNotes) notesParts.push(userNotes);
@@ -6783,7 +6798,12 @@ async function saveCatchUpPayment(renterId, totalAmount) {
         .first();
 
       if (existing) {
-        await db.rentPayments.update(existing.id, { amount: payAmount, datePaid, paymentMethod: method, notes: finalNotes });
+        // Top up existing partial payment
+        const newAmount = existing.amount + payAmount;
+        await db.rentPayments.update(existing.id, {
+          amount: newAmount, datePaid, paymentMethod: method,
+          notes: finalNotes,
+        });
       } else {
         await db.rentPayments.add({
           renterId, weekStart: w.weekStart, amount: payAmount, datePaid,
