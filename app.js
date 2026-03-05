@@ -5201,9 +5201,9 @@ async function runCategoryReport() {
   // Get monthly expenses
   const allMonthlyExp = await db.monthlyExpenses.toArray();
   const monthlyExp = allMonthlyExp.filter(e => {
-    if (!e.month) return false;
-    // Convert month (YYYY-MM) to date for comparison
-    const monthDate = e.month + '-01';
+    if (!e.month || !e.year) return false;
+    // Build a proper date string from the year + month fields
+    const monthDate = `${e.year}-${String(e.month).padStart(2,'0')}-01`;
     return monthDate >= from && monthDate <= to;
   });
 
