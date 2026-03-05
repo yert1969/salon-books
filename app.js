@@ -6508,6 +6508,7 @@ async function renderRentersView() {
                   ? `Paid ${formatDateDisplay(p.datePaid)} · ${p.paymentMethod} · <span class="${statusClass}">${statusLabel}</span>`
                   : `<span class="${statusClass}">Not yet paid</span> · Due ${fmt(getRateForWeek(r, state.renterWeekStart))}`}
               </div>
+              ${p && p.notes && p.notes.includes('catch-up') ? `<div style="font-size:10px;color:var(--plum);margin-top:2px;">↳ ${p.notes}</div>` : ''}
             </div>
             <div class="renter-amount">
               <div style="font-weight:700;color:${p ? 'var(--success)' : 'var(--text-muted)'}">${p ? fmt(p.amount) : fmt(getRateForWeek(r, state.renterWeekStart))}</div>
@@ -6715,7 +6716,7 @@ async function saveCatchUpPayment(renterId, totalAmount) {
 
   const datePaid = document.getElementById('catchup-date').value;
   const method = document.getElementById('catchup-method').value;
-  const notes = document.getElementById('catchup-notes').value;
+  const userNotes = document.getElementById('catchup-notes').value;
 
   let allocated = 0;
   const weeks = [];
@@ -6729,6 +6730,10 @@ async function saveCatchUpPayment(renterId, totalAmount) {
   // Sort weeks newest first
   weeks.sort((a, b) => b.weekStart.localeCompare(a.weekStart));
 
+  // Build catch-up tag for notes
+  const paidDateFmt = formatDateDisplay(datePaid);
+  const catchUpTag = `${fmt(totalAmount)} catch-up paid ${paidDateFmt} (${weeks.length} wks)`;
+
   try {
     for (let i = 0; i < weeks.length; i++) {
       const w = weeks[i];
@@ -6738,17 +6743,21 @@ async function saveCatchUpPayment(renterId, totalAmount) {
         payAmount += remainder;
       }
 
+      const notesParts = [catchUpTag];
+      if (userNotes) notesParts.push(userNotes);
+      const finalNotes = notesParts.join(' · ');
+
       const existing = await db.rentPayments
         .where('renterId').equals(renterId)
         .filter(p => p.weekStart === w.weekStart)
         .first();
 
       if (existing) {
-        await db.rentPayments.update(existing.id, { amount: payAmount, datePaid, paymentMethod: method, notes: notes || 'Catch-up payment' });
+        await db.rentPayments.update(existing.id, { amount: payAmount, datePaid, paymentMethod: method, notes: finalNotes });
       } else {
         await db.rentPayments.add({
           renterId, weekStart: w.weekStart, amount: payAmount, datePaid,
-          paymentMethod: method, notes: notes || 'Catch-up payment',
+          paymentMethod: method, notes: finalNotes,
         });
       }
     }
@@ -6837,6 +6846,7 @@ function openRenterDetail(renterId) {
             <div style="flex:1">
               <div style="font-size:12px;font-weight:500;">${formatWeekRange(p.weekStart)}</div>
               <div style="font-size:11px;color:var(--text-muted);">Paid ${formatDateDisplay(p.datePaid)} · ${p.paymentMethod}</div>
+              ${p.notes && p.notes.includes('catch-up') ? `<div style="font-size:10px;color:var(--plum);margin-top:2px;">↳ ${p.notes}</div>` : ''}
             </div>
             <div style="text-align:right">
               <div style="font-weight:700;color:var(--success);font-size:13px;">${fmt(p.amount)}</div>
