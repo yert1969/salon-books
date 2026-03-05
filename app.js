@@ -379,102 +379,95 @@ function _defaultCategoryMap() {
 async function loadCategories() {
   console.log('🔍 loadCategories() started');
   try {
-    // If logged in, try loading from Firebase first
+    // Load local categories first as our baseline
+    let localCategories = null;
+    const saved = await db.settings.get('categories');
+    if (saved?.value) {
+      const parsed = JSON.parse(saved.value);
+      if (parsed.EXPENSE) {
+        localCategories = {
+          INCOME: parsed.INCOME || [],
+          EXPENSE: parsed.EXPENSE || [],
+        };
+      } else {
+        const dailyExpenses = parsed.DAILY_EXPENSE || [];
+        const monthlyExpenses = parsed.MONTHLY_EXPENSE || [];
+        localCategories = {
+          INCOME: parsed.INCOME || [],
+          EXPENSE: [...new Set([...dailyExpenses, ...monthlyExpenses])],
+        };
+      }
+    }
+
+    // If logged in, try loading from Firebase
     if (auth && auth.currentUser) {
-      console.log('✓ User logged in:', auth.currentUser.uid);
       try {
-        console.log('📥 Fetching categories from Firebase...');
         const doc = await firestore.collection('users')
           .doc(auth.currentUser.uid)
           .collection('settings')
           .doc('categories')
           .get();
         
-        console.log('Firebase doc exists?', doc.exists);
-        
         if (doc.exists) {
-          const firestoreCategories = doc.data();
-          console.log('📦 Firebase data:', JSON.stringify(firestoreCategories));
-          console.log('Firebase has EXPENSE?', !!firestoreCategories.EXPENSE);
-          console.log('Firebase has DAILY_EXPENSE?', !!firestoreCategories.DAILY_EXPENSE);
-          console.log('Firebase has MONTHLY_EXPENSE?', !!firestoreCategories.MONTHLY_EXPENSE);
+          const fb = doc.data();
+          let fbCategories;
           
-          // Support both old and new formats
-          if (firestoreCategories.EXPENSE) {
-            console.log('✓ Using NEW format from Firebase');
-            console.log('EXPENSE count:', firestoreCategories.EXPENSE?.length);
-            // New unified format
-            state.categories = {
-              INCOME: firestoreCategories.INCOME?.length ? firestoreCategories.INCOME : _defaultCategoryMap().INCOME,
-              EXPENSE: firestoreCategories.EXPENSE?.length ? firestoreCategories.EXPENSE : _defaultCategoryMap().EXPENSE,
+          if (fb.EXPENSE) {
+            fbCategories = {
+              INCOME: fb.INCOME || [],
+              EXPENSE: fb.EXPENSE || [],
             };
-          } else if (firestoreCategories.DAILY_EXPENSE || firestoreCategories.MONTHLY_EXPENSE) {
-            console.log('⚠️ Using OLD format from Firebase - migrating locally only');
-            // Old format - merge DAILY_EXPENSE and MONTHLY_EXPENSE locally
-            // Don't auto-save - only user actions should save to Firebase
-            const dailyExpenses = firestoreCategories.DAILY_EXPENSE || [];
-            const monthlyExpenses = firestoreCategories.MONTHLY_EXPENSE || [];
-            const mergedExpenses = [...new Set([...dailyExpenses, ...monthlyExpenses])];
-            console.log('Merged count:', mergedExpenses.length);
-            
-            state.categories = {
-              INCOME: firestoreCategories.INCOME?.length ? firestoreCategories.INCOME : _defaultCategoryMap().INCOME,
-              EXPENSE: mergedExpenses.length > 0 ? mergedExpenses : _defaultCategoryMap().EXPENSE,
+          } else if (fb.DAILY_EXPENSE || fb.MONTHLY_EXPENSE) {
+            const dailyExpenses = fb.DAILY_EXPENSE || [];
+            const monthlyExpenses = fb.MONTHLY_EXPENSE || [];
+            fbCategories = {
+              INCOME: fb.INCOME || [],
+              EXPENSE: [...new Set([...dailyExpenses, ...monthlyExpenses])],
             };
-          } else {
-            console.log('⚠️ Firebase has no recognized format - using defaults locally');
-            // Firebase document exists but has no recognizable fields - use defaults locally
-            state.categories = _defaultCategoryMap();
           }
-          
-          console.log('✓ Set state.categories - INCOME:', state.categories.INCOME?.length, 'EXPENSE:', state.categories.EXPENSE?.length);
-          
-          // Save to local storage as backup
-          await db.settings.put({ key: 'categories', value: JSON.stringify(state.categories) });
-          console.log('✓ Saved to local storage');
-          return;
-        } else {
-          console.log('⚠️ No Firebase document - using defaults locally');
-          // No Firebase document - use defaults locally, DON'T save to Firebase
-          state.categories = _defaultCategoryMap();
+
+          if (fbCategories) {
+            // MERGE: take the union of local + Firebase so we never lose categories
+            if (localCategories) {
+              state.categories = {
+                INCOME: [...new Set([...fbCategories.INCOME, ...localCategories.INCOME])],
+                EXPENSE: [...new Set([...fbCategories.EXPENSE, ...localCategories.EXPENSE])],
+              };
+            } else {
+              state.categories = fbCategories;
+            }
+
+            // Use defaults if still empty
+            if (!state.categories.INCOME.length) state.categories.INCOME = _defaultCategoryMap().INCOME;
+            if (!state.categories.EXPENSE.length) state.categories.EXPENSE = _defaultCategoryMap().EXPENSE;
+
+            console.log('✓ Merged categories - INCOME:', state.categories.INCOME.length, 'EXPENSE:', state.categories.EXPENSE.length);
+            
+            // Save merged result to both local and Firebase
+            await db.settings.put({ key: 'categories', value: JSON.stringify(state.categories) });
+            await firestore.collection('users')
+              .doc(auth.currentUser.uid)
+              .collection('settings')
+              .doc('categories')
+              .set(state.categories);
+            return;
+          }
         }
       } catch (err) {
-        console.error('❌ Firebase error:', err);
-        console.log('Falling through to local storage...');
+        console.error('Firebase category load error:', err);
       }
-    } else {
-      console.log('⚠️ No user logged in');
     }
     
-    // Fallback to local storage
-    const saved = await db.settings.get('categories');
-    if (saved?.value) {
-      const parsed = JSON.parse(saved.value);
-      
-      // Support both formats
-      if (parsed.EXPENSE) {
-        state.categories = {
-          INCOME: parsed.INCOME?.length ? parsed.INCOME : _defaultCategoryMap().INCOME,
-          EXPENSE: parsed.EXPENSE?.length ? parsed.EXPENSE : _defaultCategoryMap().EXPENSE,
-        };
-      } else {
-        // Merge old format
-        const dailyExpenses = parsed.DAILY_EXPENSE || [];
-        const monthlyExpenses = parsed.MONTHLY_EXPENSE || [];
-        const mergedExpenses = [...new Set([...dailyExpenses, ...monthlyExpenses])];
-        
-        state.categories = {
-          INCOME: parsed.INCOME?.length ? parsed.INCOME : _defaultCategoryMap().INCOME,
-          EXPENSE: mergedExpenses.length > 0 ? mergedExpenses : _defaultCategoryMap().EXPENSE,
-        };
-      }
-    } else {
-      // No local storage either - use defaults locally, DON'T save to Firebase
-      state.categories = _defaultCategoryMap();
+    // Use local categories if we have them
+    if (localCategories && localCategories.INCOME.length && localCategories.EXPENSE.length) {
+      state.categories = localCategories;
+      return;
     }
+
+    // Last resort: defaults
+    state.categories = _defaultCategoryMap();
   } catch (e) {
     console.warn('loadCategories error:', e);
-    // On error, use defaults locally, DON'T save to Firebase
     state.categories = _defaultCategoryMap();
   }
 }
