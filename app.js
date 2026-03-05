@@ -6440,7 +6440,15 @@ async function renderRentersView() {
     </button>`;
 
   if (!state.rentersWeekStart) {
-    state.rentersWeekStart = getWeekStart(todayStr());
+    const today = new Date();
+    const dayOfWeek = today.getDay(); // 0=Sun, 6=Sat
+    const currentWS = getWeekStart(todayStr());
+    // Default to previous week unless it's Saturday (rent due day) or Sunday
+    if (dayOfWeek === 6 || dayOfWeek === 0) {
+      state.rentersWeekStart = currentWS;
+    } else {
+      state.rentersWeekStart = prevWeekStart(currentWS);
+    }
   }
 
   const ws       = state.rentersWeekStart;
