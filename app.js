@@ -833,13 +833,17 @@ async function buildDashboard() {
 
     // Late rent payments — check ALL completed weeks for gaps, not just since last payment
     const prevWS = addDays(ws, -7); // Last completed week
+    const yearStartWS = getWeekStart(`${viewYear}-01-01`); // Don't go before this year
+    
     allRenters.forEach(r => {
       ensureRateHistory(r);
       const renterPmts = allRentPmts.filter(p => p.renterId === r.id);
       const paidWeeks = new Set(renterPmts.map(p => p.weekStart));
       
-      // Walk back through all weeks from prevWS to renter start date (or 52 weeks max)
-      const startLimit = r.startDate ? getWeekStart(r.startDate) : addDays(prevWS, -(52 * 7));
+      // Start limit: renter start date or Jan 1 of current year, whichever is later
+      const renterStart = r.startDate ? getWeekStart(r.startDate) : yearStartWS;
+      const startLimit = renterStart > yearStartWS ? renterStart : yearStartWS;
+      
       let checkWS = prevWS;
       let missedWeeks = 0;
       let totalOwed = 0;
