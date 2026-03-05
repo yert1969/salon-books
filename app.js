@@ -6638,14 +6638,30 @@ async function openCatchUpModal(renterId, totalAmount, datePaid, method, notes) 
     return;
   }
 
-  // Auto-select weeks that fit within the total amount, most recent first
+  // Auto-select: current week first, then oldest unpaid weeks (matches allocation order)
   let remaining = totalAmount;
   const selections = [];
-  for (const week of unpaidWeeks) {
+  const currentWS = state.rentersWeekStart;
+  
+  // Current week first
+  const currentWeekEntry = unpaidWeeks.find(w => w.weekStart === currentWS);
+  if (currentWeekEntry && remaining >= currentWeekEntry.rate) {
+    selections.push(currentWeekEntry.weekStart);
+    remaining -= currentWeekEntry.rate;
+  }
+  
+  // Then oldest unpaid weeks
+  const oldestFirst = [...unpaidWeeks].reverse().filter(w => w.weekStart !== currentWS);
+  for (const week of oldestFirst) {
     if (remaining >= week.rate) {
       selections.push(week.weekStart);
       remaining -= week.rate;
     }
+  }
+  // If there's a remainder, also select the next unpaid week for partial
+  if (remaining > 0.01) {
+    const nextUnpaid = oldestFirst.find(w => !selections.includes(w.weekStart));
+    if (nextUnpaid) selections.push(nextUnpaid.weekStart);
   }
 
   const weeksHTML = unpaidWeeks.map(w => {
@@ -6689,9 +6705,8 @@ async function openCatchUpModal(renterId, totalAmount, datePaid, method, notes) 
 
 function updateCatchUpSummary(renterId, totalAmount) {
   const checks = document.querySelectorAll('.catchup-week:checked');
-  let allocated = 0;
-  checks.forEach(cb => { allocated += parseFloat(cb.dataset.rate); });
-  const remainder = totalAmount - allocated;
+  let fullWeeksCost = 0;
+  checks.forEach(cb => { fullWeeksCost += parseFloat(cb.dataset.rate); });
 
   const summaryEl = document.getElementById('catchup-summary');
   if (!summaryEl) return;
@@ -6700,19 +6715,19 @@ function updateCatchUpSummary(renterId, totalAmount) {
     <span>Total payment:</span><strong>${fmt(totalAmount)}</strong>
   </div>
   <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
-    <span>Applied to ${checks.length} week${checks.length !== 1 ? 's' : ''}:</span><strong>${fmt(allocated)}</strong>
+    <span>${checks.length} week${checks.length !== 1 ? 's' : ''} selected:</span><strong>${fmt(fullWeeksCost)}</strong>
   </div>`;
 
-  if (remainder > 0.01) {
-    html += `<div style="display:flex;justify-content:space-between;color:var(--plum);font-weight:600;">
-      <span>Remainder (logged as extra on most recent week):</span><strong>${fmt(remainder)}</strong>
-    </div>`;
-  } else if (remainder < -0.01) {
-    html += `<div style="display:flex;justify-content:space-between;color:var(--danger);font-weight:600;">
-      <span>Over-allocated by:</span><strong>${fmt(Math.abs(remainder))}</strong>
-    </div>`;
+  if (totalAmount >= fullWeeksCost) {
+    html += `<div style="color:var(--success);font-weight:600;text-align:center;">Covers all ${checks.length} weeks ✓</div>`;
   } else {
-    html += `<div style="color:var(--success);font-weight:600;text-align:center;">Exact match ✓</div>`;
+    const shortBy = fullWeeksCost - totalAmount;
+    html += `<div style="font-size:12px;color:var(--text-muted);margin-top:4px;">
+      Current week paid in full, then ${fmt(totalAmount - (checks.length > 0 ? parseFloat(checks[0]?.dataset.rate || 0) : 0))} applied to oldest unpaid weeks
+    </div>
+    <div style="font-size:11px;color:var(--danger);margin-top:2px;">
+      ${fmt(shortBy)} short of full coverage — last week gets partial payment
+    </div>`;
   }
 
   summaryEl.innerHTML = html;
@@ -6735,21 +6750,28 @@ async function saveCatchUpPayment(renterId, totalAmount) {
 
   const remainder = totalAmount - allocated;
 
-  // Sort weeks newest first
-  weeks.sort((a, b) => b.weekStart.localeCompare(a.weekStart));
+  // Allocation order: current week first (full rate), then oldest unpaid weeks get remainder
+  const currentWS = state.rentersWeekStart;
+  const currentWeek = weeks.find(w => w.weekStart === currentWS);
+  const otherWeeks = weeks.filter(w => w.weekStart !== currentWS).sort((a, b) => a.weekStart.localeCompare(b.weekStart));
+  const orderedWeeks = currentWeek ? [currentWeek, ...otherWeeks] : otherWeeks;
 
   // Build catch-up tag for notes
   const paidDateFmt = formatDateDisplay(datePaid);
   const catchUpTag = `${fmt(totalAmount)} catch-up paid ${paidDateFmt} (${weeks.length} wks)`;
 
   try {
-    for (let i = 0; i < weeks.length; i++) {
-      const w = weeks[i];
-      let payAmount = w.rate;
-      // Add remainder to the most recent week
-      if (i === 0 && remainder > 0.01) {
-        payAmount += remainder;
+    let remaining = totalAmount;
+    for (let i = 0; i < orderedWeeks.length; i++) {
+      const w = orderedWeeks[i];
+      let payAmount;
+      if (remaining >= w.rate) {
+        payAmount = w.rate;
+      } else {
+        payAmount = remaining; // Partial payment on this week
       }
+      remaining -= payAmount;
+      if (payAmount <= 0) break; // Nothing left to allocate
 
       const notesParts = [catchUpTag];
       if (userNotes) notesParts.push(userNotes);
