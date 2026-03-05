@@ -831,60 +831,80 @@ async function buildDashboard() {
     // ---- Alerts ----
     const alerts = [];
 
-    // Late rent payments — only count completed weeks (not current week)
+    // Late rent payments — check ALL completed weeks for gaps, not just since last payment
     const prevWS = addDays(ws, -7); // Last completed week
     allRenters.forEach(r => {
-      // Check how many completed weeks are unpaid
-      const renterPmts = allRentPmts.filter(p => p.renterId === r.id).sort((a,b) => b.weekStart.localeCompare(a.weekStart));
-      const lastPaid = renterPmts[0];
-      let weeksOverdue = 0;
-      if (lastPaid) {
-        let checkWS = prevWS;
-        while (checkWS > lastPaid.weekStart) {
-          const paid = allRentPmts.some(p => p.renterId === r.id && p.weekStart === checkWS);
-          if (!paid) weeksOverdue++;
-          checkWS = addDays(checkWS, -7);
+      ensureRateHistory(r);
+      const renterPmts = allRentPmts.filter(p => p.renterId === r.id);
+      const paidWeeks = new Set(renterPmts.map(p => p.weekStart));
+      
+      // Walk back through all weeks from prevWS to renter start date (or 52 weeks max)
+      const startLimit = r.startDate ? getWeekStart(r.startDate) : addDays(prevWS, -(52 * 7));
+      let checkWS = prevWS;
+      let missedWeeks = 0;
+      let totalOwed = 0;
+      
+      while (checkWS >= startLimit) {
+        if (!paidWeeks.has(checkWS)) {
+          missedWeeks++;
+          totalOwed += getRateForWeek(r, checkWS);
         }
-      } else if (r.startDate) {
-        // Never paid — count from start date to last completed week
-        let checkWS = prevWS;
-        while (checkWS >= getWeekStart(r.startDate)) {
-          weeksOverdue++;
-          checkWS = addDays(checkWS, -7);
-        }
+        checkWS = addDays(checkWS, -7);
       }
-      // Check late pattern
-      const last6 = renterPmts.slice(0, 6);
-      const lateCount = last6.filter(p => getRentStatus(p.weekStart, p.datePaid) === 'late').length;
+      
+      // Check late pattern from actual payments
+      const sortedPmts = renterPmts.sort((a,b) => b.weekStart.localeCompare(a.weekStart)).slice(0, 6);
+      const lateCount = sortedPmts.filter(p => getRentStatus(p.weekStart, p.datePaid) === 'late').length;
 
-        if (weeksOverdue > 0) {
-          let owes = 0;
-          let checkWS2 = ws;
-          for (let w = 0; w < weeksOverdue; w++) {
-            owes += getRateForWeek(r, checkWS2);
-            checkWS2 = addDays(checkWS2, -7);
-          }
-          alerts.push({
-            type: 'danger',
-            icon: '🔴',
-            title: `${r.name} owes ${fmt(owes)}`,
-            sub: `${weeksOverdue} week${weeksOverdue > 1 ? 's' : ''} past due${lateCount >= 3 ? ` · Pattern: late ${lateCount} of last 6 weeks` : ''}`,
-            priority: 1
-          });
-        }
+      if (missedWeeks > 0) {
+        alerts.push({
+          type: 'danger',
+          icon: '🔴',
+          title: `${r.name} owes ${fmt(totalOwed)}`,
+          sub: `${missedWeeks} week${missedWeeks > 1 ? 's' : ''} unpaid${lateCount >= 3 ? ` · Pattern: late ${lateCount} of last 6 payments` : ''}`,
+          priority: 1
+        });
+      }
     });
 
-    // Rent due reminder (Saturday) - only for current month
-    if (isCurrentMonth) {
-      const todayDay = now.getDay(); // 0=Sun
-      if ((todayDay >= 4 || todayDay === 0) && rentersPaid < allRenters.length && allRenters.length > 0) {
-        const dueDayName = todayDay === 6 ? 'today' : todayDay === 0 ? 'yesterday' : 'Saturday';
+    // YTD rent collection summary - only for current month
+    if (isCurrentMonth && allRenters.length > 0) {
+      let ytdExpected = 0;
+      let ytdCollected = 0;
+      const yearStart = `${viewYear}-01-01`;
+      
+      allRenters.forEach(r => {
+        ensureRateHistory(r);
+        const startLimit = r.startDate && r.startDate > yearStart ? getWeekStart(r.startDate) : getWeekStart(yearStart);
+        let wk = startLimit;
+        while (wk <= prevWS) {
+          ytdExpected += getRateForWeek(r, wk);
+          wk = addDays(wk, 7);
+        }
+      });
+      
+      ytdCollected = allRentPmts
+        .filter(p => p.datePaid >= yearStart && p.datePaid <= todayStr())
+        .reduce((s,p) => s + (p.amount || 0), 0);
+      
+      const ytdOutstanding = Math.max(0, ytdExpected - ytdCollected);
+      const collectionPct = ytdExpected > 0 ? Math.round((ytdCollected / ytdExpected) * 100) : 100;
+      
+      if (ytdOutstanding > 0) {
         alerts.push({
           type: 'warn',
           icon: '⚠️',
-          title: `Booth rent due ${dueDayName}`,
-          sub: `${rentersPaid} of ${allRenters.length} renters paid · ${fmt(rentOutstanding)} outstanding`,
+          title: `${fmt(ytdOutstanding)} booth rent outstanding YTD`,
+          sub: `Collected ${fmt(ytdCollected)} of ${fmt(ytdExpected)} expected (${collectionPct}%)`,
           priority: 2
+        });
+      } else {
+        alerts.push({
+          type: 'good',
+          icon: '✅',
+          title: 'Booth rent fully collected YTD',
+          sub: `${fmt(ytdCollected)} collected · ${collectionPct}% collection rate`,
+          priority: 5
         });
       }
     }
