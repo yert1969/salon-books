@@ -5493,7 +5493,9 @@ async function runBoothRentReport() {
     // Use whichever is earlier: startDate or first payment week — covers renters added late to the app
     const effectiveStart = firstPaymentDate && firstPaymentDate < rStart ? firstPaymentDate : rStart;
     const rangeStart = effectiveStart > `${year}-01-01` ? effectiveStart : `${year}-01-01`;
-    const rangeEnd = `${year}-12-31` < todayStr() ? `${year}-12-31` : todayStr();
+    const currentWS = getWeekStart(todayStr());
+    const lastCompletedWS = addDays(currentWS, -7);
+    const rangeEnd = `${year}-12-31` < lastCompletedWS ? `${year}-12-31` : lastCompletedWS;
     let expectedWeeks = 0;
     let cursor = getWeekStart(rangeStart);
     while (cursor <= rangeEnd) {
