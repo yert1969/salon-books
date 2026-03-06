@@ -3171,6 +3171,7 @@ async function openAddTransactionModal(type) {
 
     <button class="btn-submit" onclick="saveTransaction('${type}')">Save Entry</button>
   `);
+  if (isIncome) setupClientAutocomplete('txn-client');
 }
 
 function toggleTxnFrequency() {
