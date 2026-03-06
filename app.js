@@ -354,6 +354,130 @@ function showToast(msg) {
 }
 
 // ----------------------------------------------------------------
+// CLIENT NAME AUTOCOMPLETE
+// ----------------------------------------------------------------
+
+let _clientNameCache = null;
+let _clientNameCacheTime = 0;
+
+async function getClientNames() {
+  // Cache for 30 seconds to avoid repeated DB queries during typing
+  if (_clientNameCache && Date.now() - _clientNameCacheTime < 30000) return _clientNameCache;
+  
+  const allTxns = await db.transactions.toArray();
+  const names = {};
+  allTxns.forEach(t => {
+    if (t.clientName?.trim()) {
+      const key = t.clientName.trim().toLowerCase();
+      if (!names[key]) names[key] = { name: t.clientName.trim(), count: 0 };
+      names[key].count++;
+    }
+  });
+  // Sort by frequency (most used first)
+  _clientNameCache = Object.values(names).sort((a, b) => b.count - a.count).map(n => n.name);
+  _clientNameCacheTime = Date.now();
+  return _clientNameCache;
+}
+
+function setupClientAutocomplete(inputId) {
+  const input = document.getElementById(inputId);
+  if (!input) return;
+  
+  // Remove any existing autocomplete
+  const existingList = input.parentElement.querySelector('.client-autocomplete');
+  if (existingList) existingList.remove();
+  
+  // Create dropdown container
+  const dropdown = document.createElement('div');
+  dropdown.className = 'client-autocomplete';
+  dropdown.style.cssText = `
+    display:none; position:absolute; left:0; right:0; top:100%;
+    background:var(--bg-card, #fff); border:1px solid var(--border, #ccc);
+    border-radius:0 0 12px 12px; max-height:180px; overflow-y:auto;
+    z-index:100; box-shadow:0 4px 12px rgba(0,0,0,0.1);
+  `;
+  
+  // Wrap input in relative container if not already
+  const wrapper = input.parentElement;
+  if (getComputedStyle(wrapper).position === 'static') {
+    wrapper.style.position = 'relative';
+  }
+  wrapper.appendChild(dropdown);
+  
+  let selectedIdx = -1;
+  
+  input.addEventListener('input', async () => {
+    const val = input.value.trim().toLowerCase();
+    if (val.length < 1) { dropdown.style.display = 'none'; return; }
+    
+    const names = await getClientNames();
+    const matches = names.filter(n => n.toLowerCase().includes(val)).slice(0, 6);
+    
+    if (matches.length === 0 || (matches.length === 1 && matches[0].toLowerCase() === val)) {
+      dropdown.style.display = 'none';
+      return;
+    }
+    
+    selectedIdx = -1;
+    dropdown.innerHTML = matches.map((name, i) => {
+      // Bold the matching portion
+      const idx = name.toLowerCase().indexOf(val);
+      const before = name.substring(0, idx);
+      const match = name.substring(idx, idx + val.length);
+      const after = name.substring(idx + val.length);
+      return `<div class="client-ac-item" data-idx="${i}"
+        style="padding:10px 14px;font-size:14px;cursor:pointer;border-bottom:1px solid var(--border-light, #eee);"
+        onmousedown="selectClientName('${inputId}', '${name.replace(/'/g, "\\'")}')"
+        onmouseenter="this.style.background='rgba(93,56,84,0.06)'"
+        onmouseleave="this.style.background='transparent'">
+        ${before}<strong style="color:var(--plum)">${match}</strong>${after}
+      </div>`;
+    }).join('');
+    dropdown.style.display = 'block';
+  });
+  
+  input.addEventListener('keydown', (e) => {
+    const items = dropdown.querySelectorAll('.client-ac-item');
+    if (items.length === 0 || dropdown.style.display === 'none') return;
+    
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      selectedIdx = Math.min(selectedIdx + 1, items.length - 1);
+      items.forEach((el, i) => el.style.background = i === selectedIdx ? 'rgba(93,56,84,0.06)' : 'transparent');
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      selectedIdx = Math.max(selectedIdx - 1, 0);
+      items.forEach((el, i) => el.style.background = i === selectedIdx ? 'rgba(93,56,84,0.06)' : 'transparent');
+    } else if (e.key === 'Enter' && selectedIdx >= 0) {
+      e.preventDefault();
+      const name = items[selectedIdx]?.textContent.trim();
+      if (name) { input.value = name; dropdown.style.display = 'none'; }
+    } else if (e.key === 'Escape') {
+      dropdown.style.display = 'none';
+    }
+  });
+  
+  input.addEventListener('blur', () => {
+    setTimeout(() => { dropdown.style.display = 'none'; }, 150);
+  });
+  
+  input.addEventListener('focus', () => {
+    if (input.value.trim().length >= 1) input.dispatchEvent(new Event('input'));
+  });
+}
+
+function selectClientName(inputId, name) {
+  const input = document.getElementById(inputId);
+  if (input) {
+    input.value = name;
+    const dropdown = input.parentElement.querySelector('.client-autocomplete');
+    if (dropdown) dropdown.style.display = 'none';
+  }
+  // Invalidate cache so new names appear quickly
+  _clientNameCache = null;
+}
+
+// ----------------------------------------------------------------
 // 7. CATEGORY MANAGEMENT
 // ----------------------------------------------------------------
 
@@ -1528,6 +1652,7 @@ async function renderAddEntryTab(container) {
   
   // Only render recent transactions list if not editing
   if (!isEditing) {
+    setupClientAutocomplete('entry-client');
     await renderRecentTransactionsSimple();
   }
 }
@@ -2326,6 +2451,7 @@ async function saveEntryTransaction() {
     document.getElementById('entry-notes').value = '';
     
     showToast('Entry added ✓');
+    _clientNameCache = null; // Refresh autocomplete with new name
     
     // Refresh simple recent transactions list on Add Entry tab
     await renderRecentTransactionsSimple();
@@ -3245,6 +3371,7 @@ async function openEditTransactionModal(id) {
 
     <button class="btn-submit" onclick="updateTransaction('${id}', '${t.type}')">Save Changes</button>
   `);
+  if (isIncome) setupClientAutocomplete('txn-client');
 }
 
 
