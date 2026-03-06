@@ -831,27 +831,41 @@ async function buildDashboard() {
     // ---- Alerts ----
     const alerts = [];
 
-    // Late rent payments — check ALL completed weeks for gaps, not just since last payment
+    // Late rent payments — check ALL completed weeks, accounting for partial payments
     const prevWS = addDays(ws, -7); // Last completed week
     const yearStartWS = getWeekStart(`${viewYear}-01-01`); // Don't go before this year
     
     allRenters.forEach(r => {
       ensureRateHistory(r);
       const renterPmts = allRentPmts.filter(p => p.renterId === r.id);
-      const paidWeeks = new Set(renterPmts.map(p => p.weekStart));
+      
+      // Build a map of weekStart → amount paid for this renter
+      const paidByWeek = {};
+      renterPmts.forEach(p => {
+        paidByWeek[p.weekStart] = (paidByWeek[p.weekStart] || 0) + (p.amount || 0);
+      });
       
       // Start limit: renter start date or Jan 1 of current year, whichever is later
       const renterStart = r.startDate ? getWeekStart(r.startDate) : yearStartWS;
       const startLimit = renterStart > yearStartWS ? renterStart : yearStartWS;
       
       let checkWS = prevWS;
-      let missedWeeks = 0;
+      let unpaidWeeks = 0;
+      let partialWeeks = 0;
       let totalOwed = 0;
       
       while (checkWS >= startLimit) {
-        if (!paidWeeks.has(checkWS)) {
-          missedWeeks++;
-          totalOwed += getRateForWeek(r, checkWS);
+        const rate = getRateForWeek(r, checkWS);
+        const paid = paidByWeek[checkWS] || 0;
+        const shortfall = rate - paid;
+        
+        if (shortfall > 0.01) {
+          totalOwed += shortfall;
+          if (paid < 0.01) {
+            unpaidWeeks++;
+          } else {
+            partialWeeks++;
+          }
         }
         checkWS = addDays(checkWS, -7);
       }
@@ -860,12 +874,16 @@ async function buildDashboard() {
       const sortedPmts = renterPmts.sort((a,b) => b.weekStart.localeCompare(a.weekStart)).slice(0, 6);
       const lateCount = sortedPmts.filter(p => getRentStatus(p.weekStart, p.datePaid) === 'late').length;
 
-      if (missedWeeks > 0) {
+      if (totalOwed > 0.01) {
+        const weekDetail = [];
+        if (unpaidWeeks > 0) weekDetail.push(`${unpaidWeeks} unpaid`);
+        if (partialWeeks > 0) weekDetail.push(`${partialWeeks} partial`);
+        
         alerts.push({
           type: 'danger',
           icon: '🔴',
           title: `${r.name} owes ${fmt(totalOwed)}`,
-          sub: `${missedWeeks} week${missedWeeks > 1 ? 's' : ''} unpaid${lateCount >= 3 ? ` · Pattern: late ${lateCount} of last 6 payments` : ''}`,
+          sub: `${weekDetail.join(', ')} week${(unpaidWeeks + partialWeeks) > 1 ? 's' : ''}${lateCount >= 3 ? ` · Pattern: late ${lateCount} of last 6 payments` : ''}`,
           priority: 1
         });
       }
