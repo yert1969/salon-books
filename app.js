@@ -383,28 +383,29 @@ function setupClientAutocomplete(inputId) {
   const input = document.getElementById(inputId);
   if (!input) return;
   
-  // Remove any existing autocomplete
-  const existingList = input.parentElement.querySelector('.client-autocomplete');
+  // Remove any existing autocomplete dropdown
+  const existingList = document.getElementById('client-ac-dropdown');
   if (existingList) existingList.remove();
   
-  // Create dropdown container
+  // Create dropdown as a direct child of body so it's never clipped
   const dropdown = document.createElement('div');
-  dropdown.className = 'client-autocomplete';
+  dropdown.id = 'client-ac-dropdown';
   dropdown.style.cssText = `
-    display:none; position:absolute; left:0; right:0; top:100%;
-    background:var(--bg-card, #fff); border:1px solid var(--border, #ccc);
+    display:none; position:fixed; 
+    background:#fff; border:1px solid #ccc;
     border-radius:0 0 12px 12px; max-height:180px; overflow-y:auto;
-    z-index:100; box-shadow:0 4px 12px rgba(0,0,0,0.1);
+    z-index:9999; box-shadow:0 4px 12px rgba(0,0,0,0.15);
   `;
-  
-  // Wrap input in relative container if not already
-  const wrapper = input.parentElement;
-  if (getComputedStyle(wrapper).position === 'static') {
-    wrapper.style.position = 'relative';
-  }
-  wrapper.appendChild(dropdown);
+  document.body.appendChild(dropdown);
   
   let selectedIdx = -1;
+  
+  function positionDropdown() {
+    const rect = input.getBoundingClientRect();
+    dropdown.style.left = rect.left + 'px';
+    dropdown.style.top = rect.bottom + 'px';
+    dropdown.style.width = rect.width + 'px';
+  }
   
   input.addEventListener('input', async () => {
     const val = input.value.trim().toLowerCase();
@@ -420,19 +421,21 @@ function setupClientAutocomplete(inputId) {
     
     selectedIdx = -1;
     dropdown.innerHTML = matches.map((name, i) => {
-      // Bold the matching portion
       const idx = name.toLowerCase().indexOf(val);
       const before = name.substring(0, idx);
       const match = name.substring(idx, idx + val.length);
       const after = name.substring(idx + val.length);
       return `<div class="client-ac-item" data-idx="${i}"
-        style="padding:10px 14px;font-size:14px;cursor:pointer;border-bottom:1px solid var(--border-light, #eee);"
-        onmousedown="selectClientName('${inputId}', '${name.replace(/'/g, "\\'")}')"
+        style="padding:10px 14px;font-size:14px;cursor:pointer;border-bottom:1px solid #eee;background:#fff;"
+        onmousedown="document.getElementById('${inputId}').value='${name.replace(/'/g, "\\'")}';document.getElementById('client-ac-dropdown').style.display='none';_clientNameCache=null;"
+        ontouchstart="document.getElementById('${inputId}').value='${name.replace(/'/g, "\\'")}';document.getElementById('client-ac-dropdown').style.display='none';_clientNameCache=null;"
         onmouseenter="this.style.background='rgba(93,56,84,0.06)'"
-        onmouseleave="this.style.background='transparent'">
-        ${before}<strong style="color:var(--plum)">${match}</strong>${after}
+        onmouseleave="this.style.background='#fff'">
+        ${before}<strong style="color:#5D3854">${match}</strong>${after}
       </div>`;
     }).join('');
+    
+    positionDropdown();
     dropdown.style.display = 'block';
   });
   
@@ -443,11 +446,11 @@ function setupClientAutocomplete(inputId) {
     if (e.key === 'ArrowDown') {
       e.preventDefault();
       selectedIdx = Math.min(selectedIdx + 1, items.length - 1);
-      items.forEach((el, i) => el.style.background = i === selectedIdx ? 'rgba(93,56,84,0.06)' : 'transparent');
+      items.forEach((el, i) => el.style.background = i === selectedIdx ? 'rgba(93,56,84,0.06)' : '#fff');
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
       selectedIdx = Math.max(selectedIdx - 1, 0);
-      items.forEach((el, i) => el.style.background = i === selectedIdx ? 'rgba(93,56,84,0.06)' : 'transparent');
+      items.forEach((el, i) => el.style.background = i === selectedIdx ? 'rgba(93,56,84,0.06)' : '#fff');
     } else if (e.key === 'Enter' && selectedIdx >= 0) {
       e.preventDefault();
       const name = items[selectedIdx]?.textContent.trim();
@@ -458,7 +461,7 @@ function setupClientAutocomplete(inputId) {
   });
   
   input.addEventListener('blur', () => {
-    setTimeout(() => { dropdown.style.display = 'none'; }, 150);
+    setTimeout(() => { dropdown.style.display = 'none'; }, 200);
   });
   
   input.addEventListener('focus', () => {
@@ -470,10 +473,9 @@ function selectClientName(inputId, name) {
   const input = document.getElementById(inputId);
   if (input) {
     input.value = name;
-    const dropdown = input.parentElement.querySelector('.client-autocomplete');
+    const dropdown = document.getElementById('client-ac-dropdown');
     if (dropdown) dropdown.style.display = 'none';
   }
-  // Invalidate cache so new names appear quickly
   _clientNameCache = null;
 }
 
