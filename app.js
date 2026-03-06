@@ -1651,10 +1651,10 @@ async function renderAddEntryTab(container) {
   `;
   
   updateEntryForm();
+  setupClientAutocomplete('entry-client');
   
   // Only render recent transactions list if not editing
   if (!isEditing) {
-    setupClientAutocomplete('entry-client');
     await renderRecentTransactionsSimple();
   }
 }
