@@ -820,13 +820,17 @@ async function buildDashboard() {
     }
     const maxTrend = Math.max(...trendMonths.map(m => m.income), 1);
 
-    // ---- Booth rent this week ----
+    // ---- Booth rent last completed week ----
     const ws = getWeekStart(viewToday);
-    const weekRentPmts = allRentPmts.filter(p => p.weekStart === ws);
+    const rentDayOfWeek = new Date().getDay(); // 0=Sun, 6=Sat
+    // Show current week on Sat/Sun (when rent is due/just due), otherwise show previous week
+    const rentDisplayWS = (isCurrentMonth && (rentDayOfWeek === 6 || rentDayOfWeek === 0)) ? ws : addDays(ws, -7);
+    const weekRentPmts = allRentPmts.filter(p => p.weekStart === rentDisplayWS);
     const rentCollected = weekRentPmts.reduce((s,p) => s + (p.amount||0), 0);
-    const rentExpected  = allRenters.reduce((s,r) => s + getRateForWeek(r, ws), 0);
+    const rentExpected  = allRenters.reduce((s,r) => s + getRateForWeek(r, rentDisplayWS), 0);
     const rentersPaid   = new Set(weekRentPmts.map(p => p.renterId)).size;
     const rentOutstanding = Math.max(0, rentExpected - rentCollected);
+    const rentWeekLabel = (rentDisplayWS === ws) ? 'This Week' : 'Last Week';
 
     // ---- Alerts ----
     const alerts = [];
@@ -1174,7 +1178,7 @@ async function buildDashboard() {
     if (allRenters.length > 0) {
       html += `
       <div style="padding:0 16px;margin-bottom:8px;">
-        <div style="font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--text-muted);font-weight:600;margin-bottom:10px;">🏠 Booth Rent This Week</div>
+        <div style="font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--text-muted);font-weight:600;margin-bottom:10px;">🏠 Booth Rent ${rentWeekLabel}</div>
       </div>
       <div style="margin:0 16px 16px;background:var(--bg-card);border-radius:16px;padding:16px 20px;box-shadow:0 1px 4px rgba(0,0,0,0.04);display:flex;justify-content:space-between;align-items:center;">
         <div>
