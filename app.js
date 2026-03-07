@@ -8163,14 +8163,21 @@ async function sendAskQuery() {
   try {
     if (!window._aiChatHistory) window._aiChatHistory = [];
     const snapshot = window._aiChatHistory.length === 0 ? await gatherBusinessSnapshot() : '';
-    window._aiChatHistory.push({ role: 'user', content: question });
+    console.log('Snapshot length:', snapshot ? snapshot.length : 0);
 
-    // Call Firebase Cloud Function (API key is server-side)
+    // Call Firebase Cloud Function - pass history WITHOUT current message
     const askAI = firebase.functions().httpsCallable('askAI');
-    const result = await askAI({ question, snapshot, history: window._aiChatHistory });
+    const result = await askAI({ question, snapshot, history: [...window._aiChatHistory] });
     const answer = result.data.answer || 'Sorry, I couldn\'t process that question.';
 
+    // NOW add to history after the call
+    window._aiChatHistory.push({ role: 'user', content: question });
     window._aiChatHistory.push({ role: 'assistant', content: answer });
+    
+    // Trim history if too long
+    if (window._aiChatHistory.length > 10) {
+      window._aiChatHistory = window._aiChatHistory.slice(-10);
+    }
 
     // Replace loading with answer
     const loadingEl = document.getElementById(loadingId);
