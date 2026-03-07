@@ -6579,7 +6579,9 @@ function formatWeekRange(ws) {
 
 function getRentStatus(weekStart, datePaid) {
   if (!datePaid) return 'unpaid';
+  // Due date is Saturday, but "on time" includes 3-day grace period (through Tuesday)
   const due  = new Date(getWeekDue(weekStart) + 'T23:59:59');
+  due.setDate(due.getDate() + 3); // Add 3 day grace period
   const paid = new Date(datePaid + 'T12:00:00');
   return paid <= due ? 'ontime' : 'late';
 }
