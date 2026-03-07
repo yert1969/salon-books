@@ -750,6 +750,212 @@ function navigate(view) {
 // ----------------------------------------------------------------
 
 // ----------------------------------------------------------------
+// SMART INSIGHTS ENGINE
+// ----------------------------------------------------------------
+
+// Track shown insights to avoid repetition (stored in localStorage)
+function getShownInsights() {
+  try {
+    const data = JSON.parse(localStorage.getItem('mf_shown_insights') || '{}');
+    const now = Date.now();
+    const cleaned = {};
+    Object.entries(data).forEach(([key, timestamp]) => {
+      if (now - timestamp < 3 * 24 * 60 * 60 * 1000) cleaned[key] = timestamp;
+    });
+    return cleaned;
+  } catch { return {}; }
+}
+
+function markInsightShown(key) {
+  const data = getShownInsights();
+  data[key] = Date.now();
+  localStorage.setItem('mf_shown_insights', JSON.stringify(data));
+}
+
+function wasRecentlyShown(key) {
+  const data = getShownInsights();
+  if (!data[key]) return false;
+  return Date.now() - data[key] < 24 * 60 * 60 * 1000;
+}
+
+function generateSmartInsights(allTxns, allMExp, allRenters, allRentPmts) {
+  const insights = [];
+  const now = new Date();
+  const today = todayStr();
+  const dayOfWeek = now.getDay();
+  const dayOfMonth = now.getDate();
+  const thisMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const lastMonth = `${now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear()}-${String(now.getMonth() === 0 ? 12 : now.getMonth()).padStart(2, '0')}`;
+  const thisYear = String(now.getFullYear());
+  
+  const incomeFor = (txns) => txns.filter(t => t.type === 'INCOME').reduce((s,t) => s + (t.serviceAmount||0) + (t.tipAmount||0), 0);
+  
+  // This month vs last month pace
+  const thisMonthTxns = allTxns.filter(t => t.date?.startsWith(thisMonth));
+  const thisMonthIncome = incomeFor(thisMonthTxns);
+  const lastMonthSameDay = `${lastMonth}-${String(dayOfMonth).padStart(2, '0')}`;
+  const lastMonthToDate = allTxns.filter(t => t.date?.startsWith(lastMonth) && t.date <= lastMonthSameDay);
+  const lastMonthPace = incomeFor(lastMonthToDate);
+  
+  if (lastMonthPace > 0 && dayOfMonth >= 5) {
+    const paceChange = Math.round(((thisMonthIncome - lastMonthPace) / lastMonthPace) * 100);
+    if (Math.abs(paceChange) >= 10) {
+      insights.push({
+        key: `pace_${thisMonth}`,
+        priority: Math.abs(paceChange) >= 20 ? 95 : 70,
+        icon: paceChange > 0 ? '📈' : '📉',
+        type: paceChange > 0 ? 'success' : 'warning',
+        text: paceChange > 0 
+          ? `You're ${paceChange}% ahead of last month's pace!`
+          : `Income is ${Math.abs(paceChange)}% behind last month's pace.`
+      });
+    }
+  }
+  
+  // Yesterday was exceptional
+  const yesterday = addDays(today, -1);
+  const yesterdayIncome = incomeFor(allTxns.filter(t => t.date === yesterday));
+  const thisMonthDays = {};
+  thisMonthTxns.forEach(t => {
+    if (!thisMonthDays[t.date]) thisMonthDays[t.date] = 0;
+    if (t.type === 'INCOME') thisMonthDays[t.date] += (t.serviceAmount||0) + (t.tipAmount||0);
+  });
+  const dailyIncomes = Object.values(thisMonthDays);
+  const avgDaily = dailyIncomes.length > 0 ? dailyIncomes.reduce((a,b) => a+b, 0) / dailyIncomes.length : 0;
+  
+  if (yesterdayIncome > avgDaily * 1.5 && yesterdayIncome > 200) {
+    insights.push({
+      key: `best_day_${yesterday}`,
+      priority: 85,
+      icon: '🌟',
+      type: 'success',
+      text: `Yesterday (${fmt(yesterdayIncome)}) was ${Math.round((yesterdayIncome/avgDaily - 1) * 100)}% above average!`
+    });
+  }
+  
+  // Clients overdue
+  const clientLastVisit = {};
+  allTxns.filter(t => t.type === 'INCOME' && t.clientName).forEach(t => {
+    const name = t.clientName.trim();
+    if (!clientLastVisit[name] || t.date > clientLastVisit[name]) {
+      clientLastVisit[name] = t.date;
+    }
+  });
+  const overdueClients = Object.entries(clientLastVisit).filter(([name, lastVisit]) => {
+    const days = Math.floor((new Date(today) - new Date(lastVisit)) / 86400000);
+    return days >= 45 && days <= 90;
+  });
+  
+  if (overdueClients.length > 0) {
+    insights.push({
+      key: `overdue_clients_${thisMonth}`,
+      priority: overdueClients.length >= 5 ? 80 : 60,
+      icon: '👋',
+      type: 'info',
+      text: `${overdueClients.length} regular client${overdueClients.length > 1 ? 's haven\'t' : ' hasn\'t'} visited in 45+ days.`
+    });
+  }
+  
+  // Booth rent outstanding
+  if (allRenters.length > 0) {
+    const currentWS = getWeekStart(today);
+    const lastWS = addDays(currentWS, -7);
+    let outstanding = 0;
+    let overdueCount = 0;
+    
+    allRenters.forEach(r => {
+      ensureRateHistory(r);
+      const rate = getRateForWeek(r, lastWS);
+      const pmt = allRentPmts.find(p => p.renterId === r.id && p.weekStart === lastWS);
+      if (!pmt || pmt.amount < rate) {
+        outstanding += rate - (pmt?.amount || 0);
+        overdueCount++;
+      }
+    });
+    
+    if (overdueCount > 0) {
+      insights.push({
+        key: `rent_overdue_${lastWS}`,
+        priority: 90,
+        icon: '🏠',
+        type: 'warning',
+        text: `${overdueCount} booth renter${overdueCount > 1 ? 's are' : ' is'} behind on rent (${fmt(outstanding)}).`
+      });
+    }
+  }
+  
+  // Week comparison mid-week
+  if (dayOfWeek >= 3 && dayOfWeek <= 5) {
+    const thisWeekStart = getWeekStart(today);
+    const lastWeekStart = addDays(thisWeekStart, -7);
+    const thisWeekIncome = incomeFor(allTxns.filter(t => t.date >= thisWeekStart && t.date <= today));
+    const lastWeekSamePoint = incomeFor(allTxns.filter(t => t.date >= lastWeekStart && t.date < addDays(lastWeekStart, dayOfWeek)));
+    
+    if (lastWeekSamePoint > 0) {
+      const weekChange = Math.round(((thisWeekIncome - lastWeekSamePoint) / lastWeekSamePoint) * 100);
+      if (Math.abs(weekChange) >= 15) {
+        insights.push({
+          key: `week_pace_${thisWeekStart}`,
+          priority: 65,
+          icon: weekChange > 0 ? '💪' : '⚡',
+          type: weekChange > 0 ? 'success' : 'info',
+          text: weekChange > 0 
+            ? `This week is ${weekChange}% ahead of last week!`
+            : `This week is ${Math.abs(weekChange)}% behind last week.`
+        });
+      }
+    }
+  }
+  
+  // YTD milestone
+  const ytdIncome = incomeFor(allTxns.filter(t => t.date?.startsWith(thisYear)));
+  const milestones = [10000, 25000, 50000, 75000, 100000, 150000, 200000];
+  const lastMilestone = milestones.filter(m => ytdIncome >= m).pop();
+  const nextMilestone = milestones.find(m => ytdIncome < m);
+  
+  if (lastMilestone && ytdIncome < lastMilestone * 1.05) {
+    insights.push({
+      key: `milestone_${lastMilestone}_${thisYear}`,
+      priority: 88,
+      icon: '🎉',
+      type: 'success',
+      text: `You passed ${fmt(lastMilestone)} this year! Next: ${fmt(nextMilestone)}`
+    });
+  }
+  
+  // Top client shoutout
+  const clientTotals = {};
+  allTxns.filter(t => t.type === 'INCOME' && t.clientName && t.date >= addDays(today, -90)).forEach(t => {
+    const name = t.clientName.trim();
+    clientTotals[name] = (clientTotals[name] || 0) + (t.serviceAmount||0) + (t.tipAmount||0);
+  });
+  const topClient = Object.entries(clientTotals).sort((a,b) => b[1] - a[1])[0];
+  if (topClient && topClient[1] > 500) {
+    insights.push({
+      key: `top_client_${thisMonth}`,
+      priority: 40,
+      icon: '⭐',
+      type: 'info',
+      text: `${topClient[0]} is your top client this quarter (${fmt(topClient[1])}).`
+    });
+  }
+  
+  // Filter and select
+  const filtered = insights.filter(i => !wasRecentlyShown(i.key));
+  filtered.sort((a, b) => b.priority - a.priority);
+  
+  let selected;
+  if (filtered.length === 0 && insights.length > 0) {
+    const shuffled = [...insights].sort(() => Math.random() - 0.5);
+    selected = shuffled.slice(0, 2);
+  } else {
+    selected = filtered.slice(0, Math.min(3, Math.max(2, filtered.length)));
+  }
+  
+  selected.forEach(i => markInsightShown(i.key));
+  return selected;
+}
+
 // ----------------------------------------------------------------
 // DASHBOARD VIEW (replaces Insights)
 // ----------------------------------------------------------------
@@ -1185,6 +1391,25 @@ async function buildDashboard() {
         <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">Daily + Monthly</div>
       </div>
     </div>`;
+
+    // == SMART INSIGHTS ==
+    if (isCurrentMonth) {
+      const smartInsights = generateSmartInsights(allTxns, allMExp, allRenters, allRentPmts);
+      if (smartInsights.length > 0) {
+        html += `
+        <div style="padding:0 16px;margin-bottom:12px;">
+          <div style="font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--text-muted);font-weight:600;margin-bottom:10px;">✨ Smart Insights</div>
+          ${smartInsights.map(i => {
+            const borderColor = i.type === 'success' ? 'var(--success)' : i.type === 'warning' ? 'var(--gold)' : 'var(--plum)';
+            return `
+            <div style="display:flex;align-items:start;gap:10px;background:var(--bg-card);border-radius:12px;padding:12px 14px;margin-bottom:8px;box-shadow:0 1px 4px rgba(0,0,0,0.04);border-left:3px solid ${borderColor};">
+              <div style="font-size:20px;flex-shrink:0;margin-top:1px;">${i.icon}</div>
+              <div style="font-size:13px;line-height:1.4;color:var(--text);">${i.text}</div>
+            </div>`;
+          }).join('')}
+        </div>`;
+      }
+    }
 
     // == ALERTS ==
     if (alerts.length > 0) {
