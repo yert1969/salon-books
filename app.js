@@ -290,6 +290,273 @@ const state = {
 };
 
 // ----------------------------------------------------------------
+// CUSTOM SEARCHABLE DROPDOWN COMPONENT
+// ----------------------------------------------------------------
+
+// Creates a custom dropdown with type-ahead search
+// Returns: { element, getValue, setValue, destroy }
+function createCustomDropdown(options) {
+  const {
+    id,
+    placeholder = 'Select...',
+    items = [],          // Array of { value, label } or strings
+    value = '',
+    searchable = true,
+    onChange = () => {}
+  } = options;
+  
+  // Normalize items to { value, label } format
+  const normalizedItems = items.map(item => 
+    typeof item === 'string' ? { value: item, label: item } : item
+  );
+  
+  let selectedValue = value;
+  let isOpen = false;
+  let highlightedIndex = -1;
+  let filteredItems = [...normalizedItems];
+  
+  // Create elements
+  const wrapper = document.createElement('div');
+  wrapper.className = 'custom-dropdown';
+  wrapper.id = id;
+  
+  const trigger = document.createElement('button');
+  trigger.type = 'button';
+  trigger.className = 'custom-dropdown-trigger';
+  
+  const menu = document.createElement('div');
+  menu.className = 'custom-dropdown-menu';
+  
+  let searchInput = null;
+  let optionsContainer = null;
+  
+  function updateTriggerText() {
+    const selected = normalizedItems.find(i => i.value === selectedValue);
+    if (selected) {
+      trigger.textContent = selected.label;
+      trigger.classList.remove('placeholder');
+    } else {
+      trigger.textContent = placeholder;
+      trigger.classList.add('placeholder');
+    }
+  }
+  
+  function renderOptions() {
+    optionsContainer.innerHTML = '';
+    
+    if (filteredItems.length === 0) {
+      optionsContainer.innerHTML = '<div class="custom-dropdown-empty">No matches found</div>';
+      return;
+    }
+    
+    filteredItems.forEach((item, index) => {
+      const opt = document.createElement('div');
+      opt.className = 'custom-dropdown-option';
+      if (item.value === selectedValue) opt.classList.add('selected');
+      if (index === highlightedIndex) opt.classList.add('highlighted');
+      opt.textContent = item.label;
+      opt.dataset.value = item.value;
+      opt.dataset.index = index;
+      
+      opt.addEventListener('click', (e) => {
+        e.stopPropagation();
+        selectItem(item.value);
+      });
+      
+      optionsContainer.appendChild(opt);
+    });
+  }
+  
+  function filterItems(query) {
+    const q = query.toLowerCase().trim();
+    if (!q) {
+      filteredItems = [...normalizedItems];
+    } else {
+      filteredItems = normalizedItems.filter(item => 
+        item.label.toLowerCase().includes(q)
+      );
+    }
+    highlightedIndex = filteredItems.length > 0 ? 0 : -1;
+    renderOptions();
+  }
+  
+  function selectItem(value) {
+    selectedValue = value;
+    updateTriggerText();
+    closeDropdown();
+    onChange(value);
+  }
+  
+  function openDropdown() {
+    if (isOpen) return;
+    isOpen = true;
+    wrapper.classList.add('open');
+    
+    // Add backdrop
+    const backdrop = document.createElement('div');
+    backdrop.className = 'dropdown-backdrop';
+    backdrop.addEventListener('click', closeDropdown);
+    document.body.appendChild(backdrop);
+    
+    // Reset filter
+    filteredItems = [...normalizedItems];
+    highlightedIndex = normalizedItems.findIndex(i => i.value === selectedValue);
+    if (highlightedIndex < 0 && filteredItems.length > 0) highlightedIndex = 0;
+    
+    renderOptions();
+    
+    if (searchable && searchInput) {
+      searchInput.value = '';
+      setTimeout(() => searchInput.focus(), 50);
+    }
+    
+    // Scroll selected into view
+    setTimeout(() => {
+      const selectedEl = optionsContainer.querySelector('.selected');
+      if (selectedEl) selectedEl.scrollIntoView({ block: 'center' });
+    }, 10);
+  }
+  
+  function closeDropdown() {
+    if (!isOpen) return;
+    isOpen = false;
+    wrapper.classList.remove('open');
+    
+    // Remove backdrop
+    const backdrop = document.querySelector('.dropdown-backdrop');
+    if (backdrop) backdrop.remove();
+    
+    trigger.focus();
+  }
+  
+  function handleKeydown(e) {
+    if (!isOpen) {
+      if (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowDown') {
+        e.preventDefault();
+        openDropdown();
+      }
+      return;
+    }
+    
+    switch (e.key) {
+      case 'ArrowDown':
+        e.preventDefault();
+        highlightedIndex = Math.min(highlightedIndex + 1, filteredItems.length - 1);
+        renderOptions();
+        scrollHighlightedIntoView();
+        break;
+      case 'ArrowUp':
+        e.preventDefault();
+        highlightedIndex = Math.max(highlightedIndex - 1, 0);
+        renderOptions();
+        scrollHighlightedIntoView();
+        break;
+      case 'Enter':
+        e.preventDefault();
+        if (highlightedIndex >= 0 && filteredItems[highlightedIndex]) {
+          selectItem(filteredItems[highlightedIndex].value);
+        }
+        break;
+      case 'Escape':
+        e.preventDefault();
+        closeDropdown();
+        break;
+    }
+  }
+  
+  function scrollHighlightedIntoView() {
+    const highlighted = optionsContainer.querySelector('.highlighted');
+    if (highlighted) highlighted.scrollIntoView({ block: 'nearest' });
+  }
+  
+  // Build menu structure
+  if (searchable) {
+    const searchWrap = document.createElement('div');
+    searchWrap.className = 'custom-dropdown-search';
+    searchInput = document.createElement('input');
+    searchInput.type = 'text';
+    searchInput.placeholder = 'Type to search...';
+    searchInput.addEventListener('input', (e) => filterItems(e.target.value));
+    searchInput.addEventListener('keydown', handleKeydown);
+    searchWrap.appendChild(searchInput);
+    menu.appendChild(searchWrap);
+  }
+  
+  optionsContainer = document.createElement('div');
+  optionsContainer.className = 'custom-dropdown-options';
+  menu.appendChild(optionsContainer);
+  
+  // Event listeners
+  trigger.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (isOpen) closeDropdown();
+    else openDropdown();
+  });
+  
+  trigger.addEventListener('keydown', handleKeydown);
+  
+  // Assemble
+  wrapper.appendChild(trigger);
+  wrapper.appendChild(menu);
+  
+  // Initialize
+  updateTriggerText();
+  renderOptions();
+  
+  return {
+    element: wrapper,
+    getValue: () => selectedValue,
+    setValue: (val) => {
+      selectedValue = val;
+      updateTriggerText();
+    },
+    setItems: (newItems) => {
+      normalizedItems.length = 0;
+      newItems.forEach(item => {
+        normalizedItems.push(typeof item === 'string' ? { value: item, label: item } : item);
+      });
+      filteredItems = [...normalizedItems];
+      renderOptions();
+      updateTriggerText();
+    },
+    destroy: () => {
+      closeDropdown();
+      wrapper.remove();
+    }
+  };
+}
+
+// Helper to replace a native select with custom dropdown
+function replaceSelectWithCustomDropdown(selectElement, searchable = true) {
+  const id = selectElement.id || 'dropdown-' + Date.now();
+  const items = Array.from(selectElement.options).map(opt => ({
+    value: opt.value,
+    label: opt.textContent
+  }));
+  const value = selectElement.value;
+  
+  const dropdown = createCustomDropdown({
+    id: id + '-custom',
+    placeholder: selectElement.options[0]?.textContent || 'Select...',
+    items,
+    value,
+    searchable,
+    onChange: (val) => {
+      // Update hidden original select for form compatibility
+      selectElement.value = val;
+      selectElement.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+  });
+  
+  // Hide original select but keep for form submission
+  selectElement.style.display = 'none';
+  selectElement.insertAdjacentElement('afterend', dropdown.element);
+  
+  return dropdown;
+}
+
+// ----------------------------------------------------------------
 // 6. UTILITY FUNCTIONS
 // ----------------------------------------------------------------
 
@@ -646,6 +913,40 @@ function categoryOptions(type) {
     .sort()
     .map(name => `<option value="${name}">${name}</option>`)
     .join('');
+}
+
+// Enhance select elements with custom dropdowns after modal opens
+function enhanceModalDropdowns() {
+  setTimeout(() => {
+    // Find category selects in modals
+    const categorySelect = document.getElementById('txn-category');
+    if (categorySelect && !categorySelect.dataset.enhanced) {
+      categorySelect.dataset.enhanced = 'true';
+      
+      const items = Array.from(categorySelect.options)
+        .filter(opt => opt.value)
+        .map(opt => ({ value: opt.value, label: opt.textContent }));
+      
+      if (items.length > 0) {
+        const wrapper = document.createElement('div');
+        wrapper.id = 'txn-category-wrapper';
+        categorySelect.parentNode.insertBefore(wrapper, categorySelect);
+        categorySelect.style.display = 'none';
+        
+        const dropdown = createCustomDropdown({
+          id: 'txn-category-dropdown',
+          placeholder: 'Select category...',
+          items,
+          value: categorySelect.value,
+          searchable: items.length > 5,
+          onChange: (val) => {
+            categorySelect.value = val;
+          }
+        });
+        wrapper.appendChild(dropdown.element);
+      }
+    }
+  }, 50);
 }
 
 // ----------------------------------------------------------------
@@ -1813,7 +2114,8 @@ async function renderAddEntryTab(container) {
       
       <div class="form-group">
         <label class="form-label" style="font-size:13px; margin-bottom:8px; display:block; font-weight:500;">Category</label>
-        <select id="entry-category" class="form-select" style="width:100%; padding:12px; font-size:14px;"></select>
+        <div id="entry-category-container"></div>
+        <select id="entry-category" class="form-select" style="display:none;"></select>
       </div>
       
       <div class="form-group" id="service-amount-section">
@@ -1982,15 +2284,44 @@ function populateCategoryFilter() {
   const filterCategory = document.getElementById('filter-category');
   if (!filterCategory) return;
   
-  // Get all unique categories from both income and expense
+  // Get all unique categories from income and all expense types
   const allCategories = [
     ...(state.categories.INCOME || []),
-    ...(state.categories.EXPENSE || [])
+    ...(state.categories.EXPENSE || []),
+    ...(state.categories.DAILY_EXPENSE || []),
+    ...(state.categories.MONTHLY_EXPENSE || [])
   ];
   const uniqueCategories = [...new Set(allCategories)].sort();
   
+  // Update native select (hidden)
   filterCategory.innerHTML = '<option value="all">All Categories</option>' + 
     uniqueCategories.map(cat => `<option value="${cat}">${cat}</option>`).join('');
+  
+  // Create custom dropdown
+  const existingWrapper = document.getElementById('filter-category-wrapper');
+  if (existingWrapper) existingWrapper.remove();
+  
+  if (uniqueCategories.length > 0) {
+    filterCategory.style.display = 'none';
+    
+    const wrapper = document.createElement('div');
+    wrapper.id = 'filter-category-wrapper';
+    wrapper.style.cssText = 'flex:1; min-width:120px;';
+    filterCategory.parentNode.insertBefore(wrapper, filterCategory);
+    
+    const dropdown = createCustomDropdown({
+      id: 'filter-category-dropdown',
+      placeholder: 'All Categories',
+      items: [{ value: 'all', label: 'All Categories' }, ...uniqueCategories.map(c => ({ value: c, label: c }))],
+      value: 'all',
+      searchable: uniqueCategories.length > 5,
+      onChange: (val) => {
+        filterCategory.value = val;
+        filterTransactions();
+      }
+    });
+    wrapper.appendChild(dropdown.element);
+  }
 }
 
 function clearFilters() {
@@ -2568,9 +2899,42 @@ function updateEntryForm() {
   
   // Update category dropdown
   if (categorySelect) {
-    const categories = type === 'INCOME' ? state.categories.INCOME : state.categories.EXPENSE;
+    let categories;
+    if (type === 'INCOME') {
+      categories = state.categories.INCOME || [];
+    } else {
+      // Include all expense category types (unified + legacy)
+      const allExpenseCategories = [
+        ...(state.categories.EXPENSE || []),
+        ...(state.categories.DAILY_EXPENSE || []),
+        ...(state.categories.MONTHLY_EXPENSE || [])
+      ];
+      categories = [...new Set(allExpenseCategories)]; // Deduplicate
+    }
     const sortedCategories = [...categories].sort();  // Sort alphabetically
+    
+    // Update hidden select for form compatibility
     categorySelect.innerHTML = sortedCategories.map(cat => `<option value="${cat}">${cat}</option>`).join('');
+    
+    // Create or update custom dropdown
+    const container = document.getElementById('entry-category-container');
+    if (container) {
+      container.innerHTML = '';
+      const dropdown = createCustomDropdown({
+        id: 'entry-category-dropdown',
+        placeholder: 'Select category...',
+        items: sortedCategories,
+        value: categorySelect.value || sortedCategories[0] || '',
+        searchable: sortedCategories.length > 5,
+        onChange: (val) => {
+          categorySelect.value = val;
+        }
+      });
+      container.appendChild(dropdown.element);
+      
+      // Store reference to update later
+      window._entryCategoryDropdown = dropdown;
+    }
   }
 }
 
@@ -8112,6 +8476,8 @@ function openModal(html) {
     const first = document.querySelector('#modal input, #modal select');
     if (first) first.focus();
   }, 300);
+  // Enhance dropdowns with custom searchable component
+  enhanceModalDropdowns();
 }
 
 function closeModal() {
