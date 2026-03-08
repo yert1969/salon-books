@@ -2840,7 +2840,7 @@ function openPaymentPicker() {
   const paymentInput = document.getElementById('txn-payment');
   const paymentBtn = document.getElementById('txn-payment-btn');
   
-  const methods = ['Cash', 'Card', 'Venmo', 'Zelle', 'Check', 'Other'];
+  const methods = ['Cash', 'Card', 'Amex', 'Venmo', 'Check', 'Other'];
   
   openCategoryPicker({
     title: 'Payment Method',
@@ -3633,7 +3633,7 @@ async function openAddTransactionModal(type) {
   await loadCategories();
   const isIncome = type === 'INCOME';
   const catOptions = categoryOptions(isIncome ? 'INCOME' : 'EXPENSE');
-  const pmOptions = ['Cash','Card','Venmo','Zelle','Check','Other']
+  const pmOptions = ['Cash','Card','Amex','Venmo','Check','Other']
     .map(m => `<option>${m}</option>`).join('');
 
   const defaultDate = ensureLocalDate(state.selectedDate);
@@ -3830,7 +3830,7 @@ async function openEditTransactionModal(id) {
     catOptions = `<option value="${t.category}" selected>${t.category} (legacy)</option>` + catOptions;
   }
 
-  const pmOptions = ['Cash','Card','Venmo','Zelle','Check','Other']
+  const pmOptions = ['Cash','Card','Amex','Venmo','Check','Other']
     .map(m => `<option ${m === t.paymentMethod ? 'selected' : ''}>${m}</option>`).join('');
 
   const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
@@ -7536,7 +7536,7 @@ async function openEditRentPayment(paymentId, renterId) {
 
     <label class="form-label">Payment Method</label>
     <select class="form-select" id="erp-method">
-      ${['Cash','Venmo','Zelle','Card','Check','Other'].map(m =>
+      ${['Cash','Venmo','Card','Check','Other'].map(m =>
         `<option${m === p.paymentMethod ? ' selected' : ''}>${m}</option>`
       ).join('')}
     </select>
