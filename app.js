@@ -290,6 +290,121 @@ const state = {
 };
 
 // ----------------------------------------------------------------
+// MOBILE CATEGORY PICKER
+// ----------------------------------------------------------------
+
+function openCategoryPicker(options) {
+  const { 
+    title = 'Select Category',
+    items = [], 
+    selectedValue = '', 
+    onSelect = () => {},
+    searchable = true
+  } = options;
+  
+  // Create overlay
+  const overlay = document.createElement('div');
+  overlay.className = 'picker-overlay';
+  overlay.id = 'category-picker-overlay';
+  
+  let filteredItems = [...items];
+  
+  function renderOptions() {
+    const container = overlay.querySelector('.picker-options');
+    if (!container) return;
+    
+    if (filteredItems.length === 0) {
+      container.innerHTML = '<div class="picker-empty">No categories found</div>';
+      return;
+    }
+    
+    container.innerHTML = filteredItems.map(item => `
+      <div class="picker-option ${item === selectedValue ? 'selected' : ''}" data-value="${item}">
+        ${item}
+      </div>
+    `).join('');
+    
+    // Add click handlers
+    container.querySelectorAll('.picker-option').forEach(opt => {
+      opt.addEventListener('click', () => {
+        const value = opt.dataset.value;
+        onSelect(value);
+        closePicker();
+      });
+    });
+  }
+  
+  function closePicker() {
+    const el = document.getElementById('category-picker-overlay');
+    if (el) {
+      el.style.animation = 'pickerFadeIn 0.15s ease reverse';
+      setTimeout(() => el.remove(), 150);
+    }
+  }
+  
+  function filterItems(query) {
+    const q = query.toLowerCase().trim();
+    if (!q) {
+      filteredItems = [...items];
+    } else {
+      filteredItems = items.filter(item => item.toLowerCase().includes(q));
+    }
+    renderOptions();
+  }
+  
+  overlay.innerHTML = `
+    <div class="picker-sheet">
+      <div class="picker-header">
+        <span class="picker-title">${title}</span>
+        <button class="picker-close" type="button">&times;</button>
+      </div>
+      ${searchable && items.length > 5 ? `
+        <div class="picker-search">
+          <input type="text" placeholder="Search categories..." autocomplete="off" autocorrect="off" autocapitalize="off">
+        </div>
+      ` : ''}
+      <div class="picker-options"></div>
+    </div>
+  `;
+  
+  document.body.appendChild(overlay);
+  
+  // Close when clicking overlay background
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) closePicker();
+  });
+  
+  // Close button
+  overlay.querySelector('.picker-close').addEventListener('click', closePicker);
+  
+  // Search input
+  const searchInput = overlay.querySelector('.picker-search input');
+  if (searchInput) {
+    searchInput.addEventListener('input', (e) => filterItems(e.target.value));
+  }
+  
+  // Render initial options
+  renderOptions();
+  
+  // Scroll selected into view
+  setTimeout(() => {
+    const selected = overlay.querySelector('.picker-option.selected');
+    if (selected) selected.scrollIntoView({ block: 'center' });
+  }, 50);
+}
+
+// Helper to create a category picker trigger button
+function createCategoryPickerTrigger(id, placeholder = 'Select category...') {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'category-picker-trigger placeholder';
+  btn.id = id;
+  btn.textContent = placeholder;
+  btn.dataset.value = '';
+  return btn;
+}
+
+// ----------------------------------------------------------------
 // 6. UTILITY FUNCTIONS
 // ----------------------------------------------------------------
 
@@ -1813,7 +1928,8 @@ async function renderAddEntryTab(container) {
       
       <div class="form-group">
         <label class="form-label" style="font-size:13px; margin-bottom:8px; display:block; font-weight:500;">Category</label>
-        <select id="entry-category" class="form-select" style="width:100%; padding:12px; font-size:14px;"></select>
+        <button type="button" class="category-picker-trigger placeholder" id="entry-category-btn" onclick="openEntryCategoryPicker()">Select category...</button>
+        <input type="hidden" id="entry-category" value="">
       </div>
       
       <div class="form-group" id="service-amount-section">
@@ -1903,9 +2019,8 @@ async function renderSearchTab(container) {
             <option value="EXPENSE">Expenses Only</option>
           </select>
           
-          <select id="filter-category" class="form-select" style="flex:1; min-width:120px; padding:8px; font-size:13px;" onchange="filterTransactions()">
-            <option value="all">All Categories</option>
-          </select>
+          <button type="button" class="category-picker-trigger" id="filter-category-btn" onclick="openFilterCategoryPicker()" style="flex:1; min-width:120px; padding:8px; font-size:13px;">All Categories</button>
+          <input type="hidden" id="filter-category" value="all">
         </div>
         
         <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px;">
@@ -1979,9 +2094,6 @@ function updateAmountFilter() {
 }
 
 function populateCategoryFilter() {
-  const filterCategory = document.getElementById('filter-category');
-  if (!filterCategory) return;
-  
   // Get all unique categories from income and all expense types
   const allCategories = [
     ...(state.categories.INCOME || []),
@@ -1989,22 +2101,40 @@ function populateCategoryFilter() {
     ...(state.categories.DAILY_EXPENSE || []),
     ...(state.categories.MONTHLY_EXPENSE || [])
   ];
-  const uniqueCategories = [...new Set(allCategories)].sort();
+  window._filterCategories = [...new Set(allCategories)].sort();
+}
+
+function openFilterCategoryPicker() {
+  const filterInput = document.getElementById('filter-category');
+  const filterBtn = document.getElementById('filter-category-btn');
   
-  filterCategory.innerHTML = '<option value="all">All Categories</option>' + 
-    uniqueCategories.map(cat => `<option value="${cat}">${cat}</option>`).join('');
+  const items = ['All Categories', ...(window._filterCategories || [])];
+  
+  openCategoryPicker({
+    title: 'Filter by Category',
+    items: items,
+    selectedValue: filterInput?.value === 'all' ? 'All Categories' : filterInput?.value || 'All Categories',
+    onSelect: (value) => {
+      const actualValue = value === 'All Categories' ? 'all' : value;
+      if (filterInput) filterInput.value = actualValue;
+      if (filterBtn) filterBtn.textContent = value;
+      filterTransactions();
+    }
+  });
 }
 
 function clearFilters() {
   const searchInput = document.getElementById('transaction-search');
   const typeFilter = document.getElementById('filter-type');
   const categoryFilter = document.getElementById('filter-category');
+  const categoryFilterBtn = document.getElementById('filter-category-btn');
   const amountTypeFilter = document.getElementById('filter-amount-type');
   const amountInputsContainer = document.getElementById('amount-inputs-container');
   
   if (searchInput) searchInput.value = '';
   if (typeFilter) typeFilter.value = 'all';
   if (categoryFilter) categoryFilter.value = 'all';
+  if (categoryFilterBtn) categoryFilterBtn.textContent = 'All Categories';
   if (amountTypeFilter) amountTypeFilter.value = '';
   if (amountInputsContainer) amountInputsContainer.innerHTML = '';
   const dateFrom = document.getElementById('filter-date-from');
@@ -2344,6 +2474,11 @@ async function editTransaction(id) {
   }
   
   document.getElementById('entry-category').value = transaction.category;
+  const categoryBtn = document.getElementById('entry-category-btn');
+  if (categoryBtn && transaction.category) {
+    categoryBtn.textContent = transaction.category;
+    categoryBtn.classList.remove('placeholder');
+  }
   document.getElementById('entry-notes').value = transaction.notes || '';
   if (document.getElementById('entry-client')) {
     document.getElementById('entry-client').value = transaction.clientName || '';
@@ -2568,23 +2703,55 @@ function updateEntryForm() {
     yearSection?.classList.add('hidden');
   }
   
-  // Update category dropdown
-  if (categorySelect) {
-    let categories;
-    if (type === 'INCOME') {
-      categories = state.categories.INCOME || [];
-    } else {
-      // Include all expense category types (unified + legacy)
-      const allExpenseCategories = [
-        ...(state.categories.EXPENSE || []),
-        ...(state.categories.DAILY_EXPENSE || []),
-        ...(state.categories.MONTHLY_EXPENSE || [])
-      ];
-      categories = [...new Set(allExpenseCategories)]; // Deduplicate
-    }
-    const sortedCategories = [...categories].sort();  // Sort alphabetically
-    categorySelect.innerHTML = sortedCategories.map(cat => `<option value="${cat}">${cat}</option>`).join('');
+  // Store current categories for the picker
+  let categories;
+  if (type === 'INCOME') {
+    categories = state.categories.INCOME || [];
+  } else {
+    const allExpenseCategories = [
+      ...(state.categories.EXPENSE || []),
+      ...(state.categories.DAILY_EXPENSE || []),
+      ...(state.categories.MONTHLY_EXPENSE || [])
+    ];
+    categories = [...new Set(allExpenseCategories)];
   }
+  window._entryCategories = [...categories].sort();
+  
+  // Reset category selection when type changes
+  const categoryInput = document.getElementById('entry-category');
+  const categoryBtn = document.getElementById('entry-category-btn');
+  if (categoryInput && categoryBtn) {
+    // If current value not in new category list, reset
+    if (!window._entryCategories.includes(categoryInput.value)) {
+      categoryInput.value = window._entryCategories[0] || '';
+      if (categoryInput.value) {
+        categoryBtn.textContent = categoryInput.value;
+        categoryBtn.classList.remove('placeholder');
+      } else {
+        categoryBtn.textContent = 'Select category...';
+        categoryBtn.classList.add('placeholder');
+      }
+    }
+  }
+}
+
+function openEntryCategoryPicker() {
+  const categoryInput = document.getElementById('entry-category');
+  const categoryBtn = document.getElementById('entry-category-btn');
+  const type = document.querySelector('input[name="entry-type"]:checked')?.value || 'INCOME';
+  
+  openCategoryPicker({
+    title: type === 'INCOME' ? 'Select Service' : 'Select Expense',
+    items: window._entryCategories || [],
+    selectedValue: categoryInput?.value || '',
+    onSelect: (value) => {
+      if (categoryInput) categoryInput.value = value;
+      if (categoryBtn) {
+        categoryBtn.textContent = value;
+        categoryBtn.classList.remove('placeholder');
+      }
+    }
+  });
 }
 
 async function saveEntryTransaction() {
