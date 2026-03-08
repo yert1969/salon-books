@@ -1156,16 +1156,15 @@ async function buildDashboard() {
     const maxTrend = Math.max(...trendMonths.map(m => m.income), 1);
 
     // ---- Booth rent last completed week ----
+    // Rent is due Saturday for the PRIOR week's work, so always show previous week
     const ws = getWeekStart(viewToday);
-    const rentDayOfWeek = new Date().getDay(); // 0=Sun, 6=Sat
-    // Show current week on Sat/Sun (when rent is due/just due), otherwise show previous week
-    const rentDisplayWS = (isCurrentMonth && (rentDayOfWeek === 6 || rentDayOfWeek === 0)) ? ws : addDays(ws, -7);
+    const rentDisplayWS = addDays(ws, -7); // Always show last week
     const weekRentPmts = allRentPmts.filter(p => p.weekStart === rentDisplayWS);
     const rentCollected = weekRentPmts.reduce((s,p) => s + (p.amount||0), 0);
     const rentExpected  = allRenters.reduce((s,r) => s + getRateForWeek(r, rentDisplayWS), 0);
     const rentersPaid   = new Set(weekRentPmts.map(p => p.renterId)).size;
     const rentOutstanding = Math.max(0, rentExpected - rentCollected);
-    const rentWeekLabel = (rentDisplayWS === ws) ? 'This Week' : 'Last Week';
+    const rentWeekLabel = 'Last Week';
 
     // ---- Alerts ----
     const alerts = [];
