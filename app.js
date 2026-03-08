@@ -2754,6 +2754,105 @@ function openEntryCategoryPicker() {
   });
 }
 
+// Modal category picker (for Add/Edit Transaction modals)
+function openTxnCategoryPicker() {
+  const categoryInput = document.getElementById('txn-category');
+  const categoryBtn = document.getElementById('txn-category-btn');
+  
+  // Determine if income or expense based on modal title or context
+  const modalTitle = document.querySelector('.modal-title')?.textContent || '';
+  const isIncome = modalTitle.includes('Income') || modalTitle.includes('Edit') && document.getElementById('txn-tip');
+  
+  let categories;
+  if (isIncome) {
+    categories = [...(state.categories.INCOME || [])].sort();
+  } else {
+    const allExpenseCategories = [
+      ...(state.categories.EXPENSE || []),
+      ...(state.categories.DAILY_EXPENSE || []),
+      ...(state.categories.MONTHLY_EXPENSE || [])
+    ];
+    categories = [...new Set(allExpenseCategories)].sort();
+  }
+  
+  openCategoryPicker({
+    title: isIncome ? 'Select Service' : 'Select Expense',
+    items: categories,
+    selectedValue: categoryInput?.value || '',
+    onSelect: (value) => {
+      if (categoryInput) categoryInput.value = value;
+      if (categoryBtn) {
+        categoryBtn.textContent = value;
+        categoryBtn.classList.remove('placeholder');
+      }
+    }
+  });
+}
+
+// Payment method picker
+function openPaymentPicker() {
+  const paymentInput = document.getElementById('txn-payment');
+  const paymentBtn = document.getElementById('txn-payment-btn');
+  
+  const methods = ['Cash', 'Card', 'Venmo', 'Zelle', 'Check', 'Other'];
+  
+  openCategoryPicker({
+    title: 'Payment Method',
+    items: methods,
+    selectedValue: paymentInput?.value || 'Cash',
+    searchable: false,
+    onSelect: (value) => {
+      if (paymentInput) paymentInput.value = value;
+      if (paymentBtn) paymentBtn.textContent = value;
+    }
+  });
+}
+
+// Tip method picker
+function openTipMethodPicker() {
+  const tipMethodInput = document.getElementById('txn-tip-method');
+  const tipMethodBtn = document.getElementById('txn-tip-method-btn');
+  
+  const methods = ['Cash', 'Card', 'None'];
+  
+  openCategoryPicker({
+    title: 'Tip Method',
+    items: methods,
+    selectedValue: tipMethodInput?.value || 'Cash',
+    searchable: false,
+    onSelect: (value) => {
+      if (tipMethodInput) tipMethodInput.value = value;
+      if (tipMethodBtn) tipMethodBtn.textContent = value;
+    }
+  });
+}
+
+// Monthly expense category picker
+function openMECategoryPicker() {
+  const categoryInput = document.getElementById('me-category');
+  const categoryBtn = document.getElementById('me-category-btn');
+  
+  const allExpenseCategories = [
+    ...(state.categories.EXPENSE || []),
+    ...(state.categories.DAILY_EXPENSE || []),
+    ...(state.categories.MONTHLY_EXPENSE || [])
+  ];
+  const categories = [...new Set(allExpenseCategories)].sort();
+  
+  openCategoryPicker({
+    title: 'Select Expense Category',
+    items: categories,
+    selectedValue: categoryInput?.value || '',
+    onSelect: (value) => {
+      if (categoryInput) categoryInput.value = value;
+      if (categoryBtn) {
+        categoryBtn.textContent = value;
+        categoryBtn.classList.remove('placeholder');
+      }
+    }
+  });
+}
+
 async function saveEntryTransaction() {
   const type = document.querySelector('input[name="entry-type"]:checked')?.value;
   const frequency = document.querySelector('input[name="entry-frequency"]:checked')?.value || 'DAILY';
@@ -3531,10 +3630,8 @@ async function openAddTransactionModal(type) {
 
     <div class="form-group">
       <label class="form-label">Category</label>
-      <select class="form-select" id="txn-category">
-        <option value="">Select category…</option>
-        ${catOptions}
-      </select>
+      <button type="button" class="category-picker-trigger placeholder" id="txn-category-btn" onclick="openTxnCategoryPicker()">Select category...</button>
+      <input type="hidden" id="txn-category" value="">
     </div>
 
     <div class="form-group">
@@ -3544,7 +3641,8 @@ async function openAddTransactionModal(type) {
 
     <div id="txn-payment-section" class="form-group">
       <label class="form-label">Payment Method</label>
-      <select class="form-select" id="txn-payment">${pmOptions}</select>
+      <button type="button" class="category-picker-trigger" id="txn-payment-btn" onclick="openPaymentPicker()">Cash</button>
+      <input type="hidden" id="txn-payment" value="Cash">
     </div>
 
     ${isIncome ? `
@@ -3557,11 +3655,8 @@ async function openAddTransactionModal(type) {
       </div>
       <div class="form-group">
         <label class="form-label">Tip Method</label>
-        <select class="form-select" id="txn-tip-method">
-          <option value="">None</option>
-          <option value="Cash">Cash</option>
-          <option value="Card">Card</option>
-        </select>
+        <button type="button" class="category-picker-trigger" id="txn-tip-method-btn" onclick="openTipMethodPicker()">Cash</button>
+        <input type="hidden" id="txn-tip-method" value="Cash">
       </div>
     </div>
 
@@ -3730,10 +3825,8 @@ async function openEditTransactionModal(id) {
 
     <div class="form-group">
       <label class="form-label">Category</label>
-      <select class="form-select" id="txn-category">
-        <option value="">Select category…</option>
-        ${catOptions}
-      </select>
+      <button type="button" class="category-picker-trigger" id="txn-category-btn" onclick="openTxnCategoryPicker()">${t.category || 'Select category...'}</button>
+      <input type="hidden" id="txn-category" value="${t.category || ''}">
     </div>
 
     <div class="form-group">
@@ -3744,7 +3837,8 @@ async function openEditTransactionModal(id) {
 
     <div id="txn-payment-section" class="form-group">
       <label class="form-label">Payment Method</label>
-      <select class="form-select" id="txn-payment">${pmOptions}</select>
+      <button type="button" class="category-picker-trigger" id="txn-payment-btn" onclick="openPaymentPicker()">${t.paymentMethod || 'Cash'}</button>
+      <input type="hidden" id="txn-payment" value="${t.paymentMethod || 'Cash'}">
     </div>
 
     ${isIncome ? `
@@ -3758,11 +3852,8 @@ async function openEditTransactionModal(id) {
       </div>
       <div class="form-group">
         <label class="form-label">Tip Method</label>
-        <select class="form-select" id="txn-tip-method">
-          <option value="">None</option>
-          <option value="Cash" ${t.tipMethod === 'Cash' ? 'selected' : ''}>Cash</option>
-          <option value="Card" ${t.tipMethod === 'Card' ? 'selected' : ''}>Card</option>
-        </select>
+        <button type="button" class="category-picker-trigger" id="txn-tip-method-btn" onclick="openTipMethodPicker()">${t.tipMethod || 'Cash'}</button>
+        <input type="hidden" id="txn-tip-method" value="${t.tipMethod || 'Cash'}">
       </div>
     </div>
     ` : ''}
@@ -4071,10 +4162,8 @@ async function openAddMonthlyExpenseModal() {
 
     <div class="form-group">
       <label class="form-label">Category</label>
-      <select class="form-select" id="me-category">
-        <option value="">Select category…</option>
-        ${catOptions}
-      </select>
+      <button type="button" class="category-picker-trigger placeholder" id="me-category-btn" onclick="openMECategoryPicker()">Select category...</button>
+      <input type="hidden" id="me-category" value="">
     </div>
 
     <div class="form-group">
@@ -4165,10 +4254,8 @@ async function openEditMonthlyExpenseModal(id) {
 
     <div class="form-group">
       <label class="form-label">Category</label>
-      <select class="form-select" id="me-category">
-        <option value="">Select category…</option>
-        ${catOptions}
-      </select>
+      <button type="button" class="category-picker-trigger" id="me-category-btn" onclick="openMECategoryPicker()">${e.category || 'Select category...'}</button>
+      <input type="hidden" id="me-category" value="${e.category || ''}">
     </div>
 
     <div class="form-group">
