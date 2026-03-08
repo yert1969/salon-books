@@ -2013,11 +2013,8 @@ async function renderSearchTab(container) {
           oninput="filterTransactions()">
         
         <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px;">
-          <select id="filter-type" class="form-select" style="flex:1; min-width:120px; padding:8px; font-size:13px;" onchange="filterTransactions()">
-            <option value="all">All Types</option>
-            <option value="INCOME">Income Only</option>
-            <option value="EXPENSE">Expenses Only</option>
-          </select>
+          <button type="button" class="category-picker-trigger" id="filter-type-btn" onclick="openFilterTypePicker()" style="flex:1; min-width:120px; padding:8px; font-size:13px;">All Types</button>
+          <input type="hidden" id="filter-type" value="all">
           
           <button type="button" class="category-picker-trigger" id="filter-category-btn" onclick="openFilterCategoryPicker()" style="flex:1; min-width:120px; padding:8px; font-size:13px;">All Categories</button>
           <input type="hidden" id="filter-category" value="all">
@@ -2035,13 +2032,8 @@ async function renderSearchTab(container) {
         </div>
         
         <div style="margin-bottom:8px;">
-          <select id="filter-amount-type" class="form-select" style="width:100%; padding:10px; font-size:14px; margin-bottom:8px;" onchange="updateAmountFilter()">
-            <option value="">No Amount Filter</option>
-            <option value="exact">Exact Amount</option>
-            <option value="gt">Greater Than</option>
-            <option value="lt">Less Than</option>
-            <option value="range">Between</option>
-          </select>
+          <button type="button" class="category-picker-trigger" id="filter-amount-type-btn" onclick="openAmountFilterPicker()" style="width:100%; padding:10px; font-size:14px; margin-bottom:8px;">No Amount Filter</button>
+          <input type="hidden" id="filter-amount-type" value="">
           
           <div id="amount-inputs-container"></div>
         </div>
@@ -2123,9 +2115,34 @@ function openFilterCategoryPicker() {
   });
 }
 
+function openFilterTypePicker() {
+  const filterInput = document.getElementById('filter-type');
+  const filterBtn = document.getElementById('filter-type-btn');
+  
+  const items = [
+    { value: 'all', label: 'All Types' },
+    { value: 'INCOME', label: 'Income Only' },
+    { value: 'EXPENSE', label: 'Expenses Only' }
+  ];
+  
+  openCategoryPicker({
+    title: 'Filter by Type',
+    items: items.map(i => i.label),
+    selectedValue: items.find(i => i.value === filterInput?.value)?.label || 'All Types',
+    searchable: false,
+    onSelect: (label) => {
+      const item = items.find(i => i.label === label);
+      if (filterInput) filterInput.value = item?.value || 'all';
+      if (filterBtn) filterBtn.textContent = label;
+      filterTransactions();
+    }
+  });
+}
+
 function clearFilters() {
   const searchInput = document.getElementById('transaction-search');
   const typeFilter = document.getElementById('filter-type');
+  const typeFilterBtn = document.getElementById('filter-type-btn');
   const categoryFilter = document.getElementById('filter-category');
   const categoryFilterBtn = document.getElementById('filter-category-btn');
   const amountTypeFilter = document.getElementById('filter-amount-type');
@@ -2133,9 +2150,12 @@ function clearFilters() {
   
   if (searchInput) searchInput.value = '';
   if (typeFilter) typeFilter.value = 'all';
+  if (typeFilterBtn) typeFilterBtn.textContent = 'All Types';
   if (categoryFilter) categoryFilter.value = 'all';
   if (categoryFilterBtn) categoryFilterBtn.textContent = 'All Categories';
   if (amountTypeFilter) amountTypeFilter.value = '';
+  const amountTypeFilterBtn = document.getElementById('filter-amount-type-btn');
+  if (amountTypeFilterBtn) amountTypeFilterBtn.textContent = 'No Amount Filter';
   if (amountInputsContainer) amountInputsContainer.innerHTML = '';
   const dateFrom = document.getElementById('filter-date-from');
   const dateTo = document.getElementById('filter-date-to');
@@ -2144,6 +2164,32 @@ function clearFilters() {
   
   state.transactionsToShow = 30; // Reset pagination
   filterTransactions();
+}
+
+function openAmountFilterPicker() {
+  const filterInput = document.getElementById('filter-amount-type');
+  const filterBtn = document.getElementById('filter-amount-type-btn');
+  
+  const items = [
+    { value: '', label: 'No Amount Filter' },
+    { value: 'exact', label: 'Exact Amount' },
+    { value: 'gt', label: 'Greater Than' },
+    { value: 'lt', label: 'Less Than' },
+    { value: 'range', label: 'Between' }
+  ];
+  
+  openCategoryPicker({
+    title: 'Amount Filter',
+    items: items.map(i => i.label),
+    selectedValue: items.find(i => i.value === filterInput?.value)?.label || 'No Amount Filter',
+    searchable: false,
+    onSelect: (label) => {
+      const item = items.find(i => i.label === label);
+      if (filterInput) filterInput.value = item?.value || '';
+      if (filterBtn) filterBtn.textContent = label;
+      updateAmountFilter();
+    }
+  });
 }
 
 function filterTransactions() {
