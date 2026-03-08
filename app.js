@@ -8621,7 +8621,9 @@ async function gatherBusinessSnapshot() {
 
   // Booth renters with payment history
   const activeRenters = allRenters.filter(r => r.status === 'active');
+  const totalWeeklyRent = activeRenters.reduce((s, r) => s + getCurrentRate(r), 0);
   const renterInfo = activeRenters.map(r => {
+    const currentRate = getCurrentRate(r);
     const pmts = allRentPmts.filter(p => p.renterId === r.id).sort((a,b) => b.weekStart.localeCompare(a.weekStart));
     const totalPaid = pmts.reduce((s,p) => s + (p.amount || 0), 0);
     const lastPaid = pmts.length > 0 ? pmts[0].datePaid : 'never';
@@ -8646,7 +8648,7 @@ async function gatherBusinessSnapshot() {
         recentWeeks.push('missed');
       }
     }
-    return `${r.name}: $${getCurrentRate(r)}/wk, ${pmts.length} total payments ($${totalPaid.toFixed(0)}), last paid ${lastPaid}, last 8 weeks: ${onTime} on-time, ${late} late, ${missed} missed [${recentWeeks.join(', ')}]`;
+    return `- ${r.name}: Current rate $${currentRate}/week, ${pmts.length} payments ($${totalPaid.toFixed(0)} total), last paid ${lastPaid}, last 8 weeks: ${onTime} on-time, ${late} late, ${missed} missed`;
   });
 
   return `
@@ -8663,7 +8665,7 @@ ${topServices.join('\n')}
 TOP EXPENSE CATEGORIES (YTD):
 ${topExpenses.join('\n')}
 
-BOOTH RENTERS (${activeRenters.length} active):
+BOOTH RENTERS (${activeRenters.length} active, total weekly rent: $${totalWeeklyRent}):
 ${renterInfo.join('\n') || 'None'}
 
 CLIENT BOOK (top ${clientList.length} by spend):
