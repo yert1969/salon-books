@@ -4428,6 +4428,13 @@ async function renderReportInner() {
           <button class="report-btn" onclick="navigateWeek(1)" style="padding:8px 12px;">►</button>
           <button class="report-btn" onclick="runWeeklyReport()">View</button>
         </div>
+        <div style="margin-top:10px; display:flex; align-items:center; gap:8px;">
+          <label style="display:flex; align-items:center; gap:6px; font-size:13px; color:var(--text); cursor:pointer;">
+            <input type="checkbox" id="r-week-personal" onchange="runWeeklyReport()" style="width:18px; height:18px; accent-color:var(--plum);">
+            <span>Personal Only</span>
+          </label>
+          <span style="font-size:11px; color:var(--text-muted);">(excludes employee income & pay)</span>
+        </div>
         <div class="report-body" id="report-output"></div>
       `;
       await runWeeklyReport();
@@ -4444,6 +4451,13 @@ async function renderReportInner() {
           <input type="number" class="report-input" id="r-year" value="${yearNow}" min="2020" max="2099" style="max-width:90px" inputmode="numeric">
           <button class="report-btn" onclick="navigateMonth(1)" style="padding:8px 12px;">►</button>
           <button class="report-btn" onclick="runMonthlyReport()">View</button>
+        </div>
+        <div style="margin-top:10px; display:flex; align-items:center; gap:8px;">
+          <label style="display:flex; align-items:center; gap:6px; font-size:13px; color:var(--text); cursor:pointer;">
+            <input type="checkbox" id="r-month-personal" onchange="runMonthlyReport()" style="width:18px; height:18px; accent-color:var(--plum);">
+            <span>Personal Only</span>
+          </label>
+          <span style="font-size:11px; color:var(--text-muted);">(excludes employee income & pay)</span>
         </div>
         <div class="report-body" id="report-output"></div>
       `;
@@ -4606,6 +4620,13 @@ async function renderReportInner() {
         <div class="report-controls">
           <input type="number" class="report-input" id="r-annual-year" value="${yearNow}" min="2020" max="2099" style="max-width:100px" inputmode="numeric">
           <button class="report-btn" onclick="runAnnualReport()">View</button>
+        </div>
+        <div style="margin-top:10px; display:flex; align-items:center; gap:8px;">
+          <label style="display:flex; align-items:center; gap:6px; font-size:13px; color:var(--text); cursor:pointer;">
+            <input type="checkbox" id="r-annual-personal" onchange="runAnnualReport()" style="width:18px; height:18px; accent-color:var(--plum);">
+            <span>Personal Only</span>
+          </label>
+          <span style="font-size:11px; color:var(--text-muted);">(excludes employee income & pay)</span>
         </div>
         <div class="report-body" id="report-output"></div>
       `;
@@ -5164,6 +5185,10 @@ function navigateMonth(direction) {
 async function runWeeklyReport() {
   const pickedDate = document.getElementById('r-week-date')?.value || state.selectedDate;
   const weekStart  = getWeekStart(pickedDate);
+  const personalOnly = document.getElementById('r-week-personal')?.checked || false;
+  
+  // Categories to exclude when "Personal Only" is checked
+  const employeeCategories = ['Chasity (Vagaro Income)', 'Employee Pay'];
   
   // Update the date picker to show the Monday (start of week)
   const dateInput = document.getElementById('r-week-date');
@@ -5176,7 +5201,13 @@ async function runWeeklyReport() {
 
   for (let i = 0; i < 7; i++) {
     const d    = addDays(weekStart, i);
-    const txns = await db.transactions.where('date').equals(d).toArray();
+    let txns = await db.transactions.where('date').equals(d).toArray();
+    
+    // Filter out employee categories if personal only
+    if (personalOnly) {
+      txns = txns.filter(t => !employeeCategories.includes(t.category));
+    }
+    
     const sum  = await db.dailySummary.where('date').equals(d).first();
     const inc  = txns.filter(t=>t.type==='INCOME').reduce((s,t)=>s+(t.serviceAmount||0),0);
     const tips = txns.filter(t=>t.type==='INCOME').reduce((s,t)=>s+(t.tipAmount||0),0);
@@ -5196,7 +5227,12 @@ async function runWeeklyReport() {
   const isCurrentWeek = getWeekStart(todayStr()) === weekStart;
   
   if (isCurrentWeek) {
-    const allTxns = await db.transactions.toArray();
+    let allTxns = await db.transactions.toArray();
+    
+    // Filter for personal only comparison too
+    if (personalOnly) {
+      allTxns = allTxns.filter(t => !employeeCategories.includes(t.category));
+    }
     
     // Last week
     const lastWeekStart = addDays(weekStart, -7);
@@ -5260,7 +5296,10 @@ async function runWeeklyReport() {
     `;
   }
 
+  const personalLabel = personalOnly ? '<div style="text-align:center;font-size:12px;color:var(--plum);margin-bottom:8px;font-weight:500;">✨ Personal Performance Only</div>' : '';
+
   document.getElementById('report-output').innerHTML = `
+    ${personalLabel}
     <div class="report-section-title">Week of ${formatDateShort(weekStart)}</div>
     <div class="report-stat-grid">
       <div class="report-stat"><div class="report-stat-label">Total Income</div><div class="report-stat-value green">${fmt(weeklyIncome)}</div></div>
@@ -5295,12 +5334,28 @@ async function runWeeklyReport() {
 async function runMonthlyReport() {
   const month = parseInt(document.getElementById('r-month')?.value) || state.selectedMonth;
   const year  = parseInt(document.getElementById('r-year')?.value)  || state.selectedYear;
+  const personalOnly = document.getElementById('r-month-personal')?.checked || false;
+  
+  // Categories to exclude when "Personal Only" is checked
+  const employeeCategories = ['Chasity (Vagaro Income)', 'Employee Pay'];
 
   const monthStr = `${year}-${String(month).padStart(2,'0')}`;
-  const allTxns  = await db.transactions.toArray();
+  let allTxns  = await db.transactions.toArray();
+  
+  // Filter out employee categories if personal only
+  if (personalOnly) {
+    allTxns = allTxns.filter(t => !employeeCategories.includes(t.category));
+  }
+  
   const txns     = allTxns.filter(t => t.date && t.date.startsWith(monthStr));
   const allMExps = await db.monthlyExpenses.toArray();
-  const mExps    = allMExps.filter(e => e.year === year && e.month === month);
+  let mExps    = allMExps.filter(e => e.year === year && e.month === month);
+  
+  // Filter monthly expenses too if personal only
+  if (personalOnly) {
+    mExps = mExps.filter(e => !employeeCategories.includes(e.category));
+  }
+  
   const sums     = await db.dailySummary.toArray();
 
   const income   = txns.filter(t => t.type === 'INCOME');
@@ -5326,7 +5381,10 @@ async function runMonthlyReport() {
   const totalClients = monthSums.reduce((s,d)=>s+(d.clientsSeen||0),0);
   const totalHours   = monthSums.reduce((s,d)=>s+(d.hoursWorked||0),0);
 
+  const personalLabel = personalOnly ? '<div style="text-align:center;font-size:12px;color:var(--plum);margin-bottom:8px;font-weight:500;">✨ Personal Performance Only</div>' : '';
+
   document.getElementById('report-output').innerHTML = `
+    ${personalLabel}
     <div class="report-section-title">${monthName(month)} ${year}</div>
     
     <div class="report-white-card" style="padding:20px;">
@@ -5809,11 +5867,21 @@ async function runDateRangeCompareReport() {
 // ---- Annual Report ----
 async function runAnnualReport() {
   const year = parseInt(document.getElementById('r-annual-year')?.value) || state.selectedYear;
+  const personalOnly = document.getElementById('r-annual-personal')?.checked || false;
+  
+  // Categories to exclude when "Personal Only" is checked
+  const employeeCategories = ['Chasity (Vagaro Income)', 'Employee Pay'];
 
-  const allTxns = await db.transactions.toArray();
-  const allMExp = await db.monthlyExpenses.toArray();
+  let allTxns = await db.transactions.toArray();
+  let allMExp = await db.monthlyExpenses.toArray();
   const allSums = await db.dailySummary.toArray();
   const allRentPmts = await db.rentPayments.toArray();
+  
+  // Filter out employee categories if personal only
+  if (personalOnly) {
+    allTxns = allTxns.filter(t => !employeeCategories.includes(t.category));
+    allMExp = allMExp.filter(e => !employeeCategories.includes(e.category));
+  }
 
   let yearIncome=0, yearTips=0, yearExp=0, yearClients=0, yearRent=0;
   const rows = [];
@@ -5836,7 +5904,10 @@ async function runAnnualReport() {
     rows.push({ m, inc, tips, rent, dExp, mExp, cls, net: inc+tips+rent-dExp-mExp });
   }
 
+  const personalLabel = personalOnly ? '<div style="text-align:center;font-size:12px;color:var(--plum);margin-bottom:8px;font-weight:500;">✨ Personal Performance Only</div>' : '';
+
   document.getElementById('report-output').innerHTML = `
+    ${personalLabel}
     <div class="report-section-title">${year} Annual Summary</div>
     <div class="report-stat-grid">
       <div class="report-stat"><div class="report-stat-label">Services</div><div class="report-stat-value green">${fmt(yearIncome)}</div></div>
