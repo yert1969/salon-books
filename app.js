@@ -407,7 +407,8 @@ function createCustomDropdown(options) {
     
     if (searchable && searchInput) {
       searchInput.value = '';
-      setTimeout(() => searchInput.focus(), 50);
+      // Don't auto-focus on mobile to prevent keyboard from popping up
+      // User can tap the search field if they want to type
     }
     
     // Scroll selected into view
