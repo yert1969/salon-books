@@ -4428,12 +4428,12 @@ async function renderReportInner() {
           <button class="report-btn" onclick="navigateWeek(1)" style="padding:8px 12px;">►</button>
           <button class="report-btn" onclick="runWeeklyReport()">View</button>
         </div>
-        <div style="margin-top:10px; display:flex; align-items:center; gap:8px;">
-          <label style="display:flex; align-items:center; gap:6px; font-size:13px; color:var(--text); cursor:pointer;">
-            <input type="checkbox" id="r-week-personal" onchange="runWeeklyReport()" style="width:18px; height:18px; accent-color:var(--plum);">
-            <span>Personal Only</span>
+        <div style="margin-top:12px; display:flex; justify-content:center;">
+          <label style="display:flex; align-items:center; gap:10px; font-size:14px; color:var(--text); cursor:pointer; background:var(--gold-lighter); padding:10px 16px; border-radius:20px; border:1.5px solid var(--border);">
+            <input type="checkbox" id="r-week-personal" onchange="runWeeklyReport()" style="width:20px; height:20px; accent-color:var(--plum);">
+            <span style="font-weight:500;">Personal Only</span>
+            <span style="font-size:11px; color:var(--text-muted);">(excludes employee)</span>
           </label>
-          <span style="font-size:11px; color:var(--text-muted);">(excludes employee income & pay)</span>
         </div>
         <div class="report-body" id="report-output"></div>
       `;
@@ -4452,12 +4452,12 @@ async function renderReportInner() {
           <button class="report-btn" onclick="navigateMonth(1)" style="padding:8px 12px;">►</button>
           <button class="report-btn" onclick="runMonthlyReport()">View</button>
         </div>
-        <div style="margin-top:10px; display:flex; align-items:center; gap:8px;">
-          <label style="display:flex; align-items:center; gap:6px; font-size:13px; color:var(--text); cursor:pointer;">
-            <input type="checkbox" id="r-month-personal" onchange="runMonthlyReport()" style="width:18px; height:18px; accent-color:var(--plum);">
-            <span>Personal Only</span>
+        <div style="margin-top:12px; display:flex; justify-content:center;">
+          <label style="display:flex; align-items:center; gap:10px; font-size:14px; color:var(--text); cursor:pointer; background:var(--gold-lighter); padding:10px 16px; border-radius:20px; border:1.5px solid var(--border);">
+            <input type="checkbox" id="r-month-personal" onchange="runMonthlyReport()" style="width:20px; height:20px; accent-color:var(--plum);">
+            <span style="font-weight:500;">Personal Only</span>
+            <span style="font-size:11px; color:var(--text-muted);">(excludes employee)</span>
           </label>
-          <span style="font-size:11px; color:var(--text-muted);">(excludes employee income & pay)</span>
         </div>
         <div class="report-body" id="report-output"></div>
       `;
@@ -4621,12 +4621,12 @@ async function renderReportInner() {
           <input type="number" class="report-input" id="r-annual-year" value="${yearNow}" min="2020" max="2099" style="max-width:100px" inputmode="numeric">
           <button class="report-btn" onclick="runAnnualReport()">View</button>
         </div>
-        <div style="margin-top:10px; display:flex; align-items:center; gap:8px;">
-          <label style="display:flex; align-items:center; gap:6px; font-size:13px; color:var(--text); cursor:pointer;">
-            <input type="checkbox" id="r-annual-personal" onchange="runAnnualReport()" style="width:18px; height:18px; accent-color:var(--plum);">
-            <span>Personal Only</span>
+        <div style="margin-top:12px; display:flex; justify-content:center;">
+          <label style="display:flex; align-items:center; gap:10px; font-size:14px; color:var(--text); cursor:pointer; background:var(--gold-lighter); padding:10px 16px; border-radius:20px; border:1.5px solid var(--border);">
+            <input type="checkbox" id="r-annual-personal" onchange="runAnnualReport()" style="width:20px; height:20px; accent-color:var(--plum);">
+            <span style="font-weight:500;">Personal Only</span>
+            <span style="font-size:11px; color:var(--text-muted);">(excludes employee)</span>
           </label>
-          <span style="font-size:11px; color:var(--text-muted);">(excludes employee income & pay)</span>
         </div>
         <div class="report-body" id="report-output"></div>
       `;
