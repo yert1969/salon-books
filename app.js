@@ -443,6 +443,17 @@ function fmt(amount) {
   return '$' + parseFloat(amount).toFixed(2);
 }
 
+// Security: Escape HTML to prevent XSS attacks from user-generated content
+function escapeHTML(str) {
+  if (str === null || str === undefined) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
 function monthName(num) {
   return new Date(2000, num - 1, 1).toLocaleString('en-US', { month: 'long' });
 }
@@ -1335,7 +1346,7 @@ async function buildDashboard() {
         alerts.push({
           type: 'danger',
           icon: '🔴',
-          title: `${r.name} owes ${fmt(totalOwed)}`,
+          title: `${escapeHTML(r.name)} owes ${fmt(totalOwed)}`,
           sub: `${weekDetail.join(', ')} week${(unpaidWeeks + partialWeeks) > 1 ? 's' : ''}${lateCount >= 3 ? ` · Pattern: late ${lateCount} of last 6 payments` : ''}`,
           priority: 1
         });
@@ -2258,9 +2269,9 @@ async function renderRecentTransactionsSimple() {
           return `
             <div style="display:flex; justify-content:space-between; align-items:center; padding:10px 0; border-bottom:1px solid var(--border-light);">
               <div style="flex:1;">
-                <div style="font-size:15px; font-weight:500; color:var(--text);">${t.category}</div>
-                ${t.clientName ? `<div style="font-size:12px; color:var(--plum); margin-top:2px;">👤 ${t.clientName}</div>` : ''}
-                ${t.notes ? `<div style="font-size:13px; color:var(--text-muted); margin-top:2px;">${t.notes}</div>` : ''}
+                <div style="font-size:15px; font-weight:500; color:var(--text);">${escapeHTML(t.category)}</div>
+                ${t.clientName ? `<div style="font-size:12px; color:var(--plum); margin-top:2px;">👤 ${escapeHTML(t.clientName)}</div>` : ''}
+                ${t.notes ? `<div style="font-size:13px; color:var(--text-muted); margin-top:2px;">${escapeHTML(t.notes)}</div>` : ''}
               </div>
               <div style="text-align:right; display:flex; align-items:center; gap:4px;">
                 <div style="margin-right:8px;">
@@ -2442,9 +2453,9 @@ async function renderRecentTransactions() {
           return `
             <div style="display:flex; justify-content:space-between; align-items:center; padding:10px 0; border-bottom:1px solid var(--border-light);">
               <div style="flex:1;">
-                <div style="font-size:15px; font-weight:500; color:var(--text);">${t.category}${monthlyBadge}</div>
-                ${t.clientName ? `<div style="font-size:12px; color:var(--plum); margin-top:2px;">${t.clientName}</div>` : ''}
-                ${t.notes ? `<div style="font-size:13px; color:var(--text-muted); margin-top:2px;">${t.notes}</div>` : ''}
+                <div style="font-size:15px; font-weight:500; color:var(--text);">${escapeHTML(t.category)}${monthlyBadge}</div>
+                ${t.clientName ? `<div style="font-size:12px; color:var(--plum); margin-top:2px;">${escapeHTML(t.clientName)}</div>` : ''}
+                ${t.notes ? `<div style="font-size:13px; color:var(--text-muted); margin-top:2px;">${escapeHTML(t.notes)}</div>` : ''}
               </div>
               <div style="text-align:right; display:flex; align-items:center; gap:4px;">
                 <div style="margin-right:8px;">
@@ -3077,7 +3088,7 @@ async function renderDailyEntries(container) {
           <div style="display:flex; align-items:center; flex:1;">
             <span style="font-size:24px; margin-right:12px;">${icon}</span>
             <div>
-              <div style="font-size:15px; font-weight:600; margin-bottom:2px;">${t.category}</div>
+              <div style="font-size:15px; font-weight:600; margin-bottom:2px;">${escapeHTML(t.category)}</div>
               <div style="font-size:12px; color:var(--text-muted);">${isIncome ? 'Income' : 'Daily Expense'}</div>
             </div>
           </div>
@@ -3196,7 +3207,7 @@ async function renderMonthlyEntries(container) {
           <div style="display:flex; align-items:center; flex:1;">
             <span style="font-size:24px; margin-right:12px;">${icon}</span>
             <div>
-              <div style="font-size:15px; font-weight:600; margin-bottom:2px;">${entry.category}</div>
+              <div style="font-size:15px; font-weight:600; margin-bottom:2px;">${escapeHTML(entry.category)}</div>
               <div style="font-size:12px; color:var(--text-muted);">${typeLabel} • ${dateDisplay}</div>
             </div>
           </div>
@@ -3298,7 +3309,7 @@ async function renderAllEntries(container) {
           <div style="display:flex; align-items:center; flex:1;">
             <span style="font-size:24px; margin-right:12px;">${icon}</span>
             <div>
-              <div style="font-size:15px; font-weight:600; margin-bottom:2px;">${entry.category}</div>
+              <div style="font-size:15px; font-weight:600; margin-bottom:2px;">${escapeHTML(entry.category)}</div>
               <div style="font-size:12px; color:var(--text-muted);">${typeLabel} • ${dateDisplay}</div>
             </div>
           </div>
@@ -3568,8 +3579,8 @@ function renderTransactionItem(t) {
   return `
     <div class="txn-row">
       <div class="txn-body" onclick="openEditTransactionModal('${t.id}')">
-        <div class="txn-category">${t.category || '—'} <span style="font-size:11px;color:var(--text-light);font-weight:400;">✏</span></div>
-        <div class="txn-meta">${t.clientName ? '👤 ' + t.clientName + ' · ' : ''}${t.paymentMethod || ''}${t.notes ? ' · ' + t.notes : ''}${isIncome && t.tipAmount > 0 ? ' · tip ' + fmt(t.tipAmount) : ''}</div>
+        <div class="txn-category">${escapeHTML(t.category) || '—'} <span style="font-size:11px;color:var(--text-light);font-weight:400;">✏</span></div>
+        <div class="txn-meta">${t.clientName ? '👤 ' + escapeHTML(t.clientName) + ' · ' : ''}${escapeHTML(t.paymentMethod) || ''}${t.notes ? ' · ' + escapeHTML(t.notes) : ''}${isIncome && t.tipAmount > 0 ? ' · tip ' + fmt(t.tipAmount) : ''}</div>
       </div>
       <div class="txn-amount-col ${colorClass}" onclick="openEditTransactionModal('${t.id}')">${sign}${fmt(Math.abs(total))}</div>
       <button class="txn-delete" onclick="deleteTransaction('${t.id}')">✕</button>
@@ -3580,8 +3591,8 @@ function renderMonthlyExpenseItem(e) {
   return `
     <div class="txn-row">
       <div class="txn-body" onclick="openEditMonthlyExpenseModal('${e.id}')">
-        <div class="txn-category">${e.category || '—'} <span style="font-size:11px;color:var(--text-light);font-weight:400;">✏</span></div>
-        <div class="txn-meta">Monthly${e.notes ? ' · ' + e.notes : ''}</div>
+        <div class="txn-category">${escapeHTML(e.category) || '—'} <span style="font-size:11px;color:var(--text-light);font-weight:400;">✏</span></div>
+        <div class="txn-meta">Monthly${e.notes ? ' · ' + escapeHTML(e.notes) : ''}</div>
       </div>
       <div class="txn-amount-col expense-amount" onclick="openEditMonthlyExpenseModal('${e.id}')">-${fmt(e.amount || 0)}</div>
       <button class="txn-delete" onclick="deleteMonthlyExpenseFromEntries('${e.id}')">✕</button>
@@ -4858,14 +4869,15 @@ async function runClientBook() {
         c.daysSince < 30 ? `${Math.floor(c.daysSince / 7)} wk${Math.floor(c.daysSince/7)>1?'s':''} ago` :
         `${Math.floor(c.daysSince / 30)} mo${Math.floor(c.daysSince/30)>1?'s':''} ago`;
       const overdueFlag = c.daysSince >= 28;
+      const safeId = c.name.replace(/[^a-zA-Z0-9]/g,'_');
 
       return `
-      <div class="client-card" style="background:var(--bg-card);border-radius:12px;padding:14px 16px;margin-bottom:8px;box-shadow:0 1px 3px rgba(0,0,0,0.04);cursor:pointer;" onclick="toggleClientDetail('client-${c.name.replace(/[^a-zA-Z0-9]/g,'_')}')">
+      <div class="client-card" style="background:var(--bg-card);border-radius:12px;padding:14px 16px;margin-bottom:8px;box-shadow:0 1px 3px rgba(0,0,0,0.04);cursor:pointer;" onclick="toggleClientDetail('client-${safeId}')">
         <div style="display:flex;justify-content:space-between;align-items:center;">
           <div>
-            <div style="font-size:15px;font-weight:600;color:var(--text);">${c.name}</div>
+            <div style="font-size:15px;font-weight:600;color:var(--text);">${escapeHTML(c.name)}</div>
             <div style="font-size:12px;color:var(--text-muted);margin-top:2px;">
-              ${c.visitCount} visit${c.visitCount !== 1 ? 's' : ''} · ${c.topService} · ${lastVisitLabel}
+              ${c.visitCount} visit${c.visitCount !== 1 ? 's' : ''} · ${escapeHTML(c.topService)} · ${lastVisitLabel}
               ${overdueFlag ? '<span style="color:var(--danger);font-weight:600;"> ⏰</span>' : ''}
             </div>
           </div>
@@ -4874,13 +4886,13 @@ async function runClientBook() {
             <div style="font-size:11px;color:var(--text-muted);">${fmt(c.avgTicket)} avg</div>
           </div>
         </div>
-        <div id="client-${c.name.replace(/[^a-zA-Z0-9]/g,'_')}" style="display:none;margin-top:12px;padding-top:12px;border-top:1px solid var(--border-light);">
+        <div id="client-${safeId}" style="display:none;margin-top:12px;padding-top:12px;border-top:1px solid var(--border-light);">
           <div style="font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted);font-weight:600;margin-bottom:8px;">Visit History</div>
           ${c.visits.slice(0, 10).map(v => `
             <div style="display:flex;justify-content:space-between;padding:4px 0;font-size:13px;border-bottom:1px solid var(--border-light);">
               <div>
                 <span style="color:var(--text);">${formatDateShort(v.date)}</span>
-                <span style="color:var(--text-muted);margin-left:6px;">${v.category}</span>
+                <span style="color:var(--text-muted);margin-left:6px;">${escapeHTML(v.category)}</span>
               </div>
               <div style="font-weight:600;color:var(--success);">${fmt(v.total)}${v.tipAmount > 0 ? ` <span style="font-weight:400;font-size:11px;color:var(--gold);">(${fmt(v.tipAmount)} tip)</span>` : ''}</div>
             </div>
@@ -7277,13 +7289,13 @@ async function renderRentersView() {
           <div class="renter-row" onclick="openRenterDetail('${r.id}')">
             <div class="renter-icon">${icon}</div>
             <div class="renter-info">
-              <div class="renter-name">${r.name}${r.booth ? ` <span class="renter-booth">Booth ${r.booth}</span>` : ''}</div>
+              <div class="renter-name">${escapeHTML(r.name)}${r.booth ? ` <span class="renter-booth">Booth ${escapeHTML(r.booth)}</span>` : ''}</div>
               <div class="renter-meta">
                 ${p
-                  ? `Paid ${formatDateDisplay(p.datePaid)} · ${p.paymentMethod} · <span class="${statusClass}">${statusLabel}</span>`
+                  ? `Paid ${formatDateDisplay(p.datePaid)} · ${escapeHTML(p.paymentMethod)} · <span class="${statusClass}">${statusLabel}</span>`
                   : `<span class="${statusClass}">Not yet paid</span> · Due ${fmt(getRateForWeek(r, state.renterWeekStart))}`}
               </div>
-              ${p && p.notes && p.notes.includes('catch-up') ? `<div style="font-size:10px;color:var(--plum);margin-top:2px;">↳ ${p.notes}</div>` : ''}
+              ${p && p.notes && p.notes.includes('catch-up') ? `<div style="font-size:10px;color:var(--plum);margin-top:2px;">↳ ${escapeHTML(p.notes)}</div>` : ''}
             </div>
             <div class="renter-amount">
               <div style="font-weight:700;color:${p ? 'var(--success)' : 'var(--text-muted)'}">${p ? fmt(p.amount) : fmt(getRateForWeek(r, state.renterWeekStart))}</div>
@@ -7310,7 +7322,7 @@ function openLogPaymentModal(renterId) {
     if (!r) return;
     openModal(`
       <h2 class="modal-title">Log Rent Payment</h2>
-      <p style="color:var(--text-muted);font-size:13px;margin-bottom:14px;">${r.name} · Week of ${formatWeekRange(state.rentersWeekStart)}</p>
+      <p style="color:var(--text-muted);font-size:13px;margin-bottom:14px;">${escapeHTML(r.name)} · Week of ${formatWeekRange(state.rentersWeekStart)}</p>
 
       <label class="form-label">Amount Paid ($)</label>
       <input type="number" inputmode="decimal" class="form-input" id="rp-amount"
@@ -7680,9 +7692,9 @@ function openRenterDetail(renterId) {
       : '';
 
     openModal(`
-      <h2 class="modal-title">${r.name}</h2>
+      <h2 class="modal-title">${escapeHTML(r.name)}</h2>
       <div style="display:flex;gap:12px;margin-bottom:14px;font-size:13px;color:var(--text-muted);">
-        ${r.booth ? `<span>Booth ${r.booth}</span>` : ''}
+        ${r.booth ? `<span>Booth ${escapeHTML(r.booth)}</span>` : ''}
         <span>${fmt(curRate)}/week${rateNote}</span>
         <span>Since ${r.startDate ? formatDateDisplay(r.startDate) : '—'}</span>
       </div>
