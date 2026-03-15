@@ -4383,6 +4383,7 @@ async function renderReportsView() {
     { id: 'booth-rent', label: 'Booth Rent' },
     { id: 'pnl',       label: 'P&L' },
     { id: 'clients',   label: '👤 Clients' },
+    { id: 'tax-est',  label: '🧾 Tax Est.' },
     { id: 'export',   label: '📥 Export CSV' },
   ];
 
@@ -4717,6 +4718,32 @@ async function renderReportInner() {
       break;
     }
 
+    case 'tax-est': {
+      const taxYearNow = new Date().getFullYear();
+      const yearOpts = [taxYearNow, taxYearNow - 1].map(y =>
+        `<option value="${y}" ${y === taxYearNow ? 'selected' : ''}>${y}</option>`
+      ).join('');
+      el.innerHTML = `
+        <div class="report-controls" style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;">
+          <div style="flex:1;min-width:100px;">
+            <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px;">Tax Year</label>
+            <select class="report-input" id="r-tax-year" style="width:100%;">${yearOpts}</select>
+          </div>
+          <div style="flex:2;min-width:160px;">
+            <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px;">Filing Status</label>
+            <select class="report-input" id="r-tax-filing-status" style="width:100%;">
+              <option value="single">Single</option>
+              <option value="mfj">Married Filing Jointly</option>
+            </select>
+          </div>
+          <button class="report-btn" onclick="runTaxEstimateReport()">Calculate</button>
+        </div>
+        <div class="report-body" id="report-output"></div>
+      `;
+      await runTaxEstimateReport();
+      break;
+    }
+
     case 'export': {
       el.innerHTML = `
         <div class="report-controls" style="flex-wrap:wrap; gap:8px;">
@@ -4746,7 +4773,7 @@ async function renderReportInner() {
   // Show export bar for all report types except 'export' and 'clients'
   const exportBar = document.getElementById('report-export-bar');
   if (exportBar) {
-    exportBar.style.display = (state.reportType === 'export' || state.reportType === 'clients') ? 'none' : 'block';
+    exportBar.style.display = (state.reportType === 'export' || state.reportType === 'clients' || state.reportType === 'tax-est') ? 'none' : 'block';
   }
 }
 
@@ -9103,6 +9130,210 @@ async function reloadApp() {
     // Fallback: just do a hard reload
     window.location.reload(true);
   }
+}
+
+// ----------------------------------------------------------------
+// QUARTERLY TAX ESTIMATE REPORT
+// ----------------------------------------------------------------
+
+async function runTaxEstimateReport() {
+  const year = parseInt(document.getElementById('r-tax-year')?.value) || new Date().getFullYear();
+  const filingStatus = document.getElementById('r-tax-filing-status')?.value || 'single';
+  const el = document.getElementById('report-output');
+  if (!el) return;
+
+  el.innerHTML = '<div style="text-align:center;padding:32px;color:var(--text-muted);">Calculating...</div>';
+
+  const yearStr = String(year);
+  const allTxns     = await db.transactions.toArray();
+  const allMExp     = await db.monthlyExpenses.toArray();
+  const allRentPmts = await db.rentPayments.toArray();
+
+  const ytdTxns = allTxns.filter(t => t.date?.startsWith(yearStr));
+
+  const ytdServices = ytdTxns.filter(t => t.type === 'INCOME')
+    .reduce((s, t) => s + (t.serviceAmount || 0) + (t.tipAmount || 0), 0);
+  const ytdRent = allRentPmts.filter(p => p.datePaid?.startsWith(yearStr))
+    .reduce((s, p) => s + (p.amount || 0), 0);
+  const ytdGrossRevenue = ytdServices + ytdRent;
+
+  const ytdDailyExp = ytdTxns.filter(t => t.type === 'EXPENSE')
+    .reduce((s, t) => s + (t.amount || 0), 0);
+  const ytdMonthlyExp = allMExp.filter(e => e.year === year)
+    .reduce((s, e) => s + (e.amount || 0), 0);
+  const ytdTotalExp  = ytdDailyExp + ytdMonthlyExp;
+  const ytdNetIncome = ytdGrossRevenue - ytdTotalExp;
+
+  const today = new Date();
+  const monthsElapsed = year < today.getFullYear() ? 12 : today.getMonth() + 1;
+  const projectedAnnualNet = monthsElapsed > 0 ? (ytdNetIncome / monthsElapsed) * 12 : 0;
+
+  // 2025 IRS tax brackets
+  const taxData = {
+    single: {
+      stdDeduction: 15000,
+      brackets: [
+        { rate: 0.10, upTo: 11925 },
+        { rate: 0.12, upTo: 48475 },
+        { rate: 0.22, upTo: 103350 },
+        { rate: 0.24, upTo: 197300 },
+        { rate: 0.32, upTo: 250525 },
+        { rate: 0.35, upTo: 626350 },
+        { rate: 0.37, upTo: Infinity },
+      ],
+    },
+    mfj: {
+      stdDeduction: 30000,
+      brackets: [
+        { rate: 0.10, upTo: 23850 },
+        { rate: 0.12, upTo: 96950 },
+        { rate: 0.22, upTo: 206700 },
+        { rate: 0.24, upTo: 394600 },
+        { rate: 0.32, upTo: 501050 },
+        { rate: 0.35, upTo: 751600 },
+        { rate: 0.37, upTo: Infinity },
+      ],
+    },
+  };
+
+  function calcFederalTax(taxableIncome, status) {
+    if (taxableIncome <= 0) return 0;
+    const bkts = taxData[status].brackets;
+    let tax = 0, prev = 0;
+    for (const { rate, upTo } of bkts) {
+      const chunk = Math.min(taxableIncome, upTo) - prev;
+      if (chunk <= 0) break;
+      tax += chunk * rate;
+      prev = upTo;
+      if (taxableIncome <= upTo) break;
+    }
+    return tax;
+  }
+
+  function calcTaxes(netIncome) {
+    if (netIncome <= 0) return { seTax: 0, federalTax: 0, totalTax: 0, effectiveRate: 0, seDeduction: 0, taxableIncome: 0 };
+    const seTax        = netIncome * 0.9235 * 0.153;
+    const seDeduction  = seTax * 0.5;
+    const stdDeduction = taxData[filingStatus].stdDeduction;
+    const taxableIncome = Math.max(0, netIncome - seDeduction - stdDeduction);
+    const federalTax    = calcFederalTax(taxableIncome, filingStatus);
+    const totalTax      = seTax + federalTax;
+    const effectiveRate = (totalTax / netIncome) * 100;
+    return { seTax, federalTax, totalTax, effectiveRate, seDeduction, taxableIncome };
+  }
+
+  const projectedTaxes = calcTaxes(Math.max(0, projectedAnnualNet));
+
+  // IRS quarterly periods (Q2 is only Apr–May per IRS schedule)
+  const quarters = [
+    { q: 1, label: 'Q1', period: 'Jan – Mar', due: `Apr 15, ${year}`,     months: [1,2,3] },
+    { q: 2, label: 'Q2', period: 'Apr – May', due: `Jun 16, ${year}`,     months: [4,5] },
+    { q: 3, label: 'Q3', period: 'Jun – Aug', due: `Sep 15, ${year}`,     months: [6,7,8] },
+    { q: 4, label: 'Q4', period: 'Sep – Dec', due: `Jan 15, ${year + 1}`, months: [9,10,11,12] },
+  ];
+
+  const currentMonth = today.getMonth() + 1;
+  const currentQ = currentMonth <= 3 ? 1 : currentMonth <= 5 ? 2 : currentMonth <= 8 ? 3 : 4;
+
+  const quarterNetIncome = quarters.map(({ months }) => {
+    const qTxns = allTxns.filter(t => {
+      if (!t.date?.startsWith(yearStr)) return false;
+      const m = parseInt(t.date.split('-')[1]);
+      return months.includes(m);
+    });
+    const qInc  = qTxns.filter(t => t.type === 'INCOME').reduce((s, t) => s + (t.serviceAmount || 0) + (t.tipAmount || 0), 0);
+    const qRent = allRentPmts.filter(p => {
+      if (!p.datePaid?.startsWith(yearStr)) return false;
+      return months.includes(parseInt(p.datePaid.split('-')[1]));
+    }).reduce((s, p) => s + (p.amount || 0), 0);
+    const qDailyExp   = qTxns.filter(t => t.type === 'EXPENSE').reduce((s, t) => s + (t.amount || 0), 0);
+    const qMonthlyExp = allMExp.filter(e => e.year === year && months.includes(e.month)).reduce((s, e) => s + (e.amount || 0), 0);
+    return (qInc + qRent) - (qDailyExp + qMonthlyExp);
+  });
+
+  const qPayment = projectedTaxes.totalTax / 4;
+  const filingLabel = filingStatus === 'single' ? 'Single, $15,000 std. deduction' : 'Married Filing Jointly, $30,000 std. deduction';
+
+  el.innerHTML = `
+    <div class="report-section-title">${year} Quarterly Tax Estimate</div>
+
+    <div style="background:var(--gold-lighter);border:1.5px solid var(--border);border-radius:12px;padding:16px;margin-bottom:16px;">
+      <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted);margin-bottom:10px;">YTD Income Summary</div>
+      <div style="display:flex;justify-content:space-between;margin-bottom:6px;font-size:14px;">
+        <span style="color:var(--text-muted);">Gross Revenue</span>
+        <span style="font-weight:600;">${fmt(ytdGrossRevenue)}</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;margin-bottom:6px;font-size:14px;">
+        <span style="color:var(--text-muted);">Total Expenses</span>
+        <span style="font-weight:600;color:var(--danger);">− ${fmt(ytdTotalExp)}</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;padding-top:8px;border-top:1px solid var(--border);font-size:16px;font-weight:700;">
+        <span>Net Income (YTD)</span>
+        <span style="color:${ytdNetIncome >= 0 ? 'var(--success)' : 'var(--danger)'};">${fmt(ytdNetIncome)}</span>
+      </div>
+    </div>
+
+    <div style="border:1.5px solid var(--border);border-radius:12px;padding:16px;margin-bottom:16px;">
+      <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted);margin-bottom:10px;">
+        Full-Year Projection (${monthsElapsed === 12 ? 'Final' : `based on ${monthsElapsed} mo.`})
+      </div>
+      <div style="display:flex;justify-content:space-between;margin-bottom:6px;font-size:14px;">
+        <span style="color:var(--text-muted);">Projected Net Income</span>
+        <span style="font-weight:600;">${fmt(projectedAnnualNet)}</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;margin-bottom:4px;font-size:14px;">
+        <span style="color:var(--text-muted);">Self-Employment Tax (15.3%)</span>
+        <span style="font-weight:600;color:var(--danger);">${fmt(projectedTaxes.seTax)}</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;margin-bottom:6px;font-size:14px;">
+        <span style="color:var(--text-muted);">Federal Income Tax</span>
+        <span style="font-weight:600;color:var(--danger);">${fmt(projectedTaxes.federalTax)}</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;padding-top:8px;border-top:1px solid var(--border);font-size:16px;font-weight:700;">
+        <span>Est. Total Annual Tax</span>
+        <span style="color:var(--danger);">${fmt(projectedTaxes.totalTax)}</span>
+      </div>
+      <div style="text-align:right;margin-top:4px;font-size:12px;color:var(--text-muted);">
+        Effective rate: ${projectedTaxes.effectiveRate.toFixed(1)}%
+      </div>
+    </div>
+
+    <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted);margin-bottom:8px;padding:0 2px;">
+      Quarterly Payment Schedule
+    </div>
+    <div style="display:grid;gap:8px;margin-bottom:16px;">
+      ${quarters.map(({ q, label, period, due }, i) => {
+        const isCurrentQ = q === currentQ && year === today.getFullYear();
+        const isPast = year < today.getFullYear() || (year === today.getFullYear() && q < currentQ);
+        const qNet = quarterNetIncome[i];
+        return `
+          <div style="border:${isCurrentQ ? '2px solid var(--plum)' : '1.5px solid var(--border)'};border-radius:12px;padding:14px;background:${isCurrentQ ? 'rgba(92,61,78,0.05)' : ''};">
+            <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:6px;">
+              <div>
+                <span style="font-size:13px;font-weight:700;color:${isCurrentQ ? 'var(--plum)' : 'var(--text)'};">${label} ${period}</span>
+                ${isCurrentQ ? '<span style="margin-left:6px;font-size:10px;font-weight:700;background:var(--plum);color:#fff;padding:2px 6px;border-radius:10px;">CURRENT</span>' : ''}
+              </div>
+              <div style="text-align:right;">
+                <div style="font-size:18px;font-weight:800;color:var(--danger);">${fmt(qPayment)}</div>
+                <div style="font-size:11px;color:var(--text-muted);">est. payment</div>
+              </div>
+            </div>
+            <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text-muted);">
+              <span>Net this quarter: <strong style="color:${qNet >= 0 ? 'var(--success)' : 'var(--danger)'};">${fmt(qNet)}</strong></span>
+              <span>Due: <strong style="color:${isPast ? 'var(--text-muted)' : 'var(--text)'};">${due}</strong></span>
+            </div>
+          </div>
+        `;
+      }).join('')}
+    </div>
+
+    <div style="background:var(--gold-lighter);border-radius:10px;padding:14px;font-size:12px;color:var(--text-muted);line-height:1.6;">
+      <strong style="color:var(--text);">How is this calculated?</strong><br>
+      Uses 2025 IRS tax brackets (${filingLabel}). Self-employment tax = net × 92.35% × 15.3%.
+      Half of SE tax is deducted before federal tax is applied. Quarterly payments = projected annual tax ÷ 4.<br><br>
+      <strong style="color:var(--text);">⚠️ Estimate only</strong> — not tax advice. Consult a tax professional for your actual filings.
+    </div>
+  `;
 }
 
 async function forceReload() {
