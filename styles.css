@@ -47,6 +47,7 @@ html, body {
 }
 
 .hidden { display: none !important; }
+.spacer-lg { height: 40px; }
 
 /* ---------- PIN SCREEN ---------- */
 .pin-screen {
