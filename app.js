@@ -615,7 +615,7 @@ function _defaultCategoryMap() {
     INCOME: [
       'Haircut', 'Color', 'Highlights', 'Blowout', 'Treatment',
       'Nails', 'Waxing', 'Retail Product', 'Other',
-      'Chasity (Vagaro Income)', "Women's haircut", 'Roots, hilites haircut',
+      'Vagaro Income', "Women's haircut", 'Roots, hilites haircut',
       'Full highlights haircut', 'Roots & haircut', 'Roots and hilites with haircut',
       'Partial highlights haircut', "Men's haircut", 'Highlites and Haircut',
     ],
@@ -1189,7 +1189,7 @@ async function buildDashboard() {
     const allRentPmts = await db.rentPayments.toArray();
 
     // Employee income categories (excluded from personal service metrics)
-    const employeeCategories = ['Chasity (Vagaro Income)'];
+    const employeeCategories = ['Vagaro Income'];
     const isPersonalService = (t) => t.type === 'INCOME' && !employeeCategories.includes(t.category);
     const isEmployeeIncome = (t) => t.type === 'INCOME' && employeeCategories.includes(t.category);
 
@@ -5058,13 +5058,20 @@ async function runEmployeeReport() {
   // Get all transactions
   const allTxns = await db.transactions.toArray();
   
-  // Filter income from this employee (e.g., "Chasity (Vagaro Income)")
-  const incomeCategory = `${employeeName.split(' ')[0]} (Vagaro Income)`;
+  // Filter income from this employee
+  // NEW: category === 'Vagaro Income' && employee === employeeName
+  // LEGACY: category === 'Chasity (Vagaro Income)' (for backward compatibility during migration)
+  const legacyCategory = `${employeeName.split(' ')[0]} (Vagaro Income)`;
   const incomeTxns = allTxns.filter(t => 
     t.type === 'INCOME' && 
-    t.category === incomeCategory &&
     t.date >= startDate && 
-    t.date <= endDate
+    t.date <= endDate &&
+    (
+      // New format: Vagaro Income + employee field
+      (t.category === 'Vagaro Income' && t.employee === employeeName) ||
+      // Legacy format: Chasity (Vagaro Income)
+      t.category === legacyCategory
+    )
   );
   
   // Calculate income totals
@@ -5305,7 +5312,7 @@ async function runClientBook() {
   const allTxns = await db.transactions.toArray();
 
   // Employee categories to exclude
-  const employeeCategories = ['Chasity (Vagaro Income)'];
+  const employeeCategories = ['Vagaro Income'];
 
   // Build client map from all income transactions with clientName
   const clientMap = {};
@@ -5744,7 +5751,7 @@ async function runWeeklyReport() {
   const personalOnly = document.getElementById('r-week-personal')?.checked || false;
   
   // Categories to exclude when "Personal Only" is checked
-  const employeeCategories = ['Chasity (Vagaro Income)', 'Employee Pay'];
+  const employeeCategories = ['Vagaro Income', 'Employee Pay'];
   
   // Update the date picker to show the Monday (start of week)
   const dateInput = document.getElementById('r-week-date');
@@ -5893,7 +5900,7 @@ async function runMonthlyReport() {
   const personalOnly = document.getElementById('r-month-personal')?.checked || false;
   
   // Categories to exclude when "Personal Only" is checked
-  const employeeCategories = ['Chasity (Vagaro Income)', 'Employee Pay'];
+  const employeeCategories = ['Vagaro Income', 'Employee Pay'];
 
   const monthStr = `${year}-${String(month).padStart(2,'0')}`;
   let allTxns  = await db.transactions.toArray();
@@ -6426,7 +6433,7 @@ async function runAnnualReport() {
   const personalOnly = document.getElementById('r-annual-personal')?.checked || false;
   
   // Categories to exclude when "Personal Only" is checked
-  const employeeCategories = ['Chasity (Vagaro Income)', 'Employee Pay'];
+  const employeeCategories = ['Vagaro Income', 'Employee Pay'];
 
   let allTxns = await db.transactions.toArray();
   let allMExp = await db.monthlyExpenses.toArray();
@@ -6968,7 +6975,7 @@ async function runPnlReport() {
 
   // ---- REVENUE ----
   // Employee income categories
-  const employeeCategories = ['Chasity (Vagaro Income)'];
+  const employeeCategories = ['Vagaro Income'];
 
   const monthTxns = allTxns.filter(t => t.date?.startsWith(ms));
   const ytdTxns   = allTxns.filter(t => t.date?.startsWith(yearStr));
@@ -9229,7 +9236,7 @@ async function gatherBusinessSnapshot() {
   const curYear = now.getFullYear();
   const curMonth = now.getMonth() + 1;
   const yearStr = String(curYear);
-  const employeeCategories = ['Chasity (Vagaro Income)'];
+  const employeeCategories = ['Vagaro Income'];
 
   // Monthly summaries for last 6 months
   const monthlySummaries = [];
@@ -9336,7 +9343,7 @@ async function gatherBusinessSnapshot() {
   return `
 BUSINESS SNAPSHOT (as of ${now.toLocaleDateString()}):
 Owner: Annette | Business: Hair Salon ("Mane Frame")
-Employee: Chasity (income tracked separately as "Chasity (Vagaro Income)")
+Employee: Chasity (income tracked via "Vagaro Income" category with employee field)
 
 MONTHLY PERFORMANCE (last 6 months):
 ${monthlySummaries.map(m => `${m.month} ${m.year}: Income $${m.totalIncome.toFixed(0)} (Services $${m.services.toFixed(0)}, Tips $${m.tips.toFixed(0)}, Employee $${m.employeeIncome.toFixed(0)}, Rent $${m.rentCollected.toFixed(0)}) | Expenses $${m.totalExpenses.toFixed(0)} (Daily $${m.dailyExpenses.toFixed(0)}, Monthly $${m.monthlyExpenses.toFixed(0)}) | Net $${m.netProfit.toFixed(0)} | Clients logged: ${m.clients}, Income entries: ${m.incomeEntries}, Unique named clients: ${m.uniqueClients}`).join('\n')}
