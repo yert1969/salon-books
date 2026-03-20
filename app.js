@@ -5315,10 +5315,15 @@ async function runEmployeeReport() {
   const totalCost = totalPay + totalTaxes;
   const netProfit = totalServices - totalCost;
   const profitMargin = totalServices > 0 ? ((netProfit / totalServices) * 100).toFixed(1) : 0;
-  
+
   // Sort weeks for display
   const sortedWeeks = Object.keys(weeklyData).sort().reverse();
   const weeksWorked = sortedWeeks.filter(w => weeklyData[w].services > 0 || weeklyData[w].pay > 0).length;
+
+  const BOOTH_RATE = 140;
+  const boothRenterNet = BOOTH_RATE * weeksWorked;
+  const boothDiff = netProfit - boothRenterNet;
+  const employeeIsBetter = boothDiff >= 0;
   
   // Format period label
   const periodLabels = {
@@ -5384,16 +5389,34 @@ async function runEmployeeReport() {
       </div>
       
       <!-- Net Profit -->
-      <div style="background:var(--plum); color:#fff; padding:16px; border-radius:10px; margin-bottom:16px;">
+      <div style="background:var(--plum); color:#fff; padding:16px; border-radius:10px; margin-bottom:8px;">
         <div style="display:flex; justify-content:space-between; align-items:center;">
           <div>
-            <div style="font-weight:600;">Net Profit to Annette</div>
+            <div style="font-weight:600;">Net Profit to Annette (Employee)</div>
             <div style="font-size:12px; opacity:0.8;">${profitMargin}% margin</div>
           </div>
           <span style="font-size:24px; font-weight:700;">${fmt(netProfit)}</span>
         </div>
       </div>
-      
+
+      <!-- Booth Renter Comparison -->
+      <div style="background:${employeeIsBetter ? 'var(--success-bg)' : 'var(--danger-bg)'}; padding:16px; border-radius:10px; margin-bottom:16px;">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <div>
+            <div style="font-weight:600; color:${employeeIsBetter ? 'var(--success)' : 'var(--danger)'};">vs. Booth Renter @ $${BOOTH_RATE}/wk</div>
+            <div style="font-size:12px; color:${employeeIsBetter ? 'var(--success)' : 'var(--danger)'};">
+              ${employeeIsBetter
+                ? `Employee earns ${fmt(boothDiff)} more`
+                : `Booth renter would earn ${fmt(Math.abs(boothDiff))} more`}
+            </div>
+          </div>
+          <div style="text-align:right;">
+            <div style="font-size:18px; font-weight:700; color:${employeeIsBetter ? 'var(--success)' : 'var(--danger)'};">${fmt(boothRenterNet)}</div>
+            <div style="font-size:11px; color:var(--text-muted);">${weeksWorked} wks × $${BOOTH_RATE}</div>
+          </div>
+        </div>
+      </div>
+
       <!-- Stats Grid -->
       <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:16px;">
         <div style="background:var(--cream); padding:12px; border-radius:8px; text-align:center;">
