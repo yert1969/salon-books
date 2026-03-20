@@ -2922,8 +2922,10 @@ function openEntryCategoryPicker() {
 }
 
 function toggleEmployeePayFields(category) {
+  console.log('[DEBUG] toggleEmployeePayFields called with:', category);
   const section = document.getElementById('employee-pay-section');
   const vagaroSection = document.getElementById('vagaro-employee-section');
+  console.log('[DEBUG] vagaroSection found:', !!vagaroSection, vagaroSection);
   
   // Employee Pay fields (expense)
   if (section) {
@@ -2936,8 +2938,11 @@ function toggleEmployeePayFields(category) {
   
   // Vagaro Income employee field (income)
   if (vagaroSection) {
-    if (category === 'Vagaro Income' || category?.includes('Vagaro Income')) {
+    const shouldShow = category === 'Vagaro Income' || category?.includes('Vagaro Income');
+    console.log('[DEBUG] shouldShow vagaro section:', shouldShow);
+    if (shouldShow) {
       vagaroSection.classList.remove('hidden');
+      console.log('[DEBUG] Removed hidden class from vagaroSection');
     } else {
       vagaroSection.classList.add('hidden');
     }
