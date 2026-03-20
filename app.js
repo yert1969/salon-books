@@ -287,6 +287,7 @@ const state = {
   showRentersTab:    false,  // Updated by updateRentersTabVisibility() on boot
   entriesViewMode:   'daily', // 'daily', 'monthly', or 'all'
   categories:        { INCOME: [], EXPENSE: [] },
+  employees:         ['Chasity McGill'],  // Employee list for payroll tracking
 };
 
 // ----------------------------------------------------------------
@@ -747,6 +748,58 @@ async function saveCategories() {
         .set(state.categories);
     } catch (err) {
       console.error('Failed to sync categories to Firebase:', err);
+    }
+  }
+}
+
+async function loadEmployees() {
+  try {
+    // Try Firebase first
+    if (auth && auth.currentUser) {
+      const doc = await firestore.collection('users')
+        .doc(auth.currentUser.uid)
+        .collection('settings')
+        .doc('employees')
+        .get();
+      
+      if (doc.exists && doc.data().list?.length) {
+        state.employees = doc.data().list;
+        return;
+      }
+    }
+    
+    // Try local storage
+    const saved = await db.settings.get('employees');
+    if (saved?.value) {
+      const parsed = JSON.parse(saved.value);
+      if (Array.isArray(parsed) && parsed.length) {
+        state.employees = parsed;
+        return;
+      }
+    }
+    
+    // Default
+    state.employees = ['Chasity McGill'];
+  } catch (e) {
+    console.warn('loadEmployees error:', e);
+    state.employees = ['Chasity McGill'];
+  }
+}
+
+async function saveEmployees() {
+  // Save locally
+  await db.settings.put({ key: 'employees', value: JSON.stringify(state.employees) });
+  
+  // Sync to Firebase
+  if (auth && auth.currentUser) {
+    try {
+      await firestore.collection('users')
+        .doc(auth.currentUser.uid)
+        .collection('settings')
+        .doc('employees')
+        .set({ list: state.employees });
+    } catch (err) {
+      console.error('Failed to sync employees to Firebase:', err);
     }
   }
 }
@@ -1943,6 +1996,28 @@ async function renderAddEntryTab(container) {
         <input type="hidden" id="entry-category" value="">
       </div>
       
+      <!-- Employee Pay Fields (shown when category is Employee Pay) -->
+      <div id="employee-pay-section" class="hidden">
+        <div class="form-group">
+          <label class="form-label" style="font-size:13px; margin-bottom:8px; display:block; font-weight:500;">Employee</label>
+          <button type="button" class="category-picker-trigger" id="entry-employee-btn" onclick="openEmployeePicker()">Chasity McGill</button>
+          <input type="hidden" id="entry-employee" value="Chasity McGill">
+        </div>
+        <div class="form-group">
+          <label class="form-label" style="font-size:13px; margin-bottom:8px; display:block; font-weight:500;">Type</label>
+          <div style="display:flex; gap:12px;">
+            <label id="paytype-pay-label" style="display:flex; align-items:center; gap:8px; cursor:pointer; flex:1; padding:12px; background:var(--cream); border-radius:8px; border:2px solid var(--gold);">
+              <input type="radio" name="entry-paytype" value="pay" checked style="width:18px; height:18px;" onchange="updatePayTypeStyle()">
+              <span style="font-size:14px; font-weight:500;">💰 Pay</span>
+            </label>
+            <label id="paytype-taxes-label" style="display:flex; align-items:center; gap:8px; cursor:pointer; flex:1; padding:12px; background:var(--cream); border-radius:8px; border:2px solid transparent;">
+              <input type="radio" name="entry-paytype" value="taxes" style="width:18px; height:18px;" onchange="updatePayTypeStyle()">
+              <span style="font-size:14px; font-weight:500;">📋 Taxes</span>
+            </label>
+          </div>
+        </div>
+      </div>
+      
       <div class="form-group" id="service-amount-section">
         <label class="form-label" style="font-size:13px; margin-bottom:8px; display:block; font-weight:500;">Service Amount</label>
         <input type="number" id="entry-amount" class="form-input" step="0.01" placeholder="0.00" style="width:100%; padding:12px; font-size:16px;">
@@ -2807,8 +2882,52 @@ function openEntryCategoryPicker() {
         categoryBtn.textContent = value;
         categoryBtn.classList.remove('placeholder');
       }
+      // Show/hide employee pay fields
+      toggleEmployeePayFields(value);
     }
   });
+}
+
+function toggleEmployeePayFields(category) {
+  const section = document.getElementById('employee-pay-section');
+  if (!section) return;
+  
+  if (category === 'Employee Pay') {
+    section.classList.remove('hidden');
+  } else {
+    section.classList.add('hidden');
+  }
+}
+
+function openEmployeePicker() {
+  const employeeInput = document.getElementById('entry-employee');
+  const employeeBtn = document.getElementById('entry-employee-btn');
+  
+  openCategoryPicker({
+    title: 'Select Employee',
+    items: state.employees || ['Chasity McGill'],
+    selectedValue: employeeInput?.value || 'Chasity McGill',
+    onSelect: (value) => {
+      if (employeeInput) employeeInput.value = value;
+      if (employeeBtn) employeeBtn.textContent = value;
+    }
+  });
+}
+
+function updatePayTypeStyle() {
+  const payLabel = document.getElementById('paytype-pay-label');
+  const taxesLabel = document.getElementById('paytype-taxes-label');
+  const selected = document.querySelector('input[name="entry-paytype"]:checked')?.value;
+  
+  if (payLabel && taxesLabel) {
+    if (selected === 'pay') {
+      payLabel.style.borderColor = 'var(--gold)';
+      taxesLabel.style.borderColor = 'transparent';
+    } else {
+      payLabel.style.borderColor = 'transparent';
+      taxesLabel.style.borderColor = 'var(--gold)';
+    }
+  }
 }
 
 // Modal category picker (for Add/Edit Transaction modals)
@@ -2842,8 +2961,52 @@ function openTxnCategoryPicker() {
         categoryBtn.textContent = value;
         categoryBtn.classList.remove('placeholder');
       }
+      // Toggle employee pay fields in edit modal
+      toggleTxnEmployeePayFields(value);
     }
   });
+}
+
+function toggleTxnEmployeePayFields(category) {
+  const section = document.getElementById('txn-employee-pay-section');
+  if (!section) return;
+  
+  if (category === 'Employee Pay') {
+    section.classList.remove('hidden');
+  } else {
+    section.classList.add('hidden');
+  }
+}
+
+function openTxnEmployeePicker() {
+  const employeeInput = document.getElementById('txn-employee');
+  const employeeBtn = document.getElementById('txn-employee-btn');
+  
+  openCategoryPicker({
+    title: 'Select Employee',
+    items: state.employees || ['Chasity McGill'],
+    selectedValue: employeeInput?.value || 'Chasity McGill',
+    onSelect: (value) => {
+      if (employeeInput) employeeInput.value = value;
+      if (employeeBtn) employeeBtn.textContent = value;
+    }
+  });
+}
+
+function updateTxnPayTypeStyle() {
+  const payLabel = document.getElementById('txn-paytype-pay-label');
+  const taxesLabel = document.getElementById('txn-paytype-taxes-label');
+  const selected = document.querySelector('input[name="txn-paytype"]:checked')?.value;
+  
+  if (payLabel && taxesLabel) {
+    if (selected === 'pay') {
+      payLabel.style.borderColor = 'var(--gold)';
+      taxesLabel.style.borderColor = 'transparent';
+    } else {
+      payLabel.style.borderColor = 'transparent';
+      taxesLabel.style.borderColor = 'var(--gold)';
+    }
+  }
 }
 
 // Payment method picker
@@ -2979,6 +3142,12 @@ async function saveEntryTransaction() {
         notes: notes,
         createdAt: firebase.firestore.Timestamp.now()
       };
+      
+      // Add employee pay fields if applicable
+      if (category === 'Employee Pay') {
+        transaction.employee = document.getElementById('entry-employee')?.value || 'Chasity McGill';
+        transaction.payType = document.querySelector('input[name="entry-paytype"]:checked')?.value || 'pay';
+      }
       
       await db.transactions.add(transaction);
       
@@ -3882,8 +4051,30 @@ async function openEditTransactionModal(id) {
 
     <div class="form-group">
       <label class="form-label">Category</label>
-      <button type="button" class="category-picker-trigger" id="txn-category-btn" onclick="openTxnCategoryPicker()">${t.category || 'Select category...'}</button>
-      <input type="hidden" id="txn-category" value="${t.category || ''}">
+      <button type="button" class="category-picker-trigger" id="txn-category-btn" onclick="openTxnCategoryPicker()">${escapeHTML(t.category) || 'Select category...'}</button>
+      <input type="hidden" id="txn-category" value="${escapeHTML(t.category) || ''}">
+    </div>
+
+    <!-- Employee Pay Fields (shown when category is Employee Pay) -->
+    <div id="txn-employee-pay-section" class="${t.category === 'Employee Pay' ? '' : 'hidden'}">
+      <div class="form-group">
+        <label class="form-label">Employee</label>
+        <button type="button" class="category-picker-trigger" id="txn-employee-btn" onclick="openTxnEmployeePicker()">${escapeHTML(t.employee) || 'Chasity McGill'}</button>
+        <input type="hidden" id="txn-employee" value="${escapeHTML(t.employee) || 'Chasity McGill'}">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Type</label>
+        <div style="display:flex; gap:12px;">
+          <label id="txn-paytype-pay-label" style="display:flex; align-items:center; gap:8px; cursor:pointer; flex:1; padding:12px; background:var(--cream); border-radius:8px; border:2px solid ${(!t.payType || t.payType === 'pay') ? 'var(--gold)' : 'transparent'};">
+            <input type="radio" name="txn-paytype" value="pay" ${(!t.payType || t.payType === 'pay') ? 'checked' : ''} style="width:18px; height:18px;" onchange="updateTxnPayTypeStyle()">
+            <span style="font-size:14px; font-weight:500;">💰 Pay</span>
+          </label>
+          <label id="txn-paytype-taxes-label" style="display:flex; align-items:center; gap:8px; cursor:pointer; flex:1; padding:12px; background:var(--cream); border-radius:8px; border:2px solid ${t.payType === 'taxes' ? 'var(--gold)' : 'transparent'};">
+            <input type="radio" name="txn-paytype" value="taxes" ${t.payType === 'taxes' ? 'checked' : ''} style="width:18px; height:18px;" onchange="updateTxnPayTypeStyle()">
+            <span style="font-size:14px; font-weight:500;">📋 Taxes</span>
+          </label>
+        </div>
+      </div>
     </div>
 
     <div class="form-group">
@@ -3984,6 +4175,16 @@ async function updateTransaction(id, type) {
       changes.amount        = amount;
       changes.serviceAmount = 0;
       changes.tipAmount     = 0;
+      
+      // Add employee pay fields if applicable
+      if (category === 'Employee Pay') {
+        changes.employee = document.getElementById('txn-employee')?.value || 'Chasity McGill';
+        changes.payType = document.querySelector('input[name="txn-paytype"]:checked')?.value || 'pay';
+      } else {
+        // Clear employee fields if category changed away from Employee Pay
+        changes.employee = null;
+        changes.payType = null;
+      }
     }
 
     await db.transactions.update(id, changes);
@@ -4382,6 +4583,7 @@ async function renderReportsView() {
     { id: 'category', label: 'By Category' },
     { id: 'booth-rent', label: 'Booth Rent' },
     { id: 'pnl',       label: 'P&L' },
+    { id: 'employee', label: '👩‍💼 Employee' },
     { id: 'clients',   label: '👤 Clients' },
     { id: 'tax-est',  label: '🧾 Tax Est.' },
     { id: 'export',   label: '📥 Export CSV' },
@@ -4701,6 +4903,35 @@ async function renderReportInner() {
       break;
     }
 
+    case 'employee': {
+      el.innerHTML = `
+        <div class="report-controls" style="gap:8px; flex-wrap:wrap;">
+          <select class="report-input" id="r-emp-employee" style="flex:1; min-width:140px;" onchange="runEmployeeReport()">
+            ${(state.employees || ['Chasity McGill']).map(e => 
+              `<option value="${escapeHTML(e)}">${escapeHTML(e)}</option>`
+            ).join('')}
+          </select>
+          <select class="report-input" id="r-emp-period" style="flex:1; min-width:120px;" onchange="runEmployeeReport()">
+            <option value="ytd">Year to Date</option>
+            <option value="q1">Q1 (Jan-Mar)</option>
+            <option value="q2">Q2 (Apr-Jun)</option>
+            <option value="q3">Q3 (Jul-Sep)</option>
+            <option value="q4">Q4 (Oct-Dec)</option>
+            <option value="last30">Last 30 Days</option>
+            <option value="all">All Time</option>
+          </select>
+          <select class="report-input" id="r-emp-year" style="width:90px;" onchange="runEmployeeReport()">
+            ${[2024, 2025, 2026, 2027].map(y => 
+              `<option value="${y}" ${y === new Date().getFullYear() ? 'selected' : ''}>${y}</option>`
+            ).join('')}
+          </select>
+        </div>
+        <div class="report-body" id="report-output"></div>
+      `;
+      await runEmployeeReport();
+      break;
+    }
+
     case 'clients': {
       el.innerHTML = `
         <div class="report-controls" style="gap:8px;">
@@ -4773,8 +5004,294 @@ async function renderReportInner() {
   // Show export bar for all report types except 'export' and 'clients'
   const exportBar = document.getElementById('report-export-bar');
   if (exportBar) {
-    exportBar.style.display = (state.reportType === 'export' || state.reportType === 'clients' || state.reportType === 'tax-est') ? 'none' : 'block';
+    exportBar.style.display = (state.reportType === 'export' || state.reportType === 'clients' || state.reportType === 'tax-est' || state.reportType === 'employee') ? 'none' : 'block';
   }
+}
+
+// ---- Employee Report ----
+async function runEmployeeReport() {
+  const el = document.getElementById('report-output');
+  if (!el) return;
+  
+  const employeeName = document.getElementById('r-emp-employee')?.value || 'Chasity McGill';
+  const period = document.getElementById('r-emp-period')?.value || 'ytd';
+  const year = parseInt(document.getElementById('r-emp-year')?.value) || new Date().getFullYear();
+  
+  // Calculate date range based on period
+  let startDate, endDate;
+  const today = new Date();
+  
+  switch (period) {
+    case 'q1':
+      startDate = `${year}-01-01`;
+      endDate = `${year}-03-31`;
+      break;
+    case 'q2':
+      startDate = `${year}-04-01`;
+      endDate = `${year}-06-30`;
+      break;
+    case 'q3':
+      startDate = `${year}-07-01`;
+      endDate = `${year}-09-30`;
+      break;
+    case 'q4':
+      startDate = `${year}-10-01`;
+      endDate = `${year}-12-31`;
+      break;
+    case 'last30':
+      endDate = todayStr();
+      const d = new Date();
+      d.setDate(d.getDate() - 30);
+      startDate = d.toISOString().split('T')[0];
+      break;
+    case 'all':
+      startDate = '2020-01-01';
+      endDate = '2099-12-31';
+      break;
+    case 'ytd':
+    default:
+      startDate = `${year}-01-01`;
+      endDate = todayStr();
+      break;
+  }
+  
+  // Get all transactions
+  const allTxns = await db.transactions.toArray();
+  
+  // Filter income from this employee (e.g., "Chasity (Vagaro Income)")
+  const incomeCategory = `${employeeName.split(' ')[0]} (Vagaro Income)`;
+  const incomeTxns = allTxns.filter(t => 
+    t.type === 'INCOME' && 
+    t.category === incomeCategory &&
+    t.date >= startDate && 
+    t.date <= endDate
+  );
+  
+  // Calculate income totals
+  let cardServices = 0, cashServices = 0, totalTips = 0;
+  const weeklyData = {};
+  
+  incomeTxns.forEach(t => {
+    const weekStart = getWeekStart(t.date);
+    if (!weeklyData[weekStart]) {
+      weeklyData[weekStart] = { services: 0, tips: 0, pay: 0, taxes: 0 };
+    }
+    
+    const serviceAmt = t.serviceAmount || t.amount || 0;
+    weeklyData[weekStart].services += serviceAmt;
+    
+    if (t.paymentMethod === 'Card') {
+      cardServices += serviceAmt;
+    } else if (t.paymentMethod === 'Cash') {
+      cashServices += serviceAmt;
+    } else {
+      cardServices += serviceAmt; // Default to card
+    }
+    
+    // Check employeeTips field first (from Vagaro import)
+    if (t.employeeTips) {
+      totalTips += t.employeeTips;
+      weeklyData[weekStart].tips += t.employeeTips;
+    }
+    // Also extract tips from notes if present: "(Tips: $143.50 kept by Chasity)"
+    else {
+      const tipMatch = t.notes?.match(/Tips:\s*\$?([\d.]+)/i);
+      if (tipMatch) {
+        const tipAmt = parseFloat(tipMatch[1]) || 0;
+        totalTips += tipAmt;
+        weeklyData[weekStart].tips += tipAmt;
+      }
+    }
+    
+    // Also check tipAmount field (manual entries)
+    if (t.tipAmount) {
+      totalTips += t.tipAmount;
+      weeklyData[weekStart].tips += t.tipAmount;
+    }
+  });
+  
+  const totalServices = cardServices + cashServices;
+  
+  // Filter expenses for this employee
+  const expenseTxns = allTxns.filter(t => 
+    t.type === 'EXPENSE' && 
+    t.category === 'Employee Pay' &&
+    t.date >= startDate && 
+    t.date <= endDate &&
+    (t.employee === employeeName || (!t.employee && employeeName === 'Chasity McGill'))
+  );
+  
+  let totalPay = 0, totalTaxes = 0;
+  let payWeeks = 0, commissionWeeks = 0, hourlyWeeks = 0;
+  
+  expenseTxns.forEach(t => {
+    const weekStart = getWeekStart(t.date);
+    if (!weeklyData[weekStart]) {
+      weeklyData[weekStart] = { services: 0, tips: 0, pay: 0, taxes: 0 };
+    }
+    
+    const amt = t.amount || 0;
+    
+    if (t.payType === 'taxes' || (t.notes && t.notes.toLowerCase().includes('tax'))) {
+      totalTaxes += amt;
+      weeklyData[weekStart].taxes += amt;
+    } else {
+      totalPay += amt;
+      weeklyData[weekStart].pay += amt;
+      payWeeks++;
+      
+      // Estimate commission vs hourly based on if pay is ~50% of services
+      // This is a rough heuristic - commission would be close to 50%
+      if (weeklyData[weekStart].services > 0) {
+        const ratio = weeklyData[weekStart].pay / weeklyData[weekStart].services;
+        if (ratio >= 0.45 && ratio <= 0.55) {
+          commissionWeeks++;
+        } else {
+          hourlyWeeks++;
+        }
+      }
+    }
+  });
+  
+  const totalCost = totalPay + totalTaxes;
+  const netProfit = totalServices - totalCost;
+  const profitMargin = totalServices > 0 ? ((netProfit / totalServices) * 100).toFixed(1) : 0;
+  
+  // Sort weeks for display
+  const sortedWeeks = Object.keys(weeklyData).sort().reverse();
+  const weeksWorked = sortedWeeks.filter(w => weeklyData[w].services > 0 || weeklyData[w].pay > 0).length;
+  
+  // Format period label
+  const periodLabels = {
+    'ytd': `Year to Date ${year}`,
+    'q1': `Q1 ${year} (Jan-Mar)`,
+    'q2': `Q2 ${year} (Apr-Jun)`,
+    'q3': `Q3 ${year} (Jul-Sep)`,
+    'q4': `Q4 ${year} (Oct-Dec)`,
+    'last30': 'Last 30 Days',
+    'all': 'All Time'
+  };
+  
+  el.innerHTML = `
+    <div class="report-card" style="margin-bottom:16px;">
+      <div style="text-align:center; margin-bottom:20px;">
+        <div style="font-size:20px; font-weight:700; color:var(--plum);">${escapeHTML(employeeName)}</div>
+        <div style="font-size:13px; color:var(--text-muted);">${periodLabels[period] || period}</div>
+      </div>
+      
+      <!-- Revenue Section -->
+      <div style="background:var(--success-bg); padding:16px; border-radius:10px; margin-bottom:12px;">
+        <div style="font-weight:600; margin-bottom:12px; color:var(--success);">💰 Service Revenue Generated</div>
+        <div style="display:flex; justify-content:space-between; margin-bottom:6px;">
+          <span>💳 Card Services</span>
+          <span style="font-weight:600;">${fmt(cardServices)}</span>
+        </div>
+        <div style="display:flex; justify-content:space-between; margin-bottom:6px;">
+          <span>💵 Cash Services</span>
+          <span style="font-weight:600;">${fmt(cashServices)}</span>
+        </div>
+        <div style="display:flex; justify-content:space-between; font-weight:700; border-top:1px dashed var(--border); padding-top:8px; margin-top:8px; font-size:17px;">
+          <span>Total Revenue</span>
+          <span style="color:var(--success);">${fmt(totalServices)}</span>
+        </div>
+      </div>
+      
+      <!-- Tips Section -->
+      <div style="background:var(--gold-lighter); padding:16px; border-radius:10px; margin-bottom:12px;">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <div>
+            <div style="font-weight:600;">💝 Tips Earned</div>
+            <div style="font-size:12px; color:var(--text-muted);">Kept 100% by ${escapeHTML(employeeName.split(' ')[0])}</div>
+          </div>
+          <span style="font-size:18px; font-weight:700;">${fmt(totalTips)}</span>
+        </div>
+      </div>
+      
+      <!-- Expenses Section -->
+      <div style="background:var(--danger-bg); padding:16px; border-radius:10px; margin-bottom:12px;">
+        <div style="font-weight:600; margin-bottom:12px; color:var(--danger);">📤 Salon Expenses</div>
+        <div style="display:flex; justify-content:space-between; margin-bottom:6px;">
+          <span>💰 Employee Pay</span>
+          <span style="font-weight:600;">${fmt(totalPay)}</span>
+        </div>
+        <div style="display:flex; justify-content:space-between; margin-bottom:6px;">
+          <span>📋 Employer Taxes</span>
+          <span style="font-weight:600;">${fmt(totalTaxes)}</span>
+        </div>
+        <div style="display:flex; justify-content:space-between; font-weight:700; border-top:1px dashed var(--border); padding-top:8px; margin-top:8px; font-size:17px;">
+          <span>Total Cost</span>
+          <span style="color:var(--danger);">${fmt(totalCost)}</span>
+        </div>
+      </div>
+      
+      <!-- Net Profit -->
+      <div style="background:var(--plum); color:#fff; padding:16px; border-radius:10px; margin-bottom:16px;">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <div>
+            <div style="font-weight:600;">Net Profit to Annette</div>
+            <div style="font-size:12px; opacity:0.8;">${profitMargin}% margin</div>
+          </div>
+          <span style="font-size:24px; font-weight:700;">${fmt(netProfit)}</span>
+        </div>
+      </div>
+      
+      <!-- Stats Grid -->
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:16px;">
+        <div style="background:var(--cream); padding:12px; border-radius:8px; text-align:center;">
+          <div style="font-size:22px; font-weight:700; color:var(--plum);">${weeksWorked}</div>
+          <div style="font-size:12px; color:var(--text-muted);">Weeks Worked</div>
+        </div>
+        <div style="background:var(--cream); padding:12px; border-radius:8px; text-align:center;">
+          <div style="font-size:22px; font-weight:700; color:var(--plum);">${fmt(weeksWorked > 0 ? netProfit / weeksWorked : 0)}</div>
+          <div style="font-size:12px; color:var(--text-muted);">Avg Weekly Profit</div>
+        </div>
+        <div style="background:var(--cream); padding:12px; border-radius:8px; text-align:center;">
+          <div style="font-size:22px; font-weight:700; color:var(--gold-dark);">${fmt(weeksWorked > 0 ? totalTips / weeksWorked : 0)}</div>
+          <div style="font-size:12px; color:var(--text-muted);">Avg Weekly Tips</div>
+        </div>
+        <div style="background:var(--cream); padding:12px; border-radius:8px; text-align:center;">
+          <div style="font-size:22px; font-weight:700; color:var(--success);">${fmt(weeksWorked > 0 ? totalServices / weeksWorked : 0)}</div>
+          <div style="font-size:12px; color:var(--text-muted);">Avg Weekly Revenue</div>
+        </div>
+      </div>
+      
+      ${sortedWeeks.length > 0 ? `
+        <!-- Weekly Breakdown -->
+        <div style="margin-top:20px;">
+          <div style="font-weight:600; margin-bottom:12px;">Weekly Breakdown</div>
+          <div style="max-height:300px; overflow-y:auto;">
+            ${sortedWeeks.slice(0, 20).map(week => {
+              const w = weeklyData[week];
+              const weekNet = w.services - w.pay - w.taxes;
+              if (w.services === 0 && w.pay === 0) return '';
+              return `
+                <div style="display:flex; justify-content:space-between; padding:10px; background:var(--cream); border-radius:6px; margin-bottom:6px; font-size:13px;">
+                  <div>
+                    <div style="font-weight:500;">Week of ${formatDateShort(week)}</div>
+                    <div style="font-size:11px; color:var(--text-muted);">
+                      Rev: ${fmt(w.services)} · Pay: ${fmt(w.pay)}${w.taxes > 0 ? ` · Tax: ${fmt(w.taxes)}` : ''}${w.tips > 0 ? ` · Tips: ${fmt(w.tips)}` : ''}
+                    </div>
+                  </div>
+                  <div style="text-align:right;">
+                    <div style="font-weight:600; color:${weekNet >= 0 ? 'var(--success)' : 'var(--danger)'};">${fmt(weekNet)}</div>
+                    <div style="font-size:11px; color:var(--text-muted);">net</div>
+                  </div>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        </div>
+      ` : ''}
+    </div>
+  `;
+}
+
+function getWeekStart(dateStr) {
+  const d = new Date(dateStr + 'T12:00:00');
+  const day = d.getDay();
+  const diff = d.getDate() - day; // Sunday = 0
+  d.setDate(diff);
+  return d.toISOString().split('T')[0];
 }
 
 // ---- Client Book ----
@@ -6803,6 +7320,19 @@ async function renderSettingsView() {
       </div>
     </div>
 
+    <!-- Employee Management -->
+    <div class="settings-section">
+      <div class="settings-label">Employees</div>
+      <div class="card" style="margin-bottom: 8px;">
+        <div style="font-size:11px;color:var(--text-muted);margin-bottom:10px;line-height:1.4;">Employees for payroll tracking. Use with "Employee Pay" expense entries.</div>
+        <div id="employee-list"></div>
+        <div class="add-category-row">
+          <input type="text" class="add-category-input" id="new-employee" placeholder="Add employee name…">
+          <button class="btn-add-chip" onclick="addEmployee()">+ Add</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Backup & Restore -->
     <div class="settings-section">
       <div class="settings-label">Local Backup</div>
@@ -6915,7 +7445,7 @@ function loadCategoryChips() {
   if (incomeEl) {
     const sortedIncome = [...(state.categories.INCOME || [])].sort();
     incomeEl.innerHTML = sortedIncome.map(name =>
-      `<span class="category-chip">${name}
+      `<span class="category-chip">${escapeHTML(name)}
         <button class="chip-delete" onclick="deleteCategory('INCOME','${name.replace(/'/g,"\\'")}')">×</button>
       </span>`
     ).join('');
@@ -6932,11 +7462,53 @@ function loadCategoryChips() {
       const tagColor = isDirect ? 'var(--danger)' : 'var(--gold)';
       const tagLabel = isDirect ? 'Direct' : 'Overhead';
       const escapedName = name.replace(/'/g, "\\'");
-      return `<span class="category-chip" style="display:inline-flex;align-items:center;gap:4px;">${name}
+      return `<span class="category-chip" style="display:inline-flex;align-items:center;gap:4px;">${escapeHTML(name)}
         <button onclick="toggleExpenseType('${escapedName}')" style="background:${tagColor};color:#fff;border:none;border-radius:4px;font-size:9px;padding:1px 5px;cursor:pointer;font-weight:600;" title="Click to toggle">${tagLabel}</button>
         <button class="chip-delete" onclick="deleteCategory('EXPENSE','${escapedName}')">×</button>
       </span>`;
     }).join('');
+  }
+  
+  // Employee list
+  const employeeEl = document.getElementById('employee-list');
+  if (employeeEl) {
+    const sortedEmployees = [...(state.employees || ['Chasity McGill'])].sort();
+    employeeEl.innerHTML = sortedEmployees.map(name => {
+      const escapedName = name.replace(/'/g, "\\'");
+      return `<span class="category-chip" style="background:var(--plum);color:#fff;">${escapeHTML(name)}
+        <button class="chip-delete" onclick="deleteEmployee('${escapedName}')" style="color:#fff;">×</button>
+      </span>`;
+    }).join('');
+  }
+}
+
+async function addEmployee() {
+  const input = document.getElementById('new-employee');
+  const name = input?.value.trim();
+  
+  if (!name) return;
+  if (state.employees.includes(name)) {
+    showToast('Employee already exists');
+    return;
+  }
+  
+  state.employees.push(name);
+  await saveEmployees();
+  
+  input.value = '';
+  loadCategoryChips();
+  showToast('Employee added ✓');
+}
+
+async function deleteEmployee(name) {
+  if (!confirm(`Remove ${name} from employee list?`)) return;
+  
+  const idx = state.employees.indexOf(name);
+  if (idx >= 0) {
+    state.employees.splice(idx, 1);
+    await saveEmployees();
+    loadCategoryChips();
+    showToast('Employee removed');
   }
 }
 
@@ -8886,6 +9458,7 @@ async function bootApp() {
   _appBooted = true;
 
   await loadCategories();
+  await loadEmployees();
   await loadDirectCostCategories();
   await updateRentersTabVisibility();
   injectAskButton();
