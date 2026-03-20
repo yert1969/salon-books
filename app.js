@@ -2901,18 +2901,15 @@ function updateEntryForm() {
 }
 
 function openEntryCategoryPicker() {
-  console.log('[DEBUG] openEntryCategoryPicker called');
   const categoryInput = document.getElementById('entry-category');
   const categoryBtn = document.getElementById('entry-category-btn');
   const type = document.querySelector('input[name="entry-type"]:checked')?.value || 'INCOME';
-  console.log('[DEBUG] entry type:', type, 'categories:', window._entryCategories);
   
   openCategoryPicker({
     title: type === 'INCOME' ? 'Select Service' : 'Select Expense',
     items: window._entryCategories || [],
     selectedValue: categoryInput?.value || '',
     onSelect: (value) => {
-      console.log('[DEBUG] onSelect called with:', value);
       if (categoryInput) categoryInput.value = value;
       if (categoryBtn) {
         categoryBtn.textContent = value;
@@ -2925,10 +2922,8 @@ function openEntryCategoryPicker() {
 }
 
 function toggleEmployeePayFields(category) {
-  console.log('[DEBUG] toggleEmployeePayFields called with:', category);
   const section = document.getElementById('employee-pay-section');
   const vagaroSection = document.getElementById('vagaro-employee-section');
-  console.log('[DEBUG] vagaroSection found:', !!vagaroSection, vagaroSection);
   
   // Employee Pay fields (expense)
   if (section) {
@@ -2941,11 +2936,8 @@ function toggleEmployeePayFields(category) {
   
   // Vagaro Income employee field (income)
   if (vagaroSection) {
-    const shouldShow = category === 'Vagaro Income' || category?.includes('Vagaro Income');
-    console.log('[DEBUG] shouldShow vagaro section:', shouldShow);
-    if (shouldShow) {
+    if (category === 'Vagaro Income' || category?.includes('Vagaro Income')) {
       vagaroSection.classList.remove('hidden');
-      console.log('[DEBUG] Removed hidden class from vagaroSection');
     } else {
       vagaroSection.classList.add('hidden');
     }
@@ -3985,6 +3977,17 @@ async function openAddTransactionModal(type) {
       <input type="hidden" id="txn-category" value="">
     </div>
 
+    <!-- Vagaro Income Employee Field (shown when category is Vagaro Income) -->
+    ${isIncome ? `
+    <div id="txn-vagaro-employee-section" class="hidden">
+      <div class="form-group">
+        <label class="form-label">Employee</label>
+        <button type="button" class="category-picker-trigger" id="txn-vagaro-employee-btn" onclick="openTxnVagaroEmployeePicker()">${state.employees?.[0] || 'Chasity McGill'}</button>
+        <input type="hidden" id="txn-vagaro-employee" value="${state.employees?.[0] || 'Chasity McGill'}">
+      </div>
+    </div>
+    ` : ''}
+
     <div class="form-group">
       <label class="form-label">${isIncome ? 'Service Amount ($)' : 'Amount ($)'}</label>
       <input type="number" class="form-input" id="txn-amount" placeholder="0.00" step="0.01" min="0" inputmode="decimal">
@@ -4099,6 +4102,11 @@ async function saveTransaction(type) {
     record.tipMethod     = tipMethod;
     record.amount        = amount;
     record.clientName    = clientName || null;
+    
+    // Add employee for Vagaro Income
+    if (category === 'Vagaro Income' || category?.includes('Vagaro Income')) {
+      record.employee = document.getElementById('txn-vagaro-employee')?.value || 'Chasity McGill';
+    }
   } else {
     record.serviceAmount = 0;
     record.tipAmount     = 0;
