@@ -2018,6 +2018,15 @@ async function renderAddEntryTab(container) {
         </div>
       </div>
       
+      <!-- Vagaro Income Employee Field (shown when category is Vagaro Income) -->
+      <div id="vagaro-employee-section" class="hidden">
+        <div class="form-group">
+          <label class="form-label" style="font-size:13px; margin-bottom:8px; display:block; font-weight:500;">Employee</label>
+          <button type="button" class="category-picker-trigger" id="entry-vagaro-employee-btn" onclick="openVagaroEmployeePicker()">Chasity McGill</button>
+          <input type="hidden" id="entry-vagaro-employee" value="Chasity McGill">
+        </div>
+      </div>
+      
       <div class="form-group" id="service-amount-section">
         <label class="form-label" style="font-size:13px; margin-bottom:8px; display:block; font-weight:500;">Service Amount</label>
         <input type="number" id="entry-amount" class="form-input" step="0.01" placeholder="0.00" style="width:100%; padding:12px; font-size:16px;">
@@ -2345,6 +2354,9 @@ async function renderRecentTransactionsSimple() {
           let categoryDisplay = escapeHTML(t.category);
           if (t.category === 'Vagaro Income' && t.employee) {
             categoryDisplay = `Vagaro Income (${escapeHTML(t.employee.split(' ')[0])})`;
+          } else if (t.category?.includes('Vagaro Income')) {
+            const match = t.category.match(/^(\w+)\s*\(Vagaro Income\)$/);
+            if (match) categoryDisplay = `Vagaro Income (${escapeHTML(match[1])})`;
           } else if (t.category === 'Employee Pay' && t.employee) {
             const typeLabel = t.payType === 'taxes' ? '📋' : '💰';
             categoryDisplay = `Employee Pay — ${escapeHTML(t.employee.split(' ')[0])} ${typeLabel}`;
@@ -2538,6 +2550,9 @@ async function renderRecentTransactions() {
           let categoryDisplay = escapeHTML(t.category);
           if (t.category === 'Vagaro Income' && t.employee) {
             categoryDisplay = `Vagaro Income (${escapeHTML(t.employee.split(' ')[0])})`;
+          } else if (t.category?.includes('Vagaro Income')) {
+            const match = t.category.match(/^(\w+)\s*\(Vagaro Income\)$/);
+            if (match) categoryDisplay = `Vagaro Income (${escapeHTML(match[1])})`;
           } else if (t.category === 'Employee Pay' && t.employee) {
             const typeLabel = t.payType === 'taxes' ? '📋' : '💰';
             categoryDisplay = `Employee Pay — ${escapeHTML(t.employee.split(' ')[0])} ${typeLabel}`;
@@ -2908,18 +2923,45 @@ function openEntryCategoryPicker() {
 
 function toggleEmployeePayFields(category) {
   const section = document.getElementById('employee-pay-section');
-  if (!section) return;
+  const vagaroSection = document.getElementById('vagaro-employee-section');
   
-  if (category === 'Employee Pay') {
-    section.classList.remove('hidden');
-  } else {
-    section.classList.add('hidden');
+  // Employee Pay fields (expense)
+  if (section) {
+    if (category === 'Employee Pay') {
+      section.classList.remove('hidden');
+    } else {
+      section.classList.add('hidden');
+    }
+  }
+  
+  // Vagaro Income employee field (income)
+  if (vagaroSection) {
+    if (category === 'Vagaro Income' || category?.includes('Vagaro Income')) {
+      vagaroSection.classList.remove('hidden');
+    } else {
+      vagaroSection.classList.add('hidden');
+    }
   }
 }
 
 function openEmployeePicker() {
   const employeeInput = document.getElementById('entry-employee');
   const employeeBtn = document.getElementById('entry-employee-btn');
+  
+  openCategoryPicker({
+    title: 'Select Employee',
+    items: state.employees || ['Chasity McGill'],
+    selectedValue: employeeInput?.value || 'Chasity McGill',
+    onSelect: (value) => {
+      if (employeeInput) employeeInput.value = value;
+      if (employeeBtn) employeeBtn.textContent = value;
+    }
+  });
+}
+
+function openVagaroEmployeePicker() {
+  const employeeInput = document.getElementById('entry-vagaro-employee');
+  const employeeBtn = document.getElementById('entry-vagaro-employee-btn');
   
   openCategoryPicker({
     title: 'Select Employee',
@@ -2998,7 +3040,7 @@ function toggleTxnEmployeePayFields(category) {
   // Also toggle Vagaro Income employee section
   const vagaroSection = document.getElementById('txn-vagaro-employee-section');
   if (vagaroSection) {
-    if (category === 'Vagaro Income') {
+    if (category === 'Vagaro Income' || category?.includes('Vagaro Income')) {
       vagaroSection.classList.remove('hidden');
     } else {
       vagaroSection.classList.add('hidden');
@@ -3167,6 +3209,11 @@ async function saveEntryTransaction() {
         createdAt: firebase.firestore.Timestamp.now()
       };
       
+      // Add employee for Vagaro Income
+      if (category === 'Vagaro Income' || category?.includes('Vagaro Income')) {
+        transaction.employee = document.getElementById('entry-vagaro-employee')?.value || 'Chasity McGill';
+      }
+      
       await db.transactions.add(transaction);
       
       // Switch to daily view showing the date where entry was added
@@ -3297,6 +3344,9 @@ async function renderDailyEntries(container) {
     let categoryDisplay = escapeHTML(t.category);
     if (t.category === 'Vagaro Income' && t.employee) {
       categoryDisplay = `Vagaro Income (${escapeHTML(t.employee.split(' ')[0])})`;
+    } else if (t.category?.includes('Vagaro Income')) {
+      const match = t.category.match(/^(\w+)\s*\(Vagaro Income\)$/);
+      if (match) categoryDisplay = `Vagaro Income (${escapeHTML(match[1])})`;
     } else if (t.category === 'Employee Pay' && t.employee) {
       const typeLabel = t.payType === 'taxes' ? '📋' : '💰';
       categoryDisplay = `Employee Pay — ${escapeHTML(t.employee.split(' ')[0])} ${typeLabel}`;
@@ -3801,6 +3851,12 @@ function renderTransactionItem(t) {
   let categoryDisplay = escapeHTML(t.category) || '—';
   if (t.category === 'Vagaro Income' && t.employee) {
     categoryDisplay = `Vagaro Income (${escapeHTML(t.employee.split(' ')[0])})`;
+  } else if (t.category?.includes('Vagaro Income')) {
+    // Old format: "Chasity (Vagaro Income)" - extract name from category
+    const match = t.category.match(/^(\w+)\s*\(Vagaro Income\)$/);
+    if (match) {
+      categoryDisplay = `Vagaro Income (${escapeHTML(match[1])})`;
+    }
   } else if (t.category === 'Employee Pay' && t.employee) {
     const typeLabel = t.payType === 'taxes' ? '📋' : '💰';
     categoryDisplay = `Employee Pay — ${escapeHTML(t.employee.split(' ')[0])} ${typeLabel}`;
@@ -4118,7 +4174,7 @@ async function openEditTransactionModal(id) {
 
     <!-- Vagaro Income Employee Field (shown when category is Vagaro Income and is income) -->
     ${isIncome ? `
-    <div id="txn-vagaro-employee-section" class="${t.category === 'Vagaro Income' ? '' : 'hidden'}">
+    <div id="txn-vagaro-employee-section" class="${(t.category === 'Vagaro Income' || t.category?.includes('Vagaro Income')) ? '' : 'hidden'}">
       <div class="form-group">
         <label class="form-label">Employee</label>
         <button type="button" class="category-picker-trigger" id="txn-vagaro-employee-btn" onclick="openTxnVagaroEmployeePicker()">${escapeHTML(t.employee) || 'Chasity McGill'}</button>
@@ -4244,8 +4300,8 @@ async function updateTransaction(id, type) {
       changes.amount        = amount;
       changes.clientName    = clientName || null;
       
-      // Add employee field for Vagaro Income
-      if (category === 'Vagaro Income') {
+      // Add employee field for Vagaro Income (both old and new formats)
+      if (category === 'Vagaro Income' || category?.includes('Vagaro Income')) {
         changes.employee = document.getElementById('txn-vagaro-employee')?.value || 'Chasity McGill';
       } else {
         changes.employee = null;
