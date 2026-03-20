@@ -1189,7 +1189,7 @@ async function buildDashboard() {
     const allRentPmts = await db.rentPayments.toArray();
 
     // Employee income categories (excluded from personal service metrics)
-    const employeeCategories = ['Vagaro Income'];
+    const employeeCategories = ['Vagaro Income', 'Chasity (Vagaro Income)'];
     const isPersonalService = (t) => t.type === 'INCOME' && !employeeCategories.includes(t.category);
     const isEmployeeIncome = (t) => t.type === 'INCOME' && employeeCategories.includes(t.category);
 
@@ -5312,7 +5312,7 @@ async function runClientBook() {
   const allTxns = await db.transactions.toArray();
 
   // Employee categories to exclude
-  const employeeCategories = ['Vagaro Income'];
+  const employeeCategories = ['Vagaro Income', 'Chasity (Vagaro Income)'];
 
   // Build client map from all income transactions with clientName
   const clientMap = {};
@@ -5751,7 +5751,7 @@ async function runWeeklyReport() {
   const personalOnly = document.getElementById('r-week-personal')?.checked || false;
   
   // Categories to exclude when "Personal Only" is checked
-  const employeeCategories = ['Vagaro Income', 'Employee Pay'];
+  const employeeCategories = ['Vagaro Income', 'Chasity (Vagaro Income)', 'Employee Pay'];
   
   // Update the date picker to show the Monday (start of week)
   const dateInput = document.getElementById('r-week-date');
@@ -5900,7 +5900,7 @@ async function runMonthlyReport() {
   const personalOnly = document.getElementById('r-month-personal')?.checked || false;
   
   // Categories to exclude when "Personal Only" is checked
-  const employeeCategories = ['Vagaro Income', 'Employee Pay'];
+  const employeeCategories = ['Vagaro Income', 'Chasity (Vagaro Income)', 'Employee Pay'];
 
   const monthStr = `${year}-${String(month).padStart(2,'0')}`;
   let allTxns  = await db.transactions.toArray();
@@ -6433,7 +6433,7 @@ async function runAnnualReport() {
   const personalOnly = document.getElementById('r-annual-personal')?.checked || false;
   
   // Categories to exclude when "Personal Only" is checked
-  const employeeCategories = ['Vagaro Income', 'Employee Pay'];
+  const employeeCategories = ['Vagaro Income', 'Chasity (Vagaro Income)', 'Employee Pay'];
 
   let allTxns = await db.transactions.toArray();
   let allMExp = await db.monthlyExpenses.toArray();
@@ -6975,7 +6975,7 @@ async function runPnlReport() {
 
   // ---- REVENUE ----
   // Employee income categories
-  const employeeCategories = ['Vagaro Income'];
+  const employeeCategories = ['Vagaro Income', 'Chasity (Vagaro Income)'];
 
   const monthTxns = allTxns.filter(t => t.date?.startsWith(ms));
   const ytdTxns   = allTxns.filter(t => t.date?.startsWith(yearStr));
@@ -9236,7 +9236,7 @@ async function gatherBusinessSnapshot() {
   const curYear = now.getFullYear();
   const curMonth = now.getMonth() + 1;
   const yearStr = String(curYear);
-  const employeeCategories = ['Vagaro Income'];
+  const employeeCategories = ['Vagaro Income', 'Chasity (Vagaro Income)'];
 
   // Monthly summaries for last 6 months
   const monthlySummaries = [];
