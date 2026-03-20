@@ -3028,16 +3028,17 @@ function openTxnCategoryPicker() {
 }
 
 function toggleTxnEmployeePayFields(category) {
+  // Toggle Employee Pay section (for expenses)
   const section = document.getElementById('txn-employee-pay-section');
-  if (!section) return;
-  
-  if (category === 'Employee Pay') {
-    section.classList.remove('hidden');
-  } else {
-    section.classList.add('hidden');
+  if (section) {
+    if (category === 'Employee Pay') {
+      section.classList.remove('hidden');
+    } else {
+      section.classList.add('hidden');
+    }
   }
   
-  // Also toggle Vagaro Income employee section
+  // Toggle Vagaro Income employee section (for income)
   const vagaroSection = document.getElementById('txn-vagaro-employee-section');
   if (vagaroSection) {
     if (category === 'Vagaro Income' || category?.includes('Vagaro Income')) {
