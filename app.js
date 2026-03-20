@@ -2901,15 +2901,18 @@ function updateEntryForm() {
 }
 
 function openEntryCategoryPicker() {
+  console.log('[DEBUG] openEntryCategoryPicker called');
   const categoryInput = document.getElementById('entry-category');
   const categoryBtn = document.getElementById('entry-category-btn');
   const type = document.querySelector('input[name="entry-type"]:checked')?.value || 'INCOME';
+  console.log('[DEBUG] entry type:', type, 'categories:', window._entryCategories);
   
   openCategoryPicker({
     title: type === 'INCOME' ? 'Select Service' : 'Select Expense',
     items: window._entryCategories || [],
     selectedValue: categoryInput?.value || '',
     onSelect: (value) => {
+      console.log('[DEBUG] onSelect called with:', value);
       if (categoryInput) categoryInput.value = value;
       if (categoryBtn) {
         categoryBtn.textContent = value;
