@@ -5226,10 +5226,17 @@ async function runEmployeeReport() {
     )
   );
   
+  // Sunday-based week start for Vagaro weekly grouping (local to this report)
+  function getWeekStart(dateStr) {
+    const d = new Date(dateStr + 'T12:00:00');
+    d.setDate(d.getDate() - d.getDay());
+    return d.toISOString().split('T')[0];
+  }
+
   // Calculate income totals
   let cardServices = 0, cashServices = 0, totalTips = 0;
   const weeklyData = {};
-  
+
   incomeTxns.forEach(t => {
     const weekStart = getWeekStart(t.date);
     if (!weeklyData[weekStart]) {
@@ -5466,14 +5473,6 @@ async function runEmployeeReport() {
       ` : ''}
     </div>
   `;
-}
-
-function getWeekStart(dateStr) {
-  const d = new Date(dateStr + 'T12:00:00');
-  const day = d.getDay();
-  const diff = d.getDate() - day; // Sunday = 0
-  d.setDate(diff);
-  return d.toISOString().split('T')[0];
 }
 
 // ---- Client Book ----
