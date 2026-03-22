@@ -5933,7 +5933,7 @@ async function runWeeklyReport() {
     dateInput.value = weekStart;
   }
 
-  let weeklyIncome = 0, weeklyTips = 0, weeklyExp = 0, weeklyClients = 0;
+  let weeklyIncome = 0, weeklyTips = 0, weeklyExp = 0, weeklyClients = 0, weeklyHours = 0;
   const rows = [];
 
   for (let i = 0; i < 7; i++) {
@@ -5950,12 +5950,14 @@ async function runWeeklyReport() {
     const tips = txns.filter(t=>t.type==='INCOME').reduce((s,t)=>s+(t.tipAmount||0),0);
     const exp  = txns.filter(t=>t.type==='EXPENSE').reduce((s,t)=>s+(t.amount||0),0);
     const cls  = sum ? sum.clientsSeen : 0;
+    const hrs  = sum ? (sum.hoursWorked || 0) : 0;
     weeklyIncome  += inc;
     weeklyTips    += tips;
     weeklyExp     += exp;
     weeklyClients += cls;
+    weeklyHours   += hrs;
     if (txns.length > 0 || sum) {
-      rows.push({ d, inc, tips, exp, cls, net: inc+tips-exp });
+      rows.push({ d, inc, tips, exp, cls, hrs, net: inc+tips-exp });
     }
   }
   
@@ -6044,7 +6046,9 @@ async function runWeeklyReport() {
       <div class="report-stat"><div class="report-stat-label">Expenses</div><div class="report-stat-value red">${fmt(weeklyExp)}</div></div>
       <div class="report-stat"><div class="report-stat-label">Net</div><div class="report-stat-value plum">${fmt(weeklyIncome+weeklyTips-weeklyExp)}</div></div>
       <div class="report-stat"><div class="report-stat-label">Clients</div><div class="report-stat-value">${weeklyClients}</div></div>
+      <div class="report-stat"><div class="report-stat-label">Hours</div><div class="report-stat-value">${weeklyHours}</div></div>
       <div class="report-stat"><div class="report-stat-label">Avg/Client</div><div class="report-stat-value">${weeklyClients>0?fmt((weeklyIncome+weeklyTips)/weeklyClients):'—'}</div></div>
+      <div class="report-stat"><div class="report-stat-label">$/Hour</div><div class="report-stat-value">${weeklyHours>0?fmt((weeklyIncome+weeklyTips)/weeklyHours):'—'}</div></div>
     </div>
     ${comparisonHTML}
     ${rows.length > 0 ? `
@@ -6054,7 +6058,7 @@ async function runWeeklyReport() {
         <div class="report-row">
           <div>
             <div class="report-row-label">${formatDateShort(r.d)}</div>
-            <div class="report-row-sub">${r.cls} clients</div>
+            <div class="report-row-sub">${r.cls} clients · ${r.hrs}h</div>
           </div>
           <div style="text-align:right">
             <div class="report-row-value income">+${fmt(r.inc+r.tips)}</div>
@@ -6182,6 +6186,14 @@ async function runMonthlyReport() {
           <div class="report-stat">
             <div class="report-stat-label">Hours</div>
             <div class="report-stat-value">${totalHours}</div>
+          </div>
+          <div class="report-stat">
+            <div class="report-stat-label">Avg/Client</div>
+            <div class="report-stat-value">${totalClients > 0 ? fmt((svcTotal + tipTotal) / totalClients) : '—'}</div>
+          </div>
+          <div class="report-stat">
+            <div class="report-stat-label">$/Hour</div>
+            <div class="report-stat-value">${totalHours > 0 ? fmt((svcTotal + tipTotal) / totalHours) : '—'}</div>
           </div>
         </div>
       </div>
