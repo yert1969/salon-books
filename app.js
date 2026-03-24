@@ -5044,13 +5044,34 @@ async function renderReportInner() {
       const monthOpts = Array.from({length:12},(_,i)=>
         `<option value="${i+1}" ${i+1===monthNow?'selected':''}>${monthName(i+1)}</option>`).join('');
       el.innerHTML = `
-        <div class="report-controls">
-          <select class="report-input" id="r-pnl-month" style="flex:2;">${monthOpts}</select>
-          <input type="number" class="report-input" id="r-pnl-year" value="${yearNow}" min="2020" max="2099" style="max-width:100px" inputmode="numeric">
+        <div class="report-controls" style="flex-wrap:wrap;gap:8px;">
+          <select class="report-input" id="r-pnl-period" style="flex:2;min-width:140px;" onchange="runPnlReport()">
+            <option value="monthly">Monthly</option>
+            <option value="q1">Q1 (Jan–Mar)</option>
+            <option value="q2">Q2 (Apr–Jun)</option>
+            <option value="q3">Q3 (Jul–Sep)</option>
+            <option value="q4">Q4 (Oct–Dec)</option>
+            <option value="ytd">Year to Date</option>
+            <option value="range">Date Range</option>
+          </select>
+          <input type="number" class="report-input" id="r-pnl-year" value="${yearNow}" min="2020" max="2099" style="max-width:80px" inputmode="numeric" onchange="runPnlReport()">
+        </div>
+        <div id="r-pnl-monthly-controls" class="report-controls" style="gap:8px;">
+          <select class="report-input" id="r-pnl-month" style="flex:1;">${monthOpts}</select>
+          <button class="report-btn" onclick="runPnlReport()">View</button>
+        </div>
+        <div id="r-pnl-range-controls" class="report-controls" style="gap:8px;display:none;">
+          <input type="date" class="report-input" id="r-pnl-from" style="flex:1;">
+          <input type="date" class="report-input" id="r-pnl-to" style="flex:1;">
           <button class="report-btn" onclick="runPnlReport()">View</button>
         </div>
         <div class="report-body" id="report-output"></div>
       `;
+      document.getElementById('r-pnl-period').addEventListener('change', function() {
+        const p = this.value;
+        document.getElementById('r-pnl-monthly-controls').style.display = p === 'monthly' ? '' : 'none';
+        document.getElementById('r-pnl-range-controls').style.display = p === 'range' ? '' : 'none';
+      });
       await runPnlReport();
       break;
     }
@@ -7142,214 +7163,197 @@ async function runBoothRentReport() {
 
 // ---- P&L REPORT ----
 async function runPnlReport() {
-  const month = parseInt(document.getElementById('r-pnl-month')?.value) || new Date().getMonth() + 1;
-  const year  = parseInt(document.getElementById('r-pnl-year')?.value) || new Date().getFullYear();
   const el = document.getElementById('report-output');
   if (!el) return;
 
-  const allTxns    = await db.transactions.toArray();
-  const allMExp    = await db.monthlyExpenses.toArray();
-  const allRenters = await db.renters.toArray();
-  const allRentPmts = await db.rentPayments.toArray();
+  const period = document.getElementById('r-pnl-period')?.value || 'monthly';
+  const year   = parseInt(document.getElementById('r-pnl-year')?.value) || new Date().getFullYear();
+  const month  = parseInt(document.getElementById('r-pnl-month')?.value) || new Date().getMonth() + 1;
+  const pad = n => String(n).padStart(2,'0');
 
-  const ms = `${year}-${String(month).padStart(2,'0')}`;
-  const yearStr = String(year);
+  // Compute period date range
+  let pStart, pEnd, pLabel;
+  switch (period) {
+    case 'q1': pStart=`${year}-01-01`; pEnd=`${year}-03-31`; pLabel=`Q1 ${year}`; break;
+    case 'q2': pStart=`${year}-04-01`; pEnd=`${year}-06-30`; pLabel=`Q2 ${year}`; break;
+    case 'q3': pStart=`${year}-07-01`; pEnd=`${year}-09-30`; pLabel=`Q3 ${year}`; break;
+    case 'q4': pStart=`${year}-10-01`; pEnd=`${year}-12-31`; pLabel=`Q4 ${year}`; break;
+    case 'ytd': pStart=`${year}-01-01`; pEnd=todayStr(); pLabel=`YTD ${year}`; break;
+    case 'range': {
+      pStart = document.getElementById('r-pnl-from')?.value;
+      pEnd   = document.getElementById('r-pnl-to')?.value;
+      if (!pStart || !pEnd) { el.innerHTML='<p style="color:var(--text-muted);padding:20px;">Select a date range above.</p>'; return; }
+      pLabel = `${pStart} — ${pEnd}`;
+      break;
+    }
+    default: {
+      const ms = `${year}-${pad(month)}`;
+      pStart=`${ms}-01`; pEnd=`${ms}-31`; pLabel=`${monthName(month)} ${year}`;
+    }
+  }
+  const showYtd = period !== 'ytd';
+  const ytdEnd  = todayStr();
+  const cols = showYtd ? 5 : 3;
 
-  // ---- Expense classification from settings ----
+  const [allTxns, allMExp, allRentPmts] = await Promise.all([
+    db.transactions.toArray(),
+    db.monthlyExpenses.toArray(),
+    db.rentPayments.toArray()
+  ]);
+
   const directCats = state.directCostCategories || [];
-  const isDirect = (cat) => directCats.includes(cat);
+  const isDirect = cat => directCats.includes(cat);
 
-  // ---- REVENUE ----
-  // Employee income categories
-  const employeeCategories = ['Vagaro Income', 'Chasity (Vagaro Income)'];
+  const periodTxns = allTxns.filter(t => t.date >= pStart && t.date <= pEnd);
+  const ytdTxns    = allTxns.filter(t => t.date >= `${year}-01-01` && t.date <= ytdEnd);
 
-  const monthTxns = allTxns.filter(t => t.date?.startsWith(ms));
-  const ytdTxns   = allTxns.filter(t => t.date?.startsWith(yearStr));
+  const mExpInRange = (s, e) => allMExp.filter(ex => {
+    const d = `${ex.year}-${pad(ex.month)}-15`;
+    return d >= s && d <= e;
+  });
+  const periodMExp = mExpInRange(pStart, pEnd);
+  const ytdMExp    = mExpInRange(`${year}-01-01`, ytdEnd);
 
-  // Revenue by source
+  // Revenue
   const revenueLines = {};
-
-  // Annette's service income (group by category)
-  monthTxns.filter(t => t.type === 'INCOME' && !employeeCategories.includes(t.category)).forEach(t => {
+  const addRev = (txns, col) => txns.filter(t => t.type === 'INCOME').forEach(t => {
     const key = t.category || 'Other';
-    if (!revenueLines[key]) revenueLines[key] = { month: 0, ytd: 0, type: 'service' };
-    revenueLines[key].month += (t.serviceAmount || 0);
-    revenueLines[key].ytd += 0; // filled below
+    if (!revenueLines[key]) revenueLines[key] = { p: 0, ytd: 0 };
+    revenueLines[key][col] += (t.serviceAmount || 0);
   });
-  // YTD for service
-  ytdTxns.filter(t => t.type === 'INCOME' && !employeeCategories.includes(t.category)).forEach(t => {
-    const key = t.category || 'Other';
-    if (!revenueLines[key]) revenueLines[key] = { month: 0, ytd: 0, type: 'service' };
-    revenueLines[key].ytd += (t.serviceAmount || 0);
-  });
+  addRev(periodTxns, 'p'); addRev(ytdTxns, 'ytd');
 
-  // Tips (combined)
-  const monthTips = monthTxns.filter(t => t.type === 'INCOME' && !employeeCategories.includes(t.category))
-    .reduce((s,t) => s + (t.tipAmount || 0), 0);
-  const ytdTips = ytdTxns.filter(t => t.type === 'INCOME' && !employeeCategories.includes(t.category))
-    .reduce((s,t) => s + (t.tipAmount || 0), 0);
+  const pTips   = periodTxns.filter(t => t.type==='INCOME').reduce((s,t) => s+(t.tipAmount||0), 0);
+  const ytdTips = ytdTxns.filter(t => t.type==='INCOME').reduce((s,t) => s+(t.tipAmount||0), 0);
+  const pRent   = allRentPmts.filter(p => p.datePaid >= pStart && p.datePaid <= pEnd).reduce((s,p) => s+(p.amount||0), 0);
+  const ytdRent = allRentPmts.filter(p => p.datePaid >= `${year}-01-01` && p.datePaid <= ytdEnd).reduce((s,p) => s+(p.amount||0), 0);
 
-  // Employee income
-  const monthEmployee = monthTxns.filter(t => t.type === 'INCOME' && employeeCategories.includes(t.category))
-    .reduce((s,t) => s + (t.serviceAmount || 0) + (t.tipAmount || 0), 0);
-  const ytdEmployee = ytdTxns.filter(t => t.type === 'INCOME' && employeeCategories.includes(t.category))
-    .reduce((s,t) => s + (t.serviceAmount || 0) + (t.tipAmount || 0), 0);
+  const pServiceTotal   = Object.values(revenueLines).reduce((s,r) => s+r.p, 0);
+  const ytdServiceTotal = Object.values(revenueLines).reduce((s,r) => s+r.ytd, 0);
+  const pGross   = pServiceTotal + pTips + pRent;
+  const ytdGross = ytdServiceTotal + ytdTips + ytdRent;
 
-  // Booth rent collected
-  const monthRent = allRentPmts.filter(p => p.datePaid?.startsWith(ms))
-    .reduce((s,p) => s + (p.amount || 0), 0);
-  const ytdRent = allRentPmts.filter(p => p.datePaid?.startsWith(yearStr))
-    .reduce((s,p) => s + (p.amount || 0), 0);
+  // Expenses
+  const directLines = {}, overheadLines = {};
+  const addExp = (txns, mexp, col) => {
+    txns.filter(t => t.type === 'EXPENSE').forEach(t => {
+      const cat = t.category || 'Other';
+      const b = isDirect(cat) ? directLines : overheadLines;
+      if (!b[cat]) b[cat] = { p: 0, ytd: 0 };
+      b[cat][col] += (t.amount || 0);
+    });
+    mexp.forEach(e => {
+      const cat = e.category || 'Other';
+      const b = isDirect(cat) ? directLines : overheadLines;
+      if (!b[cat]) b[cat] = { p: 0, ytd: 0 };
+      b[cat][col] += (e.amount || 0);
+    });
+  };
+  addExp(periodTxns, periodMExp, 'p');
+  addExp(ytdTxns,   ytdMExp,    'ytd');
 
-  // Service totals
-  const monthServiceTotal = Object.values(revenueLines).reduce((s,r) => s + r.month, 0);
-  const ytdServiceTotal = Object.values(revenueLines).reduce((s,r) => s + r.ytd, 0);
-  const monthGrossRevenue = monthServiceTotal + monthTips + monthEmployee + monthRent;
-  const ytdGrossRevenue = ytdServiceTotal + ytdTips + ytdEmployee + ytdRent;
+  const pDirect   = Object.values(directLines).reduce((s,r) => s+r.p, 0);
+  const ytdDirect = Object.values(directLines).reduce((s,r) => s+r.ytd, 0);
+  const pOverhead   = Object.values(overheadLines).reduce((s,r) => s+r.p, 0);
+  const ytdOverhead = Object.values(overheadLines).reduce((s,r) => s+r.ytd, 0);
+  const pNet   = pGross - pDirect - pOverhead;
+  const ytdNet = ytdGross - ytdDirect - ytdOverhead;
+  const pGrossProfit   = pGross - pDirect;
+  const ytdGrossProfit = ytdGross - ytdDirect;
 
-  // ---- EXPENSES ----
-  const directLines = {};
-  const overheadLines = {};
+  const pctOf = (val, total) => total > 0 ? `${((val/total)*100).toFixed(1)}%` : '—';
+  const ytdCells = (val, base) => showYtd
+    ? `<td style="padding:6px 4px;text-align:right;font-size:13px;">${fmt(val)}</td><td style="padding:6px 4px;text-align:right;font-size:11px;color:var(--text-muted);">${pctOf(val,base)}</td>`
+    : '';
 
-  // Daily expenses this month
-  monthTxns.filter(t => t.type === 'EXPENSE').forEach(t => {
-    const cat = t.category || 'Other';
-    const bucket = isDirect(cat) ? directLines : overheadLines;
-    if (!bucket[cat]) bucket[cat] = { month: 0, ytd: 0 };
-    bucket[cat].month += (t.amount || 0);
-  });
-  // Daily expenses YTD
-  ytdTxns.filter(t => t.type === 'EXPENSE').forEach(t => {
-    const cat = t.category || 'Other';
-    const bucket = isDirect(cat) ? directLines : overheadLines;
-    if (!bucket[cat]) bucket[cat] = { month: 0, ytd: 0 };
-    bucket[cat].ytd += (t.amount || 0);
-  });
-
-  // Monthly expenses this month
-  allMExp.filter(e => e.year === year && e.month === month).forEach(e => {
-    const cat = e.category || 'Other';
-    const bucket = isDirect(cat) ? directLines : overheadLines;
-    if (!bucket[cat]) bucket[cat] = { month: 0, ytd: 0 };
-    bucket[cat].month += (e.amount || 0);
-  });
-  // Monthly expenses YTD
-  allMExp.filter(e => e.year === year && e.month <= month).forEach(e => {
-    const cat = e.category || 'Other';
-    const bucket = isDirect(cat) ? directLines : overheadLines;
-    if (!bucket[cat]) bucket[cat] = { month: 0, ytd: 0 };
-    bucket[cat].ytd += (e.amount || 0);
-  });
-
-  // Totals
-  const monthDirectTotal = Object.values(directLines).reduce((s,r) => s + r.month, 0);
-  const ytdDirectTotal = Object.values(directLines).reduce((s,r) => s + r.ytd, 0);
-  const monthOverheadTotal = Object.values(overheadLines).reduce((s,r) => s + r.month, 0);
-  const ytdOverheadTotal = Object.values(overheadLines).reduce((s,r) => s + r.ytd, 0);
-  const monthTotalExpenses = monthDirectTotal + monthOverheadTotal;
-  const ytdTotalExpenses = ytdDirectTotal + ytdOverheadTotal;
-
-  const monthGrossProfit = monthGrossRevenue - monthDirectTotal;
-  const ytdGrossProfit = ytdGrossRevenue - ytdDirectTotal;
-  const monthNetIncome = monthGrossRevenue - monthTotalExpenses;
-  const ytdNetIncome = ytdGrossRevenue - ytdTotalExpenses;
-
-  // ---- Helper to render a line row ----
-  const pctOf = (val, total) => total > 0 ? `${((val / total) * 100).toFixed(1)}%` : '—';
-  const row = (label, mVal, yVal, bold, color) => `
-    <tr style="${bold ? 'font-weight:700;' : ''}${color ? 'color:' + color + ';' : ''}border-bottom:1px solid var(--border-light);">
-      <td style="padding:6px 0;font-size:13px;${bold ? '' : 'padding-left:12px;'}">${label}</td>
-      <td style="padding:6px 4px;text-align:right;font-size:13px;">${fmt(mVal)}</td>
-      <td style="padding:6px 4px;text-align:right;font-size:11px;color:var(--text-muted);">${pctOf(mVal, monthGrossRevenue)}</td>
-      <td style="padding:6px 4px;text-align:right;font-size:13px;">${fmt(yVal)}</td>
-      <td style="padding:6px 4px;text-align:right;font-size:11px;color:var(--text-muted);">${pctOf(yVal, ytdGrossRevenue)}</td>
+  const row = (label, pVal, yVal) => `
+    <tr style="border-bottom:1px solid var(--border-light);">
+      <td style="padding:6px 0;font-size:13px;padding-left:12px;">${label}</td>
+      <td style="padding:6px 4px;text-align:right;font-size:13px;">${fmt(pVal)}</td>
+      <td style="padding:6px 4px;text-align:right;font-size:11px;color:var(--text-muted);">${pctOf(pVal,pGross)}</td>
+      ${ytdCells(yVal, ytdGross)}
     </tr>`;
-  const dividerRow = `<tr><td colspan="5" style="padding:0;"><hr style="border:none;border-top:2px solid var(--border-light);margin:4px 0;"></td></tr>`;
-  const subtotalRow = (label, mVal, yVal, color) => `
-    <tr style="font-weight:700;${color ? 'color:'+color+';' : ''}">
+
+  const dividerRow = `<tr><td colspan="${cols}" style="padding:0;"><hr style="border:none;border-top:2px solid var(--border-light);margin:4px 0;"></td></tr>`;
+
+  const subtotalRow = (label, pVal, yVal, color) => `
+    <tr style="font-weight:700;${color?'color:'+color+';':''}">
       <td style="padding:8px 0;font-size:14px;">${label}</td>
-      <td style="padding:8px 4px;text-align:right;font-size:14px;">${fmt(mVal)}</td>
-      <td style="padding:8px 4px;text-align:right;font-size:12px;color:var(--text-muted);">${pctOf(mVal, monthGrossRevenue)}</td>
-      <td style="padding:8px 4px;text-align:right;font-size:14px;">${fmt(yVal)}</td>
-      <td style="padding:8px 4px;text-align:right;font-size:12px;color:var(--text-muted);">${pctOf(yVal, ytdGrossRevenue)}</td>
+      <td style="padding:8px 4px;text-align:right;font-size:14px;">${fmt(pVal)}</td>
+      <td style="padding:8px 4px;text-align:right;font-size:12px;color:var(--text-muted);">${pctOf(pVal,pGross)}</td>
+      ${showYtd ? `<td style="padding:8px 4px;text-align:right;font-size:14px;">${fmt(yVal)}</td><td style="padding:8px 4px;text-align:right;font-size:12px;color:var(--text-muted);">${pctOf(yVal,ytdGross)}</td>` : ''}
     </tr>`;
 
-  // Sort line items by month amount desc
-  const sortedRevenue = Object.entries(revenueLines).sort((a,b) => b[1].month - a[1].month);
-  const sortedDirect = Object.entries(directLines).sort((a,b) => b[1].month - a[1].month);
-  const sortedOverhead = Object.entries(overheadLines).sort((a,b) => b[1].month - a[1].month);
+  const sortedRevenue  = Object.entries(revenueLines).sort((a,b) => b[1].p - a[1].p);
+  const sortedDirect   = Object.entries(directLines).sort((a,b) => b[1].p - a[1].p);
+  const sortedOverhead = Object.entries(overheadLines).sort((a,b) => b[1].p - a[1].p);
 
   el.innerHTML = `
-    <div class="report-section-title">${monthName(month)} ${year} — Profit & Loss</div>
-
+    <div class="report-section-title">${pLabel} — Profit & Loss</div>
     <div style="overflow-x:auto;">
     <table style="width:100%;border-collapse:collapse;margin-top:8px;">
       <thead>
         <tr style="border-bottom:2px solid var(--plum);">
           <th style="text-align:left;padding:8px 0;font-size:12px;color:var(--text-muted);font-weight:600;"></th>
-          <th style="text-align:right;padding:8px 4px;font-size:12px;color:var(--text-muted);font-weight:600;">${monthName(month).substring(0,3)}</th>
+          <th style="text-align:right;padding:8px 4px;font-size:12px;color:var(--text-muted);font-weight:600;">${pLabel}</th>
           <th style="text-align:right;padding:8px 4px;font-size:11px;color:var(--text-muted);font-weight:600;">%</th>
-          <th style="text-align:right;padding:8px 4px;font-size:12px;color:var(--text-muted);font-weight:600;">YTD</th>
-          <th style="text-align:right;padding:8px 4px;font-size:11px;color:var(--text-muted);font-weight:600;">%</th>
+          ${showYtd ? `<th style="text-align:right;padding:8px 4px;font-size:12px;color:var(--text-muted);font-weight:600;">YTD</th><th style="text-align:right;padding:8px 4px;font-size:11px;color:var(--text-muted);font-weight:600;">%</th>` : ''}
         </tr>
       </thead>
       <tbody>
-        <tr><td colspan="5" style="padding:10px 0 4px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--plum);">Revenue</td></tr>
-        ${sortedRevenue.map(([cat, v]) => row(cat, v.month, v.ytd)).join('')}
-        ${monthTips > 0 || ytdTips > 0 ? row('Tips', monthTips, ytdTips) : ''}
-        ${monthEmployee > 0 || ytdEmployee > 0 ? row('Employee Income (Chasity)', monthEmployee, ytdEmployee) : ''}
-        ${monthRent > 0 || ytdRent > 0 ? row('Booth Rent Collected', monthRent, ytdRent) : ''}
+        <tr><td colspan="${cols}" style="padding:10px 0 4px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--plum);">Revenue</td></tr>
+        ${sortedRevenue.map(([cat,v]) => row(cat, v.p, v.ytd)).join('')}
+        ${pTips > 0 || ytdTips > 0 ? row('Tips', pTips, ytdTips) : ''}
+        ${pRent > 0 || ytdRent > 0 ? row('Booth Rent Collected', pRent, ytdRent) : ''}
         ${dividerRow}
-        ${subtotalRow('Total Revenue', monthGrossRevenue, ytdGrossRevenue, 'var(--success)')}
+        ${subtotalRow('Total Revenue', pGross, ytdGross, 'var(--success)')}
 
-        <tr><td colspan="5" style="padding:14px 0 4px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--danger);">Cost of Goods / Direct Costs</td></tr>
-        ${sortedDirect.length > 0 ? sortedDirect.map(([cat, v]) => row(cat, v.month, v.ytd)).join('') : '<tr><td colspan="5" style="padding:6px 12px;font-size:13px;color:var(--text-muted);font-style:italic;">None this period</td></tr>'}
+        <tr><td colspan="${cols}" style="padding:14px 0 4px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--danger);">Cost of Goods / Direct Costs</td></tr>
+        ${sortedDirect.length > 0 ? sortedDirect.map(([cat,v]) => row(cat, v.p, v.ytd)).join('') : `<tr><td colspan="${cols}" style="padding:6px 12px;font-size:13px;color:var(--text-muted);font-style:italic;">None this period</td></tr>`}
         ${dividerRow}
-        ${subtotalRow('Total Direct Costs', monthDirectTotal, ytdDirectTotal, 'var(--danger)')}
-        ${subtotalRow('Gross Profit', monthGrossProfit, ytdGrossProfit, monthGrossProfit >= 0 ? 'var(--success)' : 'var(--danger)')}
+        ${subtotalRow('Total Direct Costs', pDirect, ytdDirect, 'var(--danger)')}
+        ${subtotalRow('Gross Profit', pGrossProfit, ytdGrossProfit, pGrossProfit>=0?'var(--success)':'var(--danger)')}
 
-        <tr><td colspan="5" style="padding:14px 0 4px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--gold);">Operating Expenses</td></tr>
-        ${sortedOverhead.length > 0 ? sortedOverhead.map(([cat, v]) => row(cat, v.month, v.ytd)).join('') : '<tr><td colspan="5" style="padding:6px 12px;font-size:13px;color:var(--text-muted);font-style:italic;">None this period</td></tr>'}
+        <tr><td colspan="${cols}" style="padding:14px 0 4px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--gold);">Operating Expenses</td></tr>
+        ${sortedOverhead.length > 0 ? sortedOverhead.map(([cat,v]) => row(cat, v.p, v.ytd)).join('') : `<tr><td colspan="${cols}" style="padding:6px 12px;font-size:13px;color:var(--text-muted);font-style:italic;">None this period</td></tr>`}
         ${dividerRow}
-        ${subtotalRow('Total Operating Expenses', monthOverheadTotal, ytdOverheadTotal, 'var(--danger)')}
+        ${subtotalRow('Total Operating Expenses', pOverhead, ytdOverhead, 'var(--danger)')}
 
-        <tr><td colspan="5" style="padding:0;"><hr style="border:none;border-top:3px double var(--plum);margin:8px 0;"></td></tr>
+        <tr><td colspan="${cols}" style="padding:0;"><hr style="border:none;border-top:3px double var(--plum);margin:8px 0;"></td></tr>
         <tr style="font-weight:800;font-size:16px;">
           <td style="padding:10px 0;color:var(--text);">Net Income</td>
-          <td style="padding:10px 4px;text-align:right;color:${monthNetIncome >= 0 ? 'var(--success)' : 'var(--danger)'};">${fmt(monthNetIncome)}</td>
-          <td style="padding:10px 4px;text-align:right;font-size:13px;color:var(--text-muted);">${pctOf(monthNetIncome, monthGrossRevenue)}</td>
-          <td style="padding:10px 4px;text-align:right;color:${ytdNetIncome >= 0 ? 'var(--success)' : 'var(--danger)'};">${fmt(ytdNetIncome)}</td>
-          <td style="padding:10px 4px;text-align:right;font-size:13px;color:var(--text-muted);">${pctOf(ytdNetIncome, ytdGrossRevenue)}</td>
+          <td style="padding:10px 4px;text-align:right;color:${pNet>=0?'var(--success)':'var(--danger)'};">${fmt(pNet)}</td>
+          <td style="padding:10px 4px;text-align:right;font-size:13px;color:var(--text-muted);">${pctOf(pNet,pGross)}</td>
+          ${showYtd ? `<td style="padding:10px 4px;text-align:right;color:${ytdNet>=0?'var(--success)':'var(--danger)'};">${fmt(ytdNet)}</td><td style="padding:10px 4px;text-align:right;font-size:13px;color:var(--text-muted);">${pctOf(ytdNet,ytdGross)}</td>` : ''}
         </tr>
       </tbody>
     </table>
     </div>
 
     <div style="margin-top:20px;padding:16px;background:var(--bg-input);border-radius:12px;">
-      <div style="font-size:12px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;">Key Metrics</div>
+      <div style="font-size:12px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;">Key Metrics — ${pLabel}</div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
         <div>
           <div style="font-size:11px;color:var(--text-muted);">Gross Margin</div>
-          <div style="font-size:18px;font-weight:700;color:${monthGrossProfit/monthGrossRevenue >= 0.7 ? 'var(--success)' : 'var(--gold)'};">${pctOf(monthGrossProfit, monthGrossRevenue)}</div>
+          <div style="font-size:18px;font-weight:700;color:${pGrossProfit/pGross>=0.7?'var(--success)':'var(--gold)'};">${pctOf(pGrossProfit,pGross)}</div>
         </div>
         <div>
           <div style="font-size:11px;color:var(--text-muted);">Net Margin</div>
-          <div style="font-size:18px;font-weight:700;color:${monthNetIncome/monthGrossRevenue >= 0.4 ? 'var(--success)' : monthNetIncome >= 0 ? 'var(--gold)' : 'var(--danger)'};">${pctOf(monthNetIncome, monthGrossRevenue)}</div>
+          <div style="font-size:18px;font-weight:700;color:${pNet>=0?'var(--success)':'var(--danger)'};">${pctOf(pNet,pGross)}</div>
         </div>
         <div>
-          <div style="font-size:11px;color:var(--text-muted);">Revenue Mix — Services</div>
-          <div style="font-size:18px;font-weight:700;color:var(--plum);">${pctOf(monthServiceTotal + monthTips, monthGrossRevenue)}</div>
+          <div style="font-size:11px;color:var(--text-muted);">Services Revenue</div>
+          <div style="font-size:18px;font-weight:700;color:var(--plum);">${pctOf(pServiceTotal+pTips,pGross)}</div>
         </div>
         <div>
-          <div style="font-size:11px;color:var(--text-muted);">Revenue Mix — Booth Rent</div>
-          <div style="font-size:18px;font-weight:700;color:var(--plum);">${pctOf(monthRent, monthGrossRevenue)}</div>
+          <div style="font-size:11px;color:var(--text-muted);">Booth Rent Revenue</div>
+          <div style="font-size:18px;font-weight:700;color:var(--plum);">${pctOf(pRent,pGross)}</div>
         </div>
       </div>
     </div>
 
     <div style="margin-top:12px;font-size:11px;color:var(--text-muted);line-height:1.5;">
-      Expense categories are tagged as <strong>Direct</strong> or <strong>Overhead</strong> in Settings → Expense Categories.<br>
-      Tap the tag on any expense category to toggle its classification.
+      Expense categories are tagged as <strong>Direct</strong> or <strong>Overhead</strong> in Settings → Expense Categories.
     </div>
   `;
 }
