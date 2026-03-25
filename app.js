@@ -9377,6 +9377,7 @@ function openAskOverlay() {
     <div style="display:flex;align-items:center;padding:12px 16px;border-bottom:1px solid var(--border-light, #e0d6d6);background:var(--bg-card, #fff);">
       <button onclick="closeAskOverlay()" style="background:none;border:none;font-size:24px;color:var(--text-muted, #999);cursor:pointer;padding:4px 12px 4px 0;">←</button>
       <div style="flex:1;font-size:17px;font-weight:700;color:var(--text, #333);">✨ Ask Mane Frame</div>
+      <button onclick="exportAiChat()" id="ai-export-btn" style="background:none;border:none;font-size:20px;color:var(--text-muted, #999);cursor:pointer;padding:4px 8px;" title="Export chat">📤</button>
     </div>
     <div id="ai-chat-messages" style="flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:12px;">
       <div style="background:var(--bg-card, #fff);border-radius:12px;padding:14px 16px;max-width:85%;box-shadow:0 1px 3px rgba(0,0,0,0.04);">
@@ -9405,6 +9406,65 @@ function closeAskOverlay() {
   const overlay = document.getElementById('ai-ask-overlay');
   if (overlay) overlay.remove();
   window._aiChatHistory = null;
+}
+
+function exportAiChat() {
+  const history = window._aiChatHistory;
+  if (!history || history.length === 0) {
+    alert('No conversation to export yet. Ask a question first!');
+    return;
+  }
+
+  const date = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  const time = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+  let text = `Mane Frame AI Chat Export\n${date} at ${time}\n${'─'.repeat(40)}\n\n`;
+  history.forEach(msg => {
+    const label = msg.role === 'user' ? 'You' : 'Mane Frame AI';
+    text += `${label}:\n${msg.content}\n\n`;
+  });
+
+  // Show action sheet
+  const sheet = document.createElement('div');
+  sheet.id = 'ai-export-sheet';
+  sheet.style.cssText = `position:fixed;inset:0;z-index:2000;display:flex;flex-direction:column;justify-content:flex-end;background:rgba(0,0,0,0.4);`;
+  sheet.innerHTML = `
+    <div style="background:var(--bg-card,#fff);border-radius:16px 16px 0 0;padding:8px 0 32px;">
+      <div style="text-align:center;padding:12px 16px 8px;font-size:13px;color:var(--text-muted,#999);font-weight:600;letter-spacing:0.5px;">EXPORT CHAT</div>
+      <button onclick="aiExportCopy()" style="width:100%;padding:16px 20px;background:none;border:none;border-top:1px solid var(--border-light,#eee);text-align:left;font-size:16px;color:var(--text,#333);cursor:pointer;">📋  Copy to Clipboard</button>
+      <button onclick="aiExportDownload()" style="width:100%;padding:16px 20px;background:none;border:none;border-top:1px solid var(--border-light,#eee);text-align:left;font-size:16px;color:var(--text,#333);cursor:pointer;">⬇️  Download as Text File</button>
+      <button onclick="aiExportEmail()" style="width:100%;padding:16px 20px;background:none;border:none;border-top:1px solid var(--border-light,#eee);text-align:left;font-size:16px;color:var(--text,#333);cursor:pointer;">✉️  Send via Email</button>
+      <button onclick="document.getElementById('ai-export-sheet').remove()" style="width:100%;padding:16px 20px;background:none;border:none;border-top:1px solid var(--border-light,#eee);text-align:center;font-size:16px;color:var(--danger,#C13838);cursor:pointer;font-weight:600;">Cancel</button>
+    </div>
+  `;
+  document.body.appendChild(sheet);
+  sheet.addEventListener('click', e => { if (e.target === sheet) sheet.remove(); });
+  window._aiExportText = text;
+}
+
+function aiExportCopy() {
+  document.getElementById('ai-export-sheet')?.remove();
+  navigator.clipboard.writeText(window._aiExportText || '').then(() => {
+    const btn = document.getElementById('ai-export-btn');
+    if (btn) { btn.textContent = '✅'; setTimeout(() => { btn.textContent = '📤'; }, 2000); }
+  }).catch(() => alert('Could not copy. Try downloading instead.'));
+}
+
+function aiExportDownload() {
+  document.getElementById('ai-export-sheet')?.remove();
+  const blob = new Blob([window._aiExportText || ''], { type: 'text/plain' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `mane-frame-chat-${new Date().toISOString().split('T')[0]}.txt`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function aiExportEmail() {
+  document.getElementById('ai-export-sheet')?.remove();
+  const subject = encodeURIComponent(`Mane Frame AI Chat – ${new Date().toLocaleDateString()}`);
+  const body = encodeURIComponent(window._aiExportText || '');
+  window.location.href = `mailto:?subject=${subject}&body=${body}`;
 }
 
 function askSuggestion(btn) {
@@ -9498,6 +9558,72 @@ async function gatherBusinessSnapshot() {
   const clientList = Object.values(clientMap).sort((a,b) => b.spend - a.spend).slice(0, 15)
     .map(c => `${c.name}: ${c.visits} visits, $${c.spend.toFixed(2)} total, last visit ${c.lastVisit}`);
 
+  // Employee performance (YTD)
+  const employees = state.employees || ['Chasity McGill'];
+  const empYearStart = `${curYear}-01-01`;
+  const empYearEnd = todayStr();
+
+  function getEmpWeekStart(dateStr) {
+    const d = new Date(dateStr + 'T12:00:00');
+    d.setDate(d.getDate() - d.getDay());
+    return d.toISOString().split('T')[0];
+  }
+
+  const employeeSnapshots = employees.map(empName => {
+    const legacyCat = `${empName.split(' ')[0]} (Vagaro Income)`;
+    const empIncomeTxns = allTxns.filter(t =>
+      t.type === 'INCOME' &&
+      t.date >= empYearStart && t.date <= empYearEnd &&
+      ((t.category === 'Vagaro Income' && t.employee === empName) || t.category === legacyCat)
+    );
+    const empExpenseTxns = allTxns.filter(t =>
+      t.type === 'EXPENSE' &&
+      t.category === 'Employee Pay' &&
+      t.date >= empYearStart && t.date <= empYearEnd &&
+      (t.employee === empName || (!t.employee && empName === 'Chasity McGill'))
+    );
+
+    let empServices = 0, empTips = 0, empPay = 0, empTaxes = 0;
+    const empWeeks = {};
+
+    empIncomeTxns.forEach(t => {
+      const ws = getEmpWeekStart(t.date);
+      if (!empWeeks[ws]) empWeeks[ws] = { services: 0, tips: 0, pay: 0, taxes: 0 };
+      const svc = t.serviceAmount || t.amount || 0;
+      empServices += svc;
+      empWeeks[ws].services += svc;
+      const tips = t.employeeTips || parseFloat(t.notes?.match(/Tips:\s*\$?([\d.]+)/i)?.[1] || 0) || t.tipAmount || 0;
+      empTips += tips;
+      empWeeks[ws].tips += tips;
+    });
+
+    empExpenseTxns.forEach(t => {
+      const ws = getEmpWeekStart(t.date);
+      if (!empWeeks[ws]) empWeeks[ws] = { services: 0, tips: 0, pay: 0, taxes: 0 };
+      const amt = t.amount || 0;
+      if (t.payType === 'taxes' || t.notes?.toLowerCase().includes('tax')) {
+        empTaxes += amt;
+        empWeeks[ws].taxes += amt;
+      } else {
+        empPay += amt;
+        empWeeks[ws].pay += amt;
+      }
+    });
+
+    const empTotalCost = empPay + empTaxes;
+    const empNetProfit = empServices - empTotalCost;
+    const empMargin = empServices > 0 ? ((empNetProfit / empServices) * 100).toFixed(1) : 0;
+    const weeksWorked = Object.values(empWeeks).filter(w => w.services > 0 || w.pay > 0).length;
+    const avgWeeklyRevenue = weeksWorked > 0 ? (empServices / weeksWorked).toFixed(0) : 0;
+    const avgWeeklyPay = weeksWorked > 0 ? (empTotalCost / weeksWorked).toFixed(0) : 0;
+    const avgWeeklyNet = weeksWorked > 0 ? (empNetProfit / weeksWorked).toFixed(0) : 0;
+    const BOOTH_RATE = 140;
+    const boothNet = BOOTH_RATE * weeksWorked;
+    const boothDiff = empNetProfit - boothNet;
+
+    return `- ${empName}: Revenue $${empServices.toFixed(0)}, Tips $${empTips.toFixed(0)} (kept by employee), Pay $${empPay.toFixed(0)}, Taxes $${empTaxes.toFixed(0)}, Total Cost $${empTotalCost.toFixed(0)}, Net Profit $${empNetProfit.toFixed(0)}, Margin ${empMargin}%, Weeks Worked ${weeksWorked}, Avg/Week: Revenue $${avgWeeklyRevenue} | Cost $${avgWeeklyPay} | Net $${avgWeeklyNet} | Booth renter equivalent (${weeksWorked}wks × $${BOOTH_RATE}) = $${boothNet.toFixed(0)} (employee ${boothDiff >= 0 ? 'earns' : 'costs'} $${Math.abs(boothDiff).toFixed(0)} ${boothDiff >= 0 ? 'more' : 'less'} than booth renter would)`;
+  });
+
   // Booth renters with payment history
   const activeRenters = allRenters.filter(r => r.status === 'active');
   const totalWeeklyRent = activeRenters.reduce((s, r) => s + getCurrentRate(r), 0);
@@ -9533,7 +9659,11 @@ async function gatherBusinessSnapshot() {
   return `
 BUSINESS SNAPSHOT (as of ${now.toLocaleDateString()}):
 Owner: Annette | Business: Hair Salon ("Mane Frame")
-Employee: Chasity (income tracked via "Vagaro Income" category with employee field)
+Employees: ${employees.join(', ')} (income tracked via "Vagaro Income" category with employee field)
+
+EMPLOYEE PERFORMANCE (${curYear} YTD):
+${employeeSnapshots.join('\n') || 'No employee data'}
+Note: Net Profit = Revenue generated by employee minus their pay and employer taxes. Tips are kept by the employee and not included in salon profit calculations. To estimate profitability of adding another employee, use the avg weekly revenue and cost figures above scaled by expected weeks worked.
 
 MONTHLY PERFORMANCE (last 6 months):
 ${monthlySummaries.map(m => `${m.month} ${m.year}: Income $${m.totalIncome.toFixed(0)} (Services $${m.services.toFixed(0)}, Tips $${m.tips.toFixed(0)}, Employee $${m.employeeIncome.toFixed(0)}, Rent $${m.rentCollected.toFixed(0)}) | Expenses $${m.totalExpenses.toFixed(0)} (Daily $${m.dailyExpenses.toFixed(0)}, Monthly $${m.monthlyExpenses.toFixed(0)}) | Net $${m.netProfit.toFixed(0)} | Clients logged: ${m.clients}, Income entries: ${m.incomeEntries}, Unique named clients: ${m.uniqueClients}`).join('\n')}
