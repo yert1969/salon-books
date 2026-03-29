@@ -8450,59 +8450,142 @@ async function deleteRentPayment(paymentId) {
   renderRentersView();
 }
 
-function openRenterDetail(renterId) {
+function openRenterDetail(renterId, histYear) {
   db.renters.get(renterId).then(async r => {
     if (!r) return;
-    const payments = await db.rentPayments
-      .where('renterId').equals(renterId)
-      .reverse()
-      .limit(20)
-      .toArray();
 
-    const historyHTML = payments.length === 0
-      ? '<p style="color:var(--text-muted);font-size:13px;text-align:center;padding:16px 0;">No payment history yet.</p>'
-      : payments.map(p => {
-          const status      = getRentStatus(p.weekStart, p.datePaid);
-          const statusClass = { ontime: 'status-ontime', late: 'status-late' }[status];
-          const icon        = status === 'ontime' ? '✅' : '⚠️';
-          return `
-          <div class="renter-history-row" onclick="openEditRentPayment('${p.id}','${renterId}')" style="cursor:pointer;">
-            <span>${icon}</span>
-            <div style="flex:1">
-              <div style="font-size:12px;font-weight:500;">${formatWeekRange(p.weekStart)}</div>
-              <div style="font-size:11px;color:var(--text-muted);">Paid ${formatDateDisplay(p.datePaid)} · ${p.paymentMethod}</div>
-              ${p.notes && p.notes.includes('catch-up') ? `<div style="font-size:10px;color:var(--plum);margin-top:2px;">↳ ${p.notes}</div>` : ''}
-            </div>
-            <div style="text-align:right">
-              <div style="font-weight:700;color:var(--success);font-size:13px;">${fmt(p.amount)}</div>
-              <div class="${statusClass}" style="font-size:10px;">${status === 'ontime' ? 'On Time' : 'Late'}</div>
-            </div>
-            <div style="font-size:16px;color:var(--text-muted);margin-left:4px;">✎</div>
-          </div>`;
-        }).join('');
+    const payments = await db.rentPayments.where('renterId').equals(renterId).toArray();
+    const payByWeek = {};
+    payments.forEach(p => { payByWeek[p.weekStart] = p; });
 
     ensureRateHistory(r);
     const curRate = getCurrentRate(r);
-    const rateNote = r.rateHistory && r.rateHistory.length > 1
-      ? ` <span style="font-size:11px;color:var(--text-muted);">(was ${fmt(r.rateHistory[0].rate)})</span>`
-      : '';
+
+    const today = new Date();
+    const curYear = today.getFullYear();
+    const startYear = r.startDate ? parseInt(r.startDate.substring(0, 4)) : curYear;
+    const selectedYear = histYear || curYear;
+
+    // Generate all weeks in range
+    const yearStart   = new Date(`${selectedYear}-01-01T12:00:00`);
+    const yearEnd     = new Date(`${selectedYear}-12-31T23:59:59`);
+    const renterStart = new Date((r.startDate || `${selectedYear}-01-01`) + 'T12:00:00');
+    const rangeStart  = renterStart > yearStart ? renterStart : yearStart;
+    const rangeEnd    = today < yearEnd ? today : yearEnd;
+
+    const weeks = [];
+    let d = new Date(rangeStart);
+    const dow = d.getDay();
+    d.setDate(d.getDate() + (dow === 0 ? 1 : dow === 1 ? 0 : 8 - dow));
+    while (d <= rangeEnd) {
+      weeks.push(d.toISOString().split('T')[0]);
+      d = new Date(d);
+      d.setDate(d.getDate() + 7);
+    }
+    weeks.reverse();
+
+    // Stats
+    let totalExpected = 0, totalPaid = 0, onTimeCount = 0, lateCount = 0, missedCount = 0;
+    weeks.forEach(ws => {
+      const rate = getRateForWeek(r, ws);
+      const p = payByWeek[ws];
+      totalExpected += rate;
+      if (p) {
+        totalPaid += p.amount;
+        getRentStatus(ws, p.datePaid) === 'ontime' ? onTimeCount++ : lateCount++;
+      } else { missedCount++; }
+    });
+    const outstanding = Math.max(0, totalExpected - totalPaid);
+    const paidWeeks   = onTimeCount + lateCount;
+    const onTimeRate  = paidWeeks > 0 ? Math.round((onTimeCount / paidWeeks) * 100) : 0;
+
+    // Year filter tabs
+    const yearTabs = [];
+    for (let y = curYear; y >= startYear; y--) {
+      const active = y === selectedYear;
+      yearTabs.push(`<button onclick="openRenterDetail('${renterId}',${y})" style="padding:5px 12px;border-radius:20px;border:1px solid ${active ? 'var(--plum)' : 'var(--border-light)'};cursor:pointer;font-size:12px;font-weight:600;background:${active ? 'var(--plum)' : 'transparent'};color:${active ? '#fff' : 'var(--text-muted)'};">${y}</button>`);
+    }
+
+    // Week rows
+    const rows = weeks.map(ws => {
+      const rate = getRateForWeek(r, ws);
+      const p    = payByWeek[ws];
+      if (p) {
+        const status   = getRentStatus(ws, p.datePaid);
+        const isShort  = p.amount < rate * 0.99;
+        const icon     = status === 'ontime' ? '✅' : '⚠️';
+        const sColor   = status === 'ontime' ? 'var(--success)' : '#e07b39';
+        const aColor   = isShort ? '#e07b39' : 'var(--success)';
+        const shortTxt = isShort ? `<div style="font-size:10px;color:#e07b39;">short ${fmt(rate - p.amount)}</div>` : '';
+        const catchUp  = p.notes && p.notes.includes('catch-up') ? `<div style="font-size:10px;color:var(--plum);">↳ ${p.notes}</div>` : '';
+        return `<div class="renter-history-row" onclick="openEditRentPayment('${p.id}','${renterId}')" style="cursor:pointer;">
+          <span style="font-size:16px;">${icon}</span>
+          <div style="flex:1;min-width:0;">
+            <div style="font-size:12px;font-weight:500;">${formatWeekRange(ws)}</div>
+            <div style="font-size:11px;color:var(--text-muted);">Paid ${formatDateDisplay(p.datePaid)} · ${p.paymentMethod}</div>
+            ${catchUp}
+          </div>
+          <div style="text-align:right;">
+            <div style="font-weight:700;color:${aColor};font-size:13px;">${fmt(p.amount)}</div>
+            ${shortTxt}
+            <div style="font-size:10px;color:${sColor};">${status === 'ontime' ? 'On Time' : 'Late'}</div>
+          </div>
+          <div style="font-size:14px;color:var(--text-muted);margin-left:4px;">✎</div>
+        </div>`;
+      } else {
+        return `<div class="renter-history-row" style="opacity:0.85;">
+          <span style="font-size:16px;">❌</span>
+          <div style="flex:1;min-width:0;">
+            <div style="font-size:12px;font-weight:500;">${formatWeekRange(ws)}</div>
+            <div style="font-size:11px;color:var(--text-muted);">No payment recorded</div>
+          </div>
+          <div style="text-align:right;">
+            <div style="font-weight:700;color:var(--danger);font-size:13px;">−${fmt(rate)}</div>
+            <div style="font-size:10px;color:var(--danger);">Missing</div>
+          </div>
+        </div>`;
+      }
+    }).join('');
 
     openModal(`
       <h2 class="modal-title">${escapeHTML(r.name)}</h2>
-      <div style="display:flex;gap:12px;margin-bottom:14px;font-size:13px;color:var(--text-muted);">
+      <div style="display:flex;gap:10px;margin-bottom:12px;font-size:13px;color:var(--text-muted);flex-wrap:wrap;">
         ${r.booth ? `<span>Booth ${escapeHTML(r.booth)}</span>` : ''}
-        <span>${fmt(curRate)}/week${rateNote}</span>
+        <span>${fmt(curRate)}/week</span>
         <span>Since ${r.startDate ? formatDateDisplay(r.startDate) : '—'}</span>
       </div>
 
-      <div style="display:flex;gap:8px;margin-bottom:16px;">
+      <div style="display:flex;gap:8px;margin-bottom:14px;">
         <button class="btn-secondary" style="flex:1;" onclick="openLogPaymentModal('${r.id}');closeModal()">+ Log Payment</button>
         <button class="btn-secondary" style="flex:1;" onclick="openEditRenterModal('${r.id}')">Edit Profile</button>
         <button class="btn-danger-sm" onclick="deactivateRenter('${r.id}')">Deactivate</button>
       </div>
 
-      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted);margin-bottom:8px;">Payment History</div>
-      ${historyHTML}
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;">${yearTabs.join('')}</div>
+
+      <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:14px;">
+        <div style="background:var(--cream);border-radius:10px;padding:10px;">
+          <div style="font-size:10px;color:var(--text-muted);margin-bottom:2px;">Expected</div>
+          <div style="font-size:15px;font-weight:700;">${fmt(totalExpected)}</div>
+        </div>
+        <div style="background:var(--cream);border-radius:10px;padding:10px;">
+          <div style="font-size:10px;color:var(--text-muted);margin-bottom:2px;">Collected</div>
+          <div style="font-size:15px;font-weight:700;color:var(--success);">${fmt(totalPaid)}</div>
+        </div>
+        <div style="background:var(--cream);border-radius:10px;padding:10px;">
+          <div style="font-size:10px;color:var(--text-muted);margin-bottom:2px;">Outstanding</div>
+          <div style="font-size:15px;font-weight:700;color:${outstanding > 0 ? 'var(--danger)' : 'var(--success)'};">${outstanding > 0 ? fmt(outstanding) : '✓ All Paid'}</div>
+        </div>
+        <div style="background:var(--cream);border-radius:10px;padding:10px;">
+          <div style="font-size:10px;color:var(--text-muted);margin-bottom:2px;">On-Time Rate</div>
+          <div style="font-size:15px;font-weight:700;">${onTimeRate}%</div>
+        </div>
+      </div>
+
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted);margin-bottom:8px;">
+        ${selectedYear} · ${weeks.length} weeks · ${missedCount} missing
+      </div>
+      ${rows || '<p style="color:var(--text-muted);font-size:13px;text-align:center;padding:16px 0;">No weeks in this period</p>'}
     `);
   });
 }
