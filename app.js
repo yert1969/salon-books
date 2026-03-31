@@ -2648,8 +2648,30 @@ async function editTransaction(id) {
   if (document.getElementById('entry-client')) {
     document.getElementById('entry-client').value = transaction.clientName || '';
   }
-  
+
   updateEntryForm();
+
+  // Restore Employee Pay fields if applicable
+  if (transaction.category === 'Employee Pay') {
+    toggleEmployeePayFields('Employee Pay');
+    const empInput = document.getElementById('entry-employee');
+    const empBtn = document.getElementById('entry-employee-btn');
+    if (empInput && transaction.employee) {
+      empInput.value = transaction.employee;
+      if (empBtn) empBtn.textContent = transaction.employee;
+    }
+    const payType = transaction.payType || 'pay';
+    const radio = document.querySelector(`input[name="entry-paytype"][value="${payType}"]`);
+    if (radio) { radio.checked = true; updatePayTypeStyle(); }
+  }
+
+  // Restore Vagaro employee if applicable
+  if (transaction.category === 'Vagaro Income' && transaction.employee) {
+    toggleEmployeePayFields('Vagaro Income');
+    const vInput = document.getElementById('entry-vagaro-employee');
+    const vBtn = document.getElementById('entry-vagaro-employee-btn');
+    if (vInput) { vInput.value = transaction.employee; if (vBtn) vBtn.textContent = transaction.employee; }
+  }
   
   // Show persistent edit banner
   showEditBanner();
@@ -2898,6 +2920,9 @@ function updateEntryForm() {
       }
     }
   }
+
+  // Sync employee pay section visibility with current category
+  toggleEmployeePayFields(categoryInput?.value || '');
 }
 
 function openEntryCategoryPicker() {
