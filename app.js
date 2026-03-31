@@ -4014,6 +4014,30 @@ async function openAddTransactionModal(type) {
     </div>
     ` : ''}
 
+    <!-- Employee Pay Fields (shown when category is Employee Pay) -->
+    ${!isIncome ? `
+    <div id="txn-employee-pay-section" class="hidden">
+      <div class="form-group">
+        <label class="form-label">Employee</label>
+        <button type="button" class="category-picker-trigger" id="txn-employee-btn" onclick="openTxnEmployeePicker()">${state.employees?.[0] || 'Chasity McGill'}</button>
+        <input type="hidden" id="txn-employee" value="${state.employees?.[0] || 'Chasity McGill'}">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Type</label>
+        <div style="display:flex; gap:12px;">
+          <label id="txn-paytype-pay-label" style="display:flex; align-items:center; gap:8px; cursor:pointer; flex:1; padding:12px; background:var(--cream); border-radius:8px; border:2px solid var(--gold);">
+            <input type="radio" name="txn-paytype" value="pay" checked style="width:18px; height:18px;" onchange="updateTxnPayTypeStyle()">
+            <span style="font-size:14px; font-weight:500;">💰 Pay</span>
+          </label>
+          <label id="txn-paytype-taxes-label" style="display:flex; align-items:center; gap:8px; cursor:pointer; flex:1; padding:12px; background:var(--cream); border-radius:8px; border:2px solid transparent;">
+            <input type="radio" name="txn-paytype" value="taxes" style="width:18px; height:18px;" onchange="updateTxnPayTypeStyle()">
+            <span style="font-size:14px; font-weight:500;">📋 Taxes</span>
+          </label>
+        </div>
+      </div>
+    </div>
+    ` : ''}
+
     <div class="form-group">
       <label class="form-label">${isIncome ? 'Service Amount ($)' : 'Amount ($)'}</label>
       <input type="number" class="form-input" id="txn-amount" placeholder="0.00" step="0.01" min="0" inputmode="decimal">
@@ -4137,6 +4161,10 @@ async function saveTransaction(type) {
     record.serviceAmount = 0;
     record.tipAmount     = 0;
     record.amount        = amount;
+    if (category === 'Employee Pay') {
+      record.employee = document.getElementById('txn-employee')?.value || 'Chasity McGill';
+      record.payType  = document.querySelector('input[name="txn-paytype"]:checked')?.value || 'pay';
+    }
   }
 
   try {
