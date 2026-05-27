@@ -1754,13 +1754,6 @@ async function renderEntriesView() {
   const txns    = await db.transactions.where('date').equals(state.selectedDate).toArray();
   const summary = await db.dailySummary.where('date').equals(state.selectedDate).first();
 
-  // Also load monthly expenses for the selected month/year
-  const selDate  = new Date(state.selectedDate + 'T12:00:00');
-  const selMonth = selDate.getMonth() + 1;
-  const selYear  = selDate.getFullYear();
-  const allMonthly = await db.monthlyExpenses.toArray();
-  const monthlyExp = allMonthly.filter(e => e.month === selMonth && e.year === selYear);
-
   const income   = txns.filter(t => t.type === 'INCOME');
   const expenses = txns.filter(t => t.type === 'EXPENSE');
 
@@ -1768,8 +1761,6 @@ async function renderEntriesView() {
   const totalTips     = income.reduce((s, t) => s + (t.tipAmount    || 0), 0);
   const totalIncome   = totalService + totalTips;
   const totalDailyExp = expenses.reduce((s, t) => s + (t.amount || 0), 0);
-  const totalMonthlyExp = monthlyExp.reduce((s, e) => s + (e.amount || 0), 0);
-  // Net is based on daily income vs daily expenses only — monthly expenses are fixed costs shown separately
   const net           = totalIncome - totalDailyExp;
 
   const isToday = state.selectedDate === todayStr();
@@ -1857,7 +1848,7 @@ async function renderEntriesView() {
       <button class="date-nav-btn" onclick="changeDate(1)">›</button>
     </div>
 
-    <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; padding:0 16px 12px;">
+    <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; padding:0 16px 12px;">
       <div class="summary-card income-card">
         <div class="summary-label">Income</div>
         <div class="summary-amount">${fmt(totalIncome)}</div>
@@ -1868,13 +1859,9 @@ async function renderEntriesView() {
         <div class="summary-amount ${net >= 0 ? 'positive' : 'negative'}">${fmt(net)}</div>
       </div>
       <div class="summary-card expense-card">
-        <div class="summary-label">Daily Expenses</div>
+        <div class="summary-label">Expenses</div>
         <div class="summary-amount">${fmt(totalDailyExp)}</div>
-      </div>
-      <div class="summary-card expense-card" style="border-color:#9b6e9b;">
-        <div class="summary-label">Monthly Expenses</div>
-        <div class="summary-amount">${fmt(totalMonthlyExp)}</div>
-        ${totalMonthlyExp > 0 ? `<div class="summary-sub" style="color:#9b6e9b;">${monthName(selMonth)}</div>` : ''}
+        ${expenses.filter(t => t.recurring).length > 0 ? `<div class="summary-sub" style="color:#9b6e9b;">${expenses.filter(t => t.recurring).length} recurring</div>` : ''}
       </div>
     </div>
 
@@ -1912,21 +1899,13 @@ async function renderEntriesView() {
         </div>
       ` : income.map(t => renderTransactionItem(t)).join('')}
 
-      <div class="section-label" style="margin-top:12px;">Daily Expenses</div>
+      <div class="section-label" style="margin-top:12px;">Expenses</div>
       ${expenses.length === 0 ? `
         <div class="empty-state">
           <div class="empty-icon">🧾</div>
-          <div class="empty-text">No daily expenses yet.</div>
+          <div class="empty-text">No expenses yet.</div>
         </div>
       ` : expenses.map(t => renderTransactionItem(t)).join('')}
-
-      <div class="section-label" style="margin-top:12px;">Monthly Expenses <span style="font-size:11px;font-weight:400;color:var(--text-muted);">${monthName(selMonth)} ${selYear}</span></div>
-      ${monthlyExp.length === 0 ? `
-        <div class="empty-state">
-          <div class="empty-icon">📅</div>
-          <div class="empty-text">No monthly expenses this month.</div>
-        </div>
-      ` : monthlyExp.map(e => renderMonthlyExpenseItem(e)).join('')}
     </div>
 
     <div style="height:16px;"></div>
@@ -3888,10 +3867,14 @@ function renderTransactionItem(t) {
     categoryDisplay = `Employee Pay — ${escapeHTML(t.employee.split(' ')[0])} ${typeLabel}`;
   }
 
+  const recurringBadge = (!isIncome && t.recurring)
+    ? '<span style="font-size:10px;background:#9b6e9b;color:#fff;padding:1px 5px;border-radius:4px;margin-left:5px;vertical-align:middle;">recurring</span>'
+    : '';
+
   return `
     <div class="txn-row">
       <div class="txn-body" onclick="openEditTransactionModal('${t.id}')">
-        <div class="txn-category">${categoryDisplay} <span style="font-size:11px;color:var(--text-light);font-weight:400;">✏</span></div>
+        <div class="txn-category">${categoryDisplay}${recurringBadge} <span style="font-size:11px;color:var(--text-light);font-weight:400;">✏</span></div>
         <div class="txn-meta">${t.clientName ? '👤 ' + escapeHTML(t.clientName) + ' · ' : ''}${escapeHTML(t.paymentMethod) || ''}${t.notes ? ' · ' + escapeHTML(t.notes) : ''}${isIncome && t.tipAmount > 0 ? ' · tip ' + fmt(t.tipAmount) : ''}</div>
       </div>
       <div class="txn-amount-col ${colorClass}" onclick="openEditTransactionModal('${t.id}')">${sign}${fmt(Math.abs(total))}</div>
@@ -3970,32 +3953,25 @@ async function openAddTransactionModal(type) {
   openModal(`
     <h2 class="modal-title">+ Add ${isIncome ? 'Income' : 'Expense'}</h2>
 
-    ${!isIncome ? `
     <div class="form-group">
-      <label class="form-label">Type</label>
-      <div style="display:flex; gap:8px;">
-        <label style="flex:1; display:flex; align-items:center; gap:8px; padding:10px 14px; border:2px solid var(--plum); border-radius:8px; cursor:pointer; font-size:14px; font-weight:600; color:var(--plum); background:rgba(93,56,84,0.06);">
-          <input type="radio" name="txn-frequency" value="DAILY" checked onchange="toggleTxnFrequency()" style="accent-color:var(--plum);"> Daily
-        </label>
-        <label style="flex:1; display:flex; align-items:center; gap:8px; padding:10px 14px; border:2px solid var(--border); border-radius:8px; cursor:pointer; font-size:14px; font-weight:500; color:var(--text-muted);">
-          <input type="radio" name="txn-frequency" value="MONTHLY" onchange="toggleTxnFrequency()" style="accent-color:var(--plum);"> Monthly
-        </label>
-      </div>
-    </div>
-    ` : ''}
-
-    <div id="txn-date-section" class="form-group">
       <label class="form-label">Date</label>
       <input type="date" class="form-input" id="txn-date" value="${defaultDate}">
     </div>
 
-    <div id="txn-month-section" class="form-group" style="display:none;">
-      <label class="form-label">Month</label>
-      <div style="display:flex; gap:8px;">
-        <select class="form-select" id="txn-month" style="flex:2;">${monthOptions}</select>
-        <select class="form-select" id="txn-year" style="flex:1;">${yearOptions}</select>
+    ${!isIncome ? `
+    <div class="form-group" id="txn-recurring-group">
+      <label style="display:flex; align-items:center; gap:10px; cursor:pointer; font-size:14px; font-weight:500;">
+        <input type="checkbox" id="txn-recurring" onchange="toggleRecurringFields()"
+          style="width:18px; height:18px; accent-color:var(--plum); flex-shrink:0;">
+        <span>Recurring monthly expense</span>
+      </label>
+      <div id="txn-usual-payday-section" style="display:none; margin-top:10px;">
+        <label class="form-label">Usually paid on day ___ of month (optional)</label>
+        <input type="number" class="form-input" id="txn-usual-payday"
+          placeholder="e.g. 1" min="1" max="31" inputmode="numeric" style="max-width:120px;">
       </div>
     </div>
+    ` : ''}
 
     <div class="form-group">
       <label class="form-label">Category</label>
@@ -4080,34 +4056,15 @@ async function openAddTransactionModal(type) {
   if (isIncome) setupClientAutocomplete('txn-client');
 }
 
-function toggleTxnFrequency() {
-  const isMonthly = document.querySelector('input[name="txn-frequency"]:checked')?.value === 'MONTHLY';
-  document.getElementById('txn-date-section').style.display   = isMonthly ? 'none' : '';
-  document.getElementById('txn-month-section').style.display  = isMonthly ? '' : 'none';
-  document.getElementById('txn-payment-section').style.display = isMonthly ? 'none' : '';
-
-  document.querySelectorAll('input[name="txn-frequency"]').forEach(radio => {
-    const label = radio.closest('label');
-    if (radio.checked) {
-      label.style.borderColor = 'var(--plum)';
-      label.style.color = 'var(--plum)';
-      label.style.background = 'rgba(93,56,84,0.06)';
-      label.style.fontWeight = '600';
-    } else {
-      label.style.borderColor = 'var(--border)';
-      label.style.color = 'var(--text-muted)';
-      label.style.background = 'none';
-      label.style.fontWeight = '500';
-    }
-  });
-
+function toggleRecurringFields() {
+  const isChecked = document.getElementById('txn-recurring')?.checked;
+  const section = document.getElementById('txn-usual-payday-section');
+  if (section) section.style.display = isChecked ? '' : 'none';
 }
 
 
 async function saveTransaction(type) {
   const isIncome = type === 'INCOME';
-  const frequency = document.querySelector('input[name="txn-frequency"]:checked')?.value || 'DAILY';
-  const isMonthly = !isIncome && frequency === 'MONTHLY';
 
   const category = document.getElementById('txn-category').value;
   const amount   = parseFloat(document.getElementById('txn-amount').value) || 0;
@@ -4117,24 +4074,6 @@ async function saveTransaction(type) {
   if (!category) { alert('Please select a category.'); return; }
   if (amount <= 0) { alert('Please enter an amount greater than zero.'); return; }
 
-  if (isMonthly) {
-    // Save as monthly expense
-    const month = parseInt(document.getElementById('txn-month').value);
-    const year  = parseInt(document.getElementById('txn-year').value);
-    const expense = { category, amount, notes, month, year };
-    try {
-      await db.monthlyExpenses.add(expense);
-      closeModal();
-      showToast('Monthly expense saved ✓');
-      renderEntriesView();
-    } catch (err) {
-      console.error('Error saving monthly expense:', err);
-      showToast('Error saving expense');
-    }
-    return;
-  }
-
-  // Save as daily transaction
   let date = document.getElementById('txn-date').value;
   const payment = document.getElementById('txn-payment').value;
 
@@ -4161,6 +4100,10 @@ async function saveTransaction(type) {
     record.serviceAmount = 0;
     record.tipAmount     = 0;
     record.amount        = amount;
+    record.recurring     = document.getElementById('txn-recurring')?.checked || false;
+    record.usualPayDay   = record.recurring
+      ? (parseInt(document.getElementById('txn-usual-payday')?.value) || null)
+      : null;
     if (category === 'Employee Pay') {
       record.employee = document.getElementById('txn-employee')?.value || 'Chasity McGill';
       record.payType  = document.querySelector('input[name="txn-paytype"]:checked')?.value || 'pay';
@@ -4209,32 +4152,27 @@ async function openEditTransactionModal(id) {
   openModal(`
     <h2 class="modal-title">Edit ${isIncome ? 'Income' : 'Expense'}</h2>
 
-    ${!isIncome ? `
     <div class="form-group">
-      <label class="form-label">Type</label>
-      <div style="display:flex; gap:8px;">
-        <label style="flex:1; display:flex; align-items:center; gap:8px; padding:10px 14px; border:2px solid var(--plum); border-radius:8px; cursor:pointer; font-size:14px; font-weight:600; color:var(--plum); background:rgba(93,56,84,0.06);">
-          <input type="radio" name="txn-frequency" value="DAILY" checked onchange="toggleTxnFrequency()" style="accent-color:var(--plum);"> Daily
-        </label>
-        <label style="flex:1; display:flex; align-items:center; gap:8px; padding:10px 14px; border:2px solid var(--border); border-radius:8px; cursor:pointer; font-size:14px; font-weight:500; color:var(--text-muted);">
-          <input type="radio" name="txn-frequency" value="MONTHLY" onchange="toggleTxnFrequency()" style="accent-color:var(--plum);"> Monthly
-        </label>
-      </div>
-    </div>
-    ` : ''}
-
-    <div id="txn-date-section" class="form-group">
       <label class="form-label">Date</label>
       <input type="date" class="form-input" id="txn-date" value="${t.date}">
     </div>
 
-    <div id="txn-month-section" class="form-group" style="display:none;">
-      <label class="form-label">Month</label>
-      <div style="display:flex; gap:8px;">
-        <select class="form-select" id="txn-month" style="flex:2;">${monthOptions}</select>
-        <select class="form-select" id="txn-year" style="flex:1;">${yearOptions}</select>
+    ${!isIncome ? `
+    <div class="form-group" id="txn-recurring-group">
+      <label style="display:flex; align-items:center; gap:10px; cursor:pointer; font-size:14px; font-weight:500;">
+        <input type="checkbox" id="txn-recurring" onchange="toggleRecurringFields()"
+          style="width:18px; height:18px; accent-color:var(--plum); flex-shrink:0;"
+          ${t.recurring ? 'checked' : ''}>
+        <span>Recurring monthly expense</span>
+      </label>
+      <div id="txn-usual-payday-section" style="display:${t.recurring ? '' : 'none'}; margin-top:10px;">
+        <label class="form-label">Usually paid on day ___ of month (optional)</label>
+        <input type="number" class="form-input" id="txn-usual-payday"
+          placeholder="e.g. 1" min="1" max="31" inputmode="numeric" style="max-width:120px;"
+          value="${t.usualPayDay || ''}">
       </div>
     </div>
+    ` : ''}
 
     <div class="form-group">
       <label class="form-label">Category</label>
@@ -4324,8 +4262,6 @@ async function openEditTransactionModal(id) {
 
 async function updateTransaction(id, type) {
   const isIncome = type === 'INCOME';
-  const frequency = document.querySelector('input[name="txn-frequency"]:checked')?.value || 'DAILY';
-  const isMonthly = !isIncome && frequency === 'MONTHLY';
 
   const category = document.getElementById('txn-category').value;
   const amount   = parseFloat(document.getElementById('txn-amount').value) || 0;
@@ -4335,27 +4271,6 @@ async function updateTransaction(id, type) {
   if (amount <= 0) { alert('Please enter an amount greater than zero.'); return; }
 
   try {
-    if (isMonthly) {
-      // User switched daily expense to monthly — delete from transactions, add to monthlyExpenses
-      const month = parseInt(document.getElementById('txn-month').value);
-      const year  = parseInt(document.getElementById('txn-year').value);
-      const expense = { category, amount, notes, month, year };
-
-      await db.transactions.delete(id);
-      await db.monthlyExpenses.add(expense);
-
-      closeModal();
-      showToast('Moved to monthly expenses ✓');
-      const searchContainer2 = document.getElementById('search-transactions');
-      if (searchContainer2) {
-        await renderRecentTransactions();
-      } else {
-        renderEntriesView();
-      }
-      return;
-    }
-
-    // Daily transaction update
     const date    = document.getElementById('txn-date').value;
     const payment = document.getElementById('txn-payment').value;
     const changes = { date, category, paymentMethod: payment, notes };
@@ -4380,7 +4295,11 @@ async function updateTransaction(id, type) {
       changes.amount        = amount;
       changes.serviceAmount = 0;
       changes.tipAmount     = 0;
-      
+      changes.recurring     = document.getElementById('txn-recurring')?.checked || false;
+      changes.usualPayDay   = changes.recurring
+        ? (parseInt(document.getElementById('txn-usual-payday')?.value) || null)
+        : null;
+
       // Add employee pay fields if applicable
       if (category === 'Employee Pay') {
         changes.employee = document.getElementById('txn-employee')?.value || 'Chasity McGill';
@@ -9913,12 +9832,81 @@ document.addEventListener('DOMContentLoaded', () => {
 // 20. APP INITIALIZATION
 // ----------------------------------------------------------------
 
+async function migrateMonthlyExpensesToTransactions() {
+  const FLAG_KEY = 'mf_monthly_migrated_v1';
+  if (localStorage.getItem(FLAG_KEY)) return;
+
+  const all = await db.monthlyExpenses.toArray();
+  if (all.length === 0) {
+    localStorage.setItem(FLAG_KEY, '1');
+    return;
+  }
+
+  const records = all.map(e => {
+    const lastDay = new Date(e.year, e.month, 0).getDate();
+    const date = `${e.year}-${String(e.month).padStart(2,'0')}-${String(lastDay).padStart(2,'0')}`;
+    return {
+      date,
+      type: 'EXPENSE',
+      category:            e.category,
+      amount:              e.amount,
+      notes:               e.notes || '',
+      paymentMethod:       '',
+      serviceAmount:       0,
+      tipAmount:           0,
+      recurring:           true,
+      usualPayDay:         null,
+      migratedFromMonthly: true,
+    };
+  });
+
+  await db.transactions.bulkAdd(records);
+  localStorage.setItem(FLAG_KEY, '1');
+  console.log(`Migrated ${records.length} monthly expenses to transactions.`);
+}
+
+async function checkRecurringExpenseReminders() {
+  const today = todayStr();
+  const todayDay   = parseInt(today.split('-')[2]);
+  const monthPrefix = today.slice(0, 7); // "YYYY-MM"
+
+  const all = await db.transactions.toArray();
+  const recurring = all.filter(t => t.type === 'EXPENSE' && t.recurring && t.usualPayDay);
+  if (recurring.length === 0) return;
+
+  // Build a map of category → earliest usualPayDay found
+  const categoryMap = {};
+  recurring.forEach(t => {
+    if (!categoryMap[t.category]) categoryMap[t.category] = t.usualPayDay;
+  });
+
+  const reminders = [];
+  for (const [category, payDay] of Object.entries(categoryMap)) {
+    if (todayDay < payDay) continue; // not yet due this month
+    const paidThisMonth = all.some(t =>
+      t.type === 'EXPENSE' &&
+      t.category === category &&
+      t.date.startsWith(monthPrefix)
+    );
+    if (!paidThisMonth) reminders.push(category);
+  }
+
+  if (reminders.length === 0) return;
+
+  // Stagger toasts so they don't stack on top of each other
+  reminders.forEach((cat, i) => {
+    setTimeout(() => showToast(`Reminder: Did you add "${cat}" this month?`), i * 2500);
+  });
+}
+
 // Called after Firebase confirms the user is signed in.
 let _appBooted = false;
 
 async function bootApp() {
   if (_appBooted) return;
   _appBooted = true;
+
+  await migrateMonthlyExpensesToTransactions();
 
   await loadCategories();
   await loadEmployees();
@@ -9940,6 +9928,9 @@ async function bootApp() {
     document.getElementById('app').classList.remove('hidden');
     navigate('entries');
   }
+
+  // Fire-and-forget reminder check — runs after UI is visible
+  setTimeout(() => checkRecurringExpenseReminders(), 2000);
 }
 
 // Firebase auth state listener — this is the single entry point for the app.
