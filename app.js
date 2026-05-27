@@ -1183,7 +1183,6 @@ async function buildDashboard() {
   try {
     // ---- Gather all data ----
     const allTxns    = await db.transactions.toArray();
-    const allMExp    = await db.monthlyExpenses.toArray();
     const allSums    = await db.dailySummary.toArray();
     const allRenters = await db.renters.where('status').equals('active').toArray();
     const allRentPmts = await db.rentPayments.toArray();
@@ -1245,10 +1244,10 @@ async function buildDashboard() {
     // ---- Month to date ----
     const mtdIncome = allTxns.filter(t => t.date?.startsWith(curMonthStr) && t.type === 'INCOME')
       .reduce((s,t) => s + (t.serviceAmount||0) + (t.tipAmount||0), 0);
-    const mtdDailyExp = allTxns.filter(t => t.date?.startsWith(curMonthStr) && t.type === 'EXPENSE')
+    const mtdDailyExp   = allTxns.filter(t => t.date?.startsWith(curMonthStr) && t.type === 'EXPENSE' && !t.recurring)
       .reduce((s,t) => s + (t.amount||0), 0);
-    const mtdMonthlyExp = allMExp.filter(e => e.year === viewYear && e.month === viewMonth)
-      .reduce((s,e) => s + (e.amount||0), 0);
+    const mtdMonthlyExp = allTxns.filter(t => t.date?.startsWith(curMonthStr) && t.type === 'EXPENSE' && t.recurring)
+      .reduce((s,t) => s + (t.amount||0), 0);
     const mtdExpenses = mtdDailyExp + mtdMonthlyExp;
     const mtdNet = mtdIncome - mtdExpenses;
     const mtdMargin = mtdIncome > 0 ? Math.round((mtdNet / mtdIncome) * 100) : 0;
@@ -1266,10 +1265,10 @@ async function buildDashboard() {
     const yearStr = String(viewYear);
     const ytdIncome = allTxns.filter(t => t.date?.startsWith(yearStr) && t.type === 'INCOME')
       .reduce((s,t) => s + (t.serviceAmount||0) + (t.tipAmount||0), 0);
-    const ytdDailyExp = allTxns.filter(t => t.date?.startsWith(yearStr) && t.type === 'EXPENSE')
+    const ytdDailyExp   = allTxns.filter(t => t.date?.startsWith(yearStr) && t.type === 'EXPENSE' && !t.recurring)
       .reduce((s,t) => s + (t.amount||0), 0);
-    const ytdMonthlyExp = allMExp.filter(e => e.year === viewYear)
-      .reduce((s,e) => s + (e.amount||0), 0);
+    const ytdMonthlyExp = allTxns.filter(t => t.date?.startsWith(yearStr) && t.type === 'EXPENSE' && t.recurring)
+      .reduce((s,t) => s + (t.amount||0), 0);
     const ytdExpenses = ytdDailyExp + ytdMonthlyExp;
     const ytdRentCollected = allRentPmts.filter(p => p.datePaid?.startsWith(yearStr))
       .reduce((s,p) => s + (p.amount||0), 0);
@@ -1479,10 +1478,10 @@ async function buildDashboard() {
     }
 
     // Expense alert
-    const prevMoDailyExp = allTxns.filter(t => t.date?.startsWith(prevMonthStr) && t.type === 'EXPENSE')
+    const prevMoDailyExp   = allTxns.filter(t => t.date?.startsWith(prevMonthStr) && t.type === 'EXPENSE' && !t.recurring)
       .reduce((s,t) => s + (t.amount||0), 0);
-    const prevMoMonthlyExp = allMExp.filter(e => e.year === prevYear && e.month === prevMonth)
-      .reduce((s,e) => s + (e.amount||0), 0);
+    const prevMoMonthlyExp = allTxns.filter(t => t.date?.startsWith(prevMonthStr) && t.type === 'EXPENSE' && t.recurring)
+      .reduce((s,t) => s + (t.amount||0), 0);
     const prevMoTotalExp = prevMoDailyExp + prevMoMonthlyExp;
     if (prevMoTotalExp > 0 && mtdExpenses > prevMoTotalExp * 1.2) {
       alerts.push({
@@ -1572,7 +1571,7 @@ async function buildDashboard() {
 
     // == SMART INSIGHTS ==
     if (isCurrentMonth) {
-      const smartInsights = generateSmartInsights(allTxns, allMExp, allRenters, allRentPmts);
+      const smartInsights = generateSmartInsights(allTxns, [], allRenters, allRentPmts);
       if (smartInsights.length > 0) {
         html += `
         <div style="padding:0 16px;margin-bottom:12px;">
@@ -6082,18 +6081,18 @@ async function runMonthlyReport() {
   }
   
   const txns     = allTxns.filter(t => t.date && t.date.startsWith(monthStr));
-  const allMExps = await db.monthlyExpenses.toArray();
-  let mExps    = allMExps.filter(e => e.year === year && e.month === month);
-  
-  // Filter monthly expenses too if personal only
-  if (personalOnly) {
-    mExps = mExps.filter(e => !employeeCategories.includes(e.category));
-  }
-  
+
   const sums     = await db.dailySummary.toArray();
 
   const income   = txns.filter(t => t.type === 'INCOME');
-  const dExpense = txns.filter(t => t.type === 'EXPENSE');
+  let dExpense = txns.filter(t => t.type === 'EXPENSE' && !t.recurring);
+  let mExps    = txns.filter(t => t.type === 'EXPENSE' && t.recurring);
+
+  // Filter employee categories if personal only
+  if (personalOnly) {
+    dExpense = dExpense.filter(t => !employeeCategories.includes(t.category));
+    mExps    = mExps.filter(t => !employeeCategories.includes(t.category));
+  }
 
   const svcTotal  = income.reduce((s,t)=>s+(t.serviceAmount||0),0);
   const tipTotal  = income.reduce((s,t)=>s+(t.tipAmount||0),0);
@@ -6615,14 +6614,12 @@ async function runAnnualReport() {
   const employeeCategories = ['Vagaro Income', 'Chasity (Vagaro Income)', 'Employee Pay'];
 
   let allTxns = await db.transactions.toArray();
-  let allMExp = await db.monthlyExpenses.toArray();
   const allSums = await db.dailySummary.toArray();
   const allRentPmts = await db.rentPayments.toArray();
-  
+
   // Filter out employee categories if personal only
   if (personalOnly) {
     allTxns = allTxns.filter(t => !employeeCategories.includes(t.category));
-    allMExp = allMExp.filter(e => !employeeCategories.includes(e.category));
   }
 
   let yearIncome=0, yearTips=0, yearExp=0, yearClients=0, yearRent=0;
@@ -6631,11 +6628,10 @@ async function runAnnualReport() {
   for (let m = 1; m <= 12; m++) {
     const ms    = `${year}-${String(m).padStart(2,'0')}`;
     const txns  = allTxns.filter(t => t.date?.startsWith(ms));
-    const mExps = allMExp.filter(e => e.year === year && e.month === m);
     const inc   = txns.filter(t=>t.type==='INCOME').reduce((s,t)=>s+(t.serviceAmount||0),0);
     const tips  = txns.filter(t=>t.type==='INCOME').reduce((s,t)=>s+(t.tipAmount||0),0);
-    const dExp  = txns.filter(t=>t.type==='EXPENSE').reduce((s,t)=>s+(t.amount||0),0);
-    const mExp  = mExps.reduce((s,e)=>s+(e.amount||0),0);
+    const dExp  = txns.filter(t=>t.type==='EXPENSE' && !t.recurring).reduce((s,t)=>s+(t.amount||0),0);
+    const mExp  = txns.filter(t=>t.type==='EXPENSE' && t.recurring).reduce((s,t)=>s+(t.amount||0),0);
     const rent  = allRentPmts.filter(p=>p.datePaid?.startsWith(ms)).reduce((s,p)=>s+(p.amount||0),0);
     const cls   = allSums.filter(s=>s.date?.startsWith(ms)).reduce((s,d)=>s+(d.clientsSeen||0),0);
     yearIncome  += inc;
@@ -7167,9 +7163,8 @@ async function runPnlReport() {
   const ytdEnd  = todayStr();
   const cols = showYtd ? 5 : 3;
 
-  const [allTxns, allMExp, allRentPmts] = await Promise.all([
+  const [allTxns, allRentPmts] = await Promise.all([
     db.transactions.toArray(),
-    db.monthlyExpenses.toArray(),
     db.rentPayments.toArray()
   ]);
 
@@ -7179,10 +7174,7 @@ async function runPnlReport() {
   const periodTxns = allTxns.filter(t => t.date >= pStart && t.date <= pEnd);
   const ytdTxns    = allTxns.filter(t => t.date >= `${year}-01-01` && t.date <= ytdEnd);
 
-  const mExpInRange = (s, e) => allMExp.filter(ex => {
-    const d = `${ex.year}-${pad(ex.month)}-15`;
-    return d >= s && d <= e;
-  });
+  const mExpInRange = (s, e) => allTxns.filter(t => t.type === 'EXPENSE' && t.recurring && t.date >= s && t.date <= e);
   const periodMExp = mExpInRange(pStart, pEnd);
   const ytdMExp    = mExpInRange(`${year}-01-01`, ytdEnd);
 
@@ -7221,8 +7213,8 @@ async function runPnlReport() {
       b[cat][col] += (e.amount || 0);
     });
   };
-  addExp(periodTxns, periodMExp, 'p');
-  addExp(ytdTxns,   ytdMExp,    'ytd');
+  addExp(periodTxns, [], 'p');
+  addExp(ytdTxns,   [], 'ytd');
 
   const pDirect   = Object.values(directLines).reduce((s,r) => s+r.p, 0);
   const ytdDirect = Object.values(directLines).reduce((s,r) => s+r.ytd, 0);
@@ -9532,7 +9524,6 @@ function askSuggestion(btn) {
 
 async function gatherBusinessSnapshot() {
   const allTxns = await db.transactions.toArray();
-  const allMExp = await db.monthlyExpenses.toArray();
   const allSums = await db.dailySummary.toArray();
   const allRenters = await db.renters.toArray();
   const allRentPmts = await db.rentPayments.toArray();
@@ -9552,8 +9543,8 @@ async function gatherBusinessSnapshot() {
     const ms = `${y}-${String(m).padStart(2,'0')}`;
     const mTxns = allTxns.filter(t => t.date?.startsWith(ms));
     const mIncome = mTxns.filter(t => t.type === 'INCOME');
-    const mExpenses = mTxns.filter(t => t.type === 'EXPENSE');
-    const mMonthlyExp = allMExp.filter(e => e.year === y && e.month === m);
+    const mExpenses    = mTxns.filter(t => t.type === 'EXPENSE');
+    const mMonthlyExp  = mExpenses.filter(t => t.recurring);
 
     const services = mIncome.filter(t => !employeeCategories.includes(t.category))
       .reduce((s,t) => s + (t.serviceAmount||0), 0);
@@ -9561,8 +9552,8 @@ async function gatherBusinessSnapshot() {
       .reduce((s,t) => s + (t.tipAmount||0), 0);
     const employeeInc = mIncome.filter(t => employeeCategories.includes(t.category))
       .reduce((s,t) => s + (t.serviceAmount||0) + (t.tipAmount||0), 0);
-    const dailyExp = mExpenses.reduce((s,t) => s + (t.amount||0), 0);
-    const monthlyExp = mMonthlyExp.reduce((s,e) => s + (e.amount||0), 0);
+    const dailyExp   = mExpenses.filter(t => !t.recurring).reduce((s,t) => s + (t.amount||0), 0);
+    const monthlyExp = mMonthlyExp.reduce((s,t) => s + (t.amount||0), 0);
     const rentCollected = allRentPmts.filter(p => p.datePaid?.startsWith(ms))
       .reduce((s,p) => s + (p.amount||0), 0);
 
@@ -9586,9 +9577,6 @@ async function gatherBusinessSnapshot() {
   const expByCat = {};
   allTxns.filter(t => t.date?.startsWith(yearStr) && t.type === 'EXPENSE').forEach(t => {
     expByCat[t.category] = (expByCat[t.category] || 0) + (t.amount || 0);
-  });
-  allMExp.filter(e => e.year === curYear).forEach(e => {
-    expByCat[e.category] = (expByCat[e.category] || 0) + (e.amount || 0);
   });
   const topExpenses = Object.entries(expByCat).sort((a,b) => b[1] - a[1]).slice(0, 10)
     .map(([cat, amt]) => `${cat}: $${amt.toFixed(2)}`);
@@ -10173,7 +10161,6 @@ async function runTaxEstimateReport() {
 
   const yearStr = String(year);
   const allTxns     = await db.transactions.toArray();
-  const allMExp     = await db.monthlyExpenses.toArray();
   const allRentPmts = await db.rentPayments.toArray();
 
   const ytdTxns = allTxns.filter(t => t.date?.startsWith(yearStr));
@@ -10184,11 +10171,8 @@ async function runTaxEstimateReport() {
     .reduce((s, p) => s + (p.amount || 0), 0);
   const ytdGrossRevenue = ytdServices + ytdRent;
 
-  const ytdDailyExp = ytdTxns.filter(t => t.type === 'EXPENSE')
+  const ytdTotalExp = ytdTxns.filter(t => t.type === 'EXPENSE')
     .reduce((s, t) => s + (t.amount || 0), 0);
-  const ytdMonthlyExp = allMExp.filter(e => e.year === year)
-    .reduce((s, e) => s + (e.amount || 0), 0);
-  const ytdTotalExp  = ytdDailyExp + ytdMonthlyExp;
   const ytdNetIncome = ytdGrossRevenue - ytdTotalExp;
 
   const today = new Date();
@@ -10273,9 +10257,8 @@ async function runTaxEstimateReport() {
       if (!p.datePaid?.startsWith(yearStr)) return false;
       return months.includes(parseInt(p.datePaid.split('-')[1]));
     }).reduce((s, p) => s + (p.amount || 0), 0);
-    const qDailyExp   = qTxns.filter(t => t.type === 'EXPENSE').reduce((s, t) => s + (t.amount || 0), 0);
-    const qMonthlyExp = allMExp.filter(e => e.year === year && months.includes(e.month)).reduce((s, e) => s + (e.amount || 0), 0);
-    return (qInc + qRent) - (qDailyExp + qMonthlyExp);
+    const qTotalExp = qTxns.filter(t => t.type === 'EXPENSE').reduce((s, t) => s + (t.amount || 0), 0);
+    return (qInc + qRent) - qTotalExp;
   });
 
   const qPayment = projectedTaxes.totalTax / 4;
