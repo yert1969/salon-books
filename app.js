@@ -6215,7 +6215,7 @@ async function runMonthlyReport() {
     </div>` : ''}
     ${mExps.length > 0 ? `
     <div class="report-white-card">
-      <div class="report-section-title">Fixed Monthly Expenses</div>
+      <div class="report-section-title">Recurring Monthly Expenses</div>
       ${mExps.map(e=>`
         <div class="report-row">
           <div class="report-row-label">${e.category}</div>
