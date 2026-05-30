@@ -2319,7 +2319,7 @@ async function renderRecentTransactionsSimple() {
     
     return `
       <div style="margin-bottom:16px;">
-        <div style="font-size:13px; font-weight:600; color:var(--text-muted); margin-bottom:8px; text-transform:uppercase; letter-spacing:0.5px;">
+        <div style="display:inline-block; font-size:12px; font-weight:700; color:#fff; background:var(--plum); padding:4px 12px; border-radius:20px; margin-bottom:8px; text-transform:uppercase; letter-spacing:0.6px;">
           ${dateLabel}
         </div>
         ${transactions.map(t => {
@@ -2511,7 +2511,7 @@ async function renderRecentTransactions() {
     
     return `
       <div style="margin-bottom:16px;">
-        <div style="font-size:13px; font-weight:600; color:var(--text-muted); margin-bottom:8px; text-transform:uppercase; letter-spacing:0.5px;">
+        <div style="display:inline-block; font-size:12px; font-weight:700; color:#fff; background:var(--plum); padding:4px 12px; border-radius:20px; margin-bottom:8px; text-transform:uppercase; letter-spacing:0.6px;">
           ${dateLabel}
         </div>
         ${transactions.map(t => {
