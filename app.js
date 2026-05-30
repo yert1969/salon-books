@@ -2078,21 +2078,24 @@ async function renderAddEntryTab(container) {
 async function renderSearchTab(container) {
   container.innerHTML = `
     <div class="card">
-      <h3 style="font-size:16px; margin-bottom:16px; font-weight:600;">Search & Filter</h3>
-      
-      <div style="margin-bottom:16px;">
-        <input type="text" id="transaction-search" class="form-input" placeholder="Search by category, notes, or client name..." 
+      <div onclick="toggleSearchFilters()" style="display:flex; align-items:center; justify-content:space-between; cursor:pointer; user-select:none; margin-bottom:4px;">
+        <h3 style="font-size:16px; font-weight:600; margin:0;">Search & Filter</h3>
+        <span id="search-filter-chevron" style="font-size:20px; color:var(--plum); line-height:1; transition:transform 0.2s;">▸</span>
+      </div>
+
+      <div id="search-filter-body" style="display:none; margin-top:14px; margin-bottom:8px;">
+        <input type="text" id="transaction-search" class="form-input" placeholder="Search by category, notes, or client name..."
           style="width:100%; padding:10px; font-size:14px; margin-bottom:8px;"
           oninput="filterTransactions()">
-        
+
         <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px;">
           <button type="button" class="category-picker-trigger" id="filter-type-btn" onclick="openFilterTypePicker()" style="flex:1; min-width:120px; padding:8px; font-size:13px;">All Types</button>
           <input type="hidden" id="filter-type" value="all">
-          
+
           <button type="button" class="category-picker-trigger" id="filter-category-btn" onclick="openFilterCategoryPicker()" style="flex:1; min-width:120px; padding:8px; font-size:13px;">All Categories</button>
           <input type="hidden" id="filter-category" value="all">
         </div>
-        
+
         <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px;">
           <div style="flex:1; min-width:130px;">
             <label style="font-size:11px; color:var(--text-muted); display:block; margin-bottom:3px;">From Date</label>
@@ -2103,17 +2106,17 @@ async function renderSearchTab(container) {
             <input type="date" id="filter-date-to" class="form-input" style="width:100%; padding:8px; font-size:13px;" onchange="filterTransactions()">
           </div>
         </div>
-        
+
         <div style="margin-bottom:8px;">
           <button type="button" class="category-picker-trigger" id="filter-amount-type-btn" onclick="openAmountFilterPicker()" style="width:100%; padding:10px; font-size:14px; margin-bottom:8px;">No Amount Filter</button>
           <input type="hidden" id="filter-amount-type" value="">
-          
+
           <div id="amount-inputs-container"></div>
         </div>
-        
+
         <button onclick="clearFilters()" class="btn-secondary" style="width:100%; padding:10px; font-size:13px;">Clear All Filters</button>
       </div>
-      
+
       <div id="search-transactions"></div>
       <div id="load-more-container"></div>
     </div>
@@ -2126,6 +2129,15 @@ async function renderSearchTab(container) {
   }
   
   await renderRecentTransactions();
+}
+
+function toggleSearchFilters() {
+  const body = document.getElementById('search-filter-body');
+  const chevron = document.getElementById('search-filter-chevron');
+  if (!body) return;
+  const isOpen = body.style.display !== 'none';
+  body.style.display = isOpen ? 'none' : '';
+  chevron.textContent = isOpen ? '▸' : '▾';
 }
 
 function updateAmountFilter() {
