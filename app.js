@@ -4080,6 +4080,26 @@ async function saveTransaction(type) {
     date = state.selectedDate || todayStr();
   }
 
+  // Duplicate detection for expenses only (3-day window, same category + amount)
+  if (!isIncome) {
+    const allTxns = await db.transactions.toArray();
+    const enteredMs = new Date(date + 'T12:00:00').getTime();
+    const threeDays = 3 * 24 * 60 * 60 * 1000;
+    const dupe = allTxns.find(t =>
+      t.type === 'EXPENSE' &&
+      t.category === category &&
+      Math.abs(t.amount - amount) < 0.01 &&
+      Math.abs(new Date(t.date + 'T12:00:00').getTime() - enteredMs) <= threeDays
+    );
+    if (dupe) {
+      const dupeDate = formatDateDisplay(dupe.date);
+      const confirmed = await confirmDuplicateEntry(
+        `You already have an entry on <strong>${dupeDate}</strong> for <strong>${category}</strong> — <strong>${fmt(dupe.amount)}</strong>.<br><br>Are you sure you want to add another?`
+      );
+      if (!confirmed) return;
+    }
+  }
+
   const record = { date, type, category, paymentMethod: payment, notes };
 
   if (isIncome) {
@@ -9374,6 +9394,25 @@ function confirmDialog(message, title = 'Mane Frame') {
     window._confirmResolve = (result) => {
       closeModal();
       delete window._confirmResolve;
+      resolve(result);
+    };
+  });
+}
+
+// Duplicate entry confirmation dialog
+function confirmDuplicateEntry(message) {
+  return new Promise((resolve) => {
+    openModal(`
+      <h2 class="modal-title" style="color:var(--gold-dark);">⚠️ Possible Duplicate</h2>
+      <div style="font-size:15px;line-height:1.6;color:var(--text);margin:16px 0;">${message}</div>
+      <div style="display:flex;gap:8px;margin-top:24px;">
+        <button class="btn-secondary" style="flex:1;" onclick="window._dupeResolve(false)">Cancel</button>
+        <button class="btn-submit" style="flex:1;" onclick="window._dupeResolve(true)">Yes, Add It</button>
+      </div>
+    `);
+    window._dupeResolve = (result) => {
+      closeModal();
+      delete window._dupeResolve;
       resolve(result);
     };
   });
