@@ -2078,20 +2078,23 @@ async function renderAddEntryTab(container) {
 async function renderSearchTab(container) {
   container.innerHTML = `
     <style>
-      @keyframes mf-filter-pulse {
-        0%   { box-shadow: 0 0 0 0 rgba(93,56,84,0.55); }
-        60%  { box-shadow: 0 0 0 10px rgba(93,56,84,0); }
-        100% { box-shadow: 0 0 0 0 rgba(93,56,84,0); }
+      @keyframes mf-arrow-bounce {
+        0%   { transform: translateY(0); }
+        30%  { transform: translateY(5px); }
+        60%  { transform: translateY(0); }
+        80%  { transform: translateY(3px); }
+        100% { transform: translateY(0); }
       }
-      #search-filter-toggle {
-        animation: mf-filter-pulse 0.9s ease-out 3;
+      #search-filter-chevron {
+        animation: mf-arrow-bounce 0.8s ease-in-out 3;
+        display: inline-block;
       }
     </style>
     <div class="card">
       <button id="search-filter-toggle" onclick="toggleSearchFilters()"
         style="display:flex; align-items:center; justify-content:space-between; width:100%; background:var(--plum); color:#fff; border:none; border-radius:12px; padding:12px 16px; cursor:pointer; user-select:none; margin-bottom:4px;">
         <span style="font-size:15px; font-weight:700; letter-spacing:0.2px;">Search & Filter</span>
-        <span id="search-filter-chevron" style="font-size:22px; font-weight:700; line-height:1; transition:transform 0.2s;">▸</span>
+        <span id="search-filter-chevron" style="font-size:22px; font-weight:700; line-height:1;">▼</span>
       </button>
 
       <div id="search-filter-body" style="display:none; margin-top:14px; margin-bottom:8px;">
@@ -2148,7 +2151,7 @@ function toggleSearchFilters() {
   if (!body) return;
   const isOpen = body.style.display !== 'none';
   body.style.display = isOpen ? 'none' : '';
-  chevron.textContent = isOpen ? '▸' : '▾';
+  chevron.textContent = isOpen ? '▼' : '▲';
 }
 
 function updateAmountFilter() {
