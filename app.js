@@ -10424,16 +10424,15 @@ async function renderBusinessHealthView() {
 
   const yearStr = '2026';
   const now = new Date();
-  const monthsElapsed = now.getFullYear() === 2026
-    ? now.getMonth() + 1
-    : now.getFullYear() < 2026 ? 1 : 12;
 
   const [allTxns, allRentPmts] = await Promise.all([
     db.transactions.toArray(),
     db.rentPayments.toArray(),
   ]);
 
-  const ytdPersonalIncome = allTxns
+  // All income transactions for 2026 (includes Annette's services AND Chasity's Vagaro Income —
+  // these are separate transaction records, not duplicates)
+  const ytdServiceIncome = allTxns
     .filter(t => t.date?.startsWith(yearStr) && t.type === 'INCOME')
     .reduce((s, t) => s + (t.serviceAmount || 0) + (t.tipAmount || 0), 0);
   const ytdExpenses = allTxns
@@ -10442,12 +10441,23 @@ async function renderBusinessHealthView() {
   const ytdRentCollected = allRentPmts
     .filter(p => p.datePaid?.startsWith(yearStr))
     .reduce((s, p) => s + (p.amount || 0), 0);
-  const ytdGross = ytdPersonalIncome + ytdRentCollected;
-  const ytdNet   = ytdGross - ytdExpenses;
+  const ytdRevenue = ytdServiceIncome + ytdRentCollected;
+  const ytdNet     = ytdRevenue - ytdExpenses;
 
-  const mo = Math.max(monthsElapsed, 1);
-  const base2026Personal = ytdPersonalIncome * (12 / mo);
-  const base2026Expenses = ytdExpenses       * (12 / mo);
+  // Weeks elapsed derived from booth rent collected (5 renters × $140/wk = $700/wk)
+  // This is the authoritative ruler for annualization — more reliable than calendar weeks
+  const WEEKLY_RENT_RATE = 700; // 5 × $140
+  const weeksElapsed = ytdRentCollected > 0 ? ytdRentCollected / WEEKLY_RENT_RATE : 1;
+  const coveragePct  = Math.min(100, Math.round((weeksElapsed / 52) * 100));
+
+  // Annualized projections
+  const annRevenue   = (ytdRevenue   / weeksElapsed) * 52;
+  const annExpenses  = (ytdExpenses  / weeksElapsed) * 52;
+  const annNet       = annRevenue - annExpenses;
+  // Booth rent annualized at 51 weeks (one free Christmas week)
+  const annBoothRent = (ytdRentCollected / weeksElapsed) * 51;
+  // Personal services annualized = total annualized revenue minus annualized booth rent
+  const annPersonal  = annRevenue - annBoothRent;
 
   const HIST = [
     { year: 2021, exp: 69751.69 },
@@ -10456,10 +10466,10 @@ async function renderBusinessHealthView() {
     { year: 2024, exp: 84087.61 },
     { year: 2025, exp: 99649.42 },
   ];
-  const maxHistExp    = Math.max(...HIST.map(h => h.exp));
-  const BOOTH_2025    = 35700;
-  const GROSS_2025    = 170949;
-  const NET_MID_2025  = 72000;
+  const maxHistExp   = Math.max(...HIST.map(h => h.exp));
+  const BOOTH_2025   = 35700;
+  const GROSS_2025   = 170949;
+  const NET_MID_2025 = 72000;
 
   const histBars = HIST.map(h => {
     const w = Math.round((h.exp / maxHistExp) * 100);
@@ -10475,17 +10485,19 @@ async function renderBusinessHealthView() {
       </div>`;
   }).join('');
 
-  const annRunRate = base2026Personal + 5 * 140 * 51;
-
   content.innerHTML = `
     <div style="padding:16px 16px 100px;">
 
+      <!-- YTD ACTUALS + ANNUALIZED SUMMARY -->
       <div style="background:var(--plum);border-radius:16px;padding:18px 16px;margin-bottom:16px;color:#fff;">
-        <div style="font-size:10px;text-transform:uppercase;letter-spacing:.8px;opacity:.7;font-weight:600;margin-bottom:12px;">2026 Year-to-Date · Through ${monthName(now.getMonth() + 1)}</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:12px;">
+          <div style="font-size:10px;text-transform:uppercase;letter-spacing:.8px;opacity:.7;font-weight:600;">2026 Year-to-Date Actuals</div>
+          <div style="font-size:10px;opacity:.6;">${weeksElapsed.toFixed(1)} wks · ${coveragePct}% of year</div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;">
           <div>
             <div style="font-size:10px;opacity:.6;text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px;">Gross Revenue</div>
-            <div style="font-size:22px;font-weight:800;letter-spacing:-.5px;">${fmt(ytdGross)}</div>
+            <div style="font-size:22px;font-weight:800;letter-spacing:-.5px;">${fmt(ytdRevenue)}</div>
           </div>
           <div>
             <div style="font-size:10px;opacity:.6;text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px;">Total Expenses</div>
@@ -10500,8 +10512,26 @@ async function renderBusinessHealthView() {
             <div style="font-size:22px;font-weight:800;letter-spacing:-.5px;color:${ytdNet >= 0 ? '#A8E6C0' : '#FFB3A7'};">${fmt(ytdNet)}</div>
           </div>
         </div>
-        <div style="margin-top:12px;padding-top:10px;border-top:1px solid rgba(255,255,255,.15);font-size:11px;opacity:.6;">
-          Annualized run rate: ${fmt(annRunRate)}/yr revenue · ${fmt(base2026Expenses)}/yr expenses
+        <div style="border-top:1px solid rgba(255,255,255,.2);padding-top:12px;">
+          <div style="font-size:10px;text-transform:uppercase;letter-spacing:.7px;opacity:.7;font-weight:600;margin-bottom:8px;">Annualized Run Rate (÷ ${weeksElapsed.toFixed(1)} wks × 52)</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">
+            <div>
+              <div style="font-size:10px;opacity:.55;margin-bottom:2px;">Revenue/yr</div>
+              <div style="font-size:16px;font-weight:800;">${fmt(annRevenue)}</div>
+            </div>
+            <div>
+              <div style="font-size:10px;opacity:.55;margin-bottom:2px;">Expenses/yr</div>
+              <div style="font-size:16px;font-weight:800;">${fmt(annExpenses)}</div>
+            </div>
+            <div>
+              <div style="font-size:10px;opacity:.55;margin-bottom:2px;">Net/yr</div>
+              <div style="font-size:16px;font-weight:800;color:${annNet >= 0 ? '#A8E6C0' : '#FFB3A7'};">${fmt(annNet)}</div>
+            </div>
+          </div>
+        </div>
+        <div style="margin-top:10px;font-size:10px;opacity:.5;line-height:1.5;">
+          Revenue includes Annette's services + Chasity (Vagaro Income) — separate streams, not duplicates.
+          Booth rent annualized at 51 weeks (one free Christmas week).
         </div>
       </div>
 
@@ -10625,7 +10655,9 @@ async function renderBusinessHealthView() {
     </div>
   `;
 
-  window._bhData = { base2026Personal, base2026Expenses };
+  // annPersonal = annualized personal services (total revenue minus booth rent, both at 52 weeks)
+  // annExpenses = annualized total expenses — these are the correct projection baselines
+  window._bhData = { base2026Personal: annPersonal, base2026Expenses: annExpenses };
   bhUpdate();
 }
 
