@@ -10577,6 +10577,19 @@ async function renderBusinessHealthView() {
 
         <div style="margin-bottom:18px;">
           <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:5px;">
+            <label style="font-size:13px;font-weight:600;color:var(--text);">Number of booth renters</label>
+            <span style="font-size:16px;font-weight:800;color:var(--plum);" id="bh-val-renters">5 (current)</span>
+          </div>
+          <input type="range" id="bh-renters" min="5" max="10" value="5" step="1"
+            style="width:100%;accent-color:var(--plum);height:4px;cursor:pointer;"
+            oninput="bhUpdate()">
+          <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-muted);margin-top:3px;">
+            <span>5 (current)</span><span>10 renters</span>
+          </div>
+        </div>
+
+        <div style="margin-bottom:18px;">
+          <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:5px;">
             <label style="font-size:13px;font-weight:600;color:var(--text);">Personal service price increase</label>
             <span style="font-size:16px;font-weight:800;color:var(--plum);" id="bh-val-svc">+0%</span>
           </div>
@@ -10661,9 +10674,9 @@ async function renderBusinessHealthView() {
   bhUpdate();
 }
 
-function bhProjection(basePersonal, baseExpenses, weeklyRent, svcPct, growthPct, cagrPct) {
+function bhProjection(basePersonal, baseExpenses, weeklyRent, renterCount, svcPct, growthPct, cagrPct) {
   return [2026, 2027, 2028, 2029, 2030, 2031].map((year, i) => {
-    const boothRent = 5 * weeklyRent * 51;
+    const boothRent = renterCount * weeklyRent * 51;
     const personal  = basePersonal * (1 + svcPct / 100) * Math.pow(1 + growthPct / 100, i);
     const gross     = personal + boothRent;
     const expenses  = baseExpenses * Math.pow(1 + cagrPct / 100, i);
@@ -10732,26 +10745,30 @@ function drawLineChart(canvasId, labels, datasets) {
 }
 
 function bhUpdate() {
-  const rentEl   = document.getElementById('bh-rent');
-  const svcEl    = document.getElementById('bh-svc');
-  const growthEl = document.getElementById('bh-growth');
-  const cagrEl   = document.getElementById('bh-cagr');
+  const rentEl    = document.getElementById('bh-rent');
+  const rentersEl = document.getElementById('bh-renters');
+  const svcEl     = document.getElementById('bh-svc');
+  const growthEl  = document.getElementById('bh-growth');
+  const cagrEl    = document.getElementById('bh-cagr');
   if (!rentEl || !window._bhData) return;
 
-  const weeklyRent = parseFloat(rentEl.value);
-  const svcPct     = parseFloat(svcEl.value);
-  const growthPct  = parseFloat(growthEl.value);
-  const cagrPct    = parseFloat(cagrEl.value);
+  const weeklyRent  = parseFloat(rentEl.value);
+  const renterCount = parseInt(rentersEl.value);
+  const svcPct      = parseFloat(svcEl.value);
+  const growthPct   = parseFloat(growthEl.value);
+  const cagrPct     = parseFloat(cagrEl.value);
 
-  document.getElementById('bh-val-rent').textContent   = `$${weeklyRent}/wk`;
-  document.getElementById('bh-val-svc').textContent    = `+${svcPct}%`;
-  document.getElementById('bh-val-growth').textContent = `+${growthPct}%/yr`;
-  document.getElementById('bh-val-cagr').textContent   = `${cagrPct.toFixed(1)}%`;
+  document.getElementById('bh-val-rent').textContent    = `$${weeklyRent}/wk`;
+  document.getElementById('bh-val-renters').textContent = renterCount === 5
+    ? '5 (current)' : `${renterCount} (+${renterCount - 5} new)`;
+  document.getElementById('bh-val-svc').textContent     = `+${svcPct}%`;
+  document.getElementById('bh-val-growth').textContent  = `+${growthPct}%/yr`;
+  document.getElementById('bh-val-cagr').textContent    = `${cagrPct.toFixed(1)}%`;
 
   const { base2026Personal, base2026Expenses } = window._bhData;
 
-  const rows         = bhProjection(base2026Personal, base2026Expenses, weeklyRent, svcPct, growthPct, cagrPct);
-  const rowsBaseline = bhProjection(base2026Personal, base2026Expenses, 140, 0, 0, cagrPct);
+  const rows         = bhProjection(base2026Personal, base2026Expenses, weeklyRent, renterCount, svcPct, growthPct, cagrPct);
+  const rowsBaseline = bhProjection(base2026Personal, base2026Expenses, 140, 5, 0, 0, cagrPct);
   const labels       = rows.map(r => String(r.year));
 
   drawLineChart('bh-chart-main', labels, [
@@ -10765,18 +10782,19 @@ function bhUpdate() {
     { label: 'With Increases', data: rows.map(r => Math.round(r.net)),         color: '#5C3D4E' },
   ]);
 
-  buildBhNarrative(rows, rowsBaseline, weeklyRent, svcPct, growthPct, cagrPct);
+  buildBhNarrative(rows, rowsBaseline, weeklyRent, renterCount, svcPct, growthPct, cagrPct);
 }
 
-function buildBhNarrative(rows, rowsBaseline, weeklyRent, svcPct, growthPct, cagrPct) {
+function buildBhNarrative(rows, rowsBaseline, weeklyRent, renterCount, svcPct, growthPct, cagrPct) {
   const el = document.getElementById('bh-narrative');
   if (!el) return;
 
   const last           = rows[rows.length - 1];
   const cumulativeDiff = rows.reduce((s, r, i) => s + r.net - rowsBaseline[i].net, 0);
   const rentDiff       = weeklyRent - 140;
-  const annRentGain    = 5 * rentDiff * 51;
-  const isBaseline     = rentDiff === 0 && svcPct === 0 && growthPct === 0;
+  const extraRenters   = renterCount - 5;
+  const annRentGain    = renterCount * rentDiff * 51;
+  const isBaseline     = rentDiff === 0 && extraRenters === 0 && svcPct === 0 && growthPct === 0;
 
   const sentences = [];
 
@@ -10797,10 +10815,18 @@ function buildBhNarrative(rows, rowsBaseline, weeklyRent, svcPct, growthPct, cag
       );
     }
   } else {
-    if (rentDiff > 0) {
+    if (extraRenters > 0) {
+      const newRenterAnnual = extraRenters * weeklyRent * 51;
       sentences.push(
-        `Raising booth rent to $${weeklyRent}/week adds ${fmt(annRentGain)}/year in guaranteed income ` +
-        `(5 renters × $${rentDiff} increase × 51 weeks).`
+        `Adding ${extraRenters} booth renter${extraRenters > 1 ? 's' : ''} at $${weeklyRent}/wk brings in ` +
+        `${fmt(newRenterAnnual)}/year in additional guaranteed booth rent income (${extraRenters} × $${weeklyRent} × 51 weeks).`
+      );
+    }
+    if (rentDiff > 0) {
+      const rentGainAllRenters = renterCount * rentDiff * 51;
+      sentences.push(
+        `Raising rent to $${weeklyRent}/wk adds ${fmt(rentGainAllRenters)}/year across all ${renterCount} renters ` +
+        `($${rentDiff} increase × ${renterCount} renters × 51 weeks).`
       );
     }
     if (svcPct > 0) {
