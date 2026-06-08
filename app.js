@@ -886,7 +886,7 @@ function navigate(view) {
   // Update all nav buttons - remove all active states first, then add to current
   document.querySelectorAll('.nav-btn').forEach(btn => btn.classList.remove('active'));
   
-  ['entries', 'insights', 'renters', 'reports', 'settings'].forEach(v => {
+  ['entries', 'insights', 'renters', 'reports', 'settings', 'business-health'].forEach(v => {
     const btn = document.getElementById('nav-' + v);
     if (btn && v === view) {
       btn.classList.add('active');
@@ -908,6 +908,7 @@ function navigate(view) {
     renters:  'Booth Renters',
     reports:  'Reports',
     settings: 'Settings',
+    'business-health': 'Business Health',
   };
   const viewTitle = document.getElementById('view-title');
   if (viewTitle) {
@@ -920,6 +921,7 @@ function navigate(view) {
     renters:  () => safeRender(renderRentersView, 'Booth Renters'),
     reports:  () => safeRender(renderReportsView, 'Reports'),
     settings: () => safeRender(renderSettingsView, 'Settings'),
+    'business-health': () => safeRender(renderBusinessHealthView, 'Business Health'),
   };
   if (views[view]) views[view]();
 }
@@ -10407,6 +10409,406 @@ async function runTaxEstimateReport() {
       Uses 2025 IRS tax brackets (${filingLabel}). Self-employment tax = net × 92.35% × 15.3%.
       Half of SE tax is deducted before federal tax is applied. Quarterly payments = projected annual tax ÷ 4.<br><br>
       <strong style="color:var(--text);">⚠️ Estimate only</strong> — not tax advice. Consult a tax professional for your actual filings.
+    </div>
+  `;
+}
+
+// ----------------------------------------------------------------
+// BUSINESS HEALTH VIEW
+// ----------------------------------------------------------------
+
+async function renderBusinessHealthView() {
+  const content = document.getElementById('app-content');
+  const hdr = document.getElementById('header-actions');
+  if (hdr) hdr.innerHTML = '';
+
+  const yearStr = '2026';
+  const now = new Date();
+  const monthsElapsed = now.getFullYear() === 2026
+    ? now.getMonth() + 1
+    : now.getFullYear() < 2026 ? 1 : 12;
+
+  const [allTxns, allRentPmts] = await Promise.all([
+    db.transactions.toArray(),
+    db.rentPayments.toArray(),
+  ]);
+
+  const ytdPersonalIncome = allTxns
+    .filter(t => t.date?.startsWith(yearStr) && t.type === 'INCOME')
+    .reduce((s, t) => s + (t.serviceAmount || 0) + (t.tipAmount || 0), 0);
+  const ytdExpenses = allTxns
+    .filter(t => t.date?.startsWith(yearStr) && t.type === 'EXPENSE')
+    .reduce((s, t) => s + (t.amount || 0), 0);
+  const ytdRentCollected = allRentPmts
+    .filter(p => p.datePaid?.startsWith(yearStr))
+    .reduce((s, p) => s + (p.amount || 0), 0);
+  const ytdGross = ytdPersonalIncome + ytdRentCollected;
+  const ytdNet   = ytdGross - ytdExpenses;
+
+  const mo = Math.max(monthsElapsed, 1);
+  const base2026Personal = ytdPersonalIncome * (12 / mo);
+  const base2026Expenses = ytdExpenses       * (12 / mo);
+
+  const HIST = [
+    { year: 2021, exp: 69751.69 },
+    { year: 2022, exp: 79228.86 },
+    { year: 2023, exp: 83269.03 },
+    { year: 2024, exp: 84087.61 },
+    { year: 2025, exp: 99649.42 },
+  ];
+  const maxHistExp    = Math.max(...HIST.map(h => h.exp));
+  const BOOTH_2025    = 35700;
+  const GROSS_2025    = 170949;
+  const NET_MID_2025  = 72000;
+
+  const histBars = HIST.map(h => {
+    const w = Math.round((h.exp / maxHistExp) * 100);
+    return `
+      <div style="margin-bottom:10px;">
+        <div style="display:flex;justify-content:space-between;margin-bottom:3px;">
+          <span style="font-size:13px;font-weight:600;color:var(--text);">${h.year}</span>
+          <span style="font-size:13px;font-weight:700;color:var(--text);">${fmt(h.exp)}</span>
+        </div>
+        <div style="height:6px;background:var(--gold-light);border-radius:3px;overflow:hidden;">
+          <div style="height:100%;width:${w}%;background:linear-gradient(90deg,var(--plum),var(--plum-light));border-radius:3px;"></div>
+        </div>
+      </div>`;
+  }).join('');
+
+  const annRunRate = base2026Personal + 5 * 140 * 51;
+
+  content.innerHTML = `
+    <div style="padding:16px 16px 100px;">
+
+      <div style="background:var(--plum);border-radius:16px;padding:18px 16px;margin-bottom:16px;color:#fff;">
+        <div style="font-size:10px;text-transform:uppercase;letter-spacing:.8px;opacity:.7;font-weight:600;margin-bottom:12px;">2026 Year-to-Date · Through ${monthName(now.getMonth() + 1)}</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+          <div>
+            <div style="font-size:10px;opacity:.6;text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px;">Gross Revenue</div>
+            <div style="font-size:22px;font-weight:800;letter-spacing:-.5px;">${fmt(ytdGross)}</div>
+          </div>
+          <div>
+            <div style="font-size:10px;opacity:.6;text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px;">Total Expenses</div>
+            <div style="font-size:22px;font-weight:800;letter-spacing:-.5px;">${fmt(ytdExpenses)}</div>
+          </div>
+          <div>
+            <div style="font-size:10px;opacity:.6;text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px;">Booth Rent</div>
+            <div style="font-size:22px;font-weight:800;letter-spacing:-.5px;">${fmt(ytdRentCollected)}</div>
+          </div>
+          <div>
+            <div style="font-size:10px;opacity:.6;text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px;">Net Income</div>
+            <div style="font-size:22px;font-weight:800;letter-spacing:-.5px;color:${ytdNet >= 0 ? '#A8E6C0' : '#FFB3A7'};">${fmt(ytdNet)}</div>
+          </div>
+        </div>
+        <div style="margin-top:12px;padding-top:10px;border-top:1px solid rgba(255,255,255,.15);font-size:11px;opacity:.6;">
+          Annualized run rate: ${fmt(annRunRate)}/yr revenue · ${fmt(base2026Expenses)}/yr expenses
+        </div>
+      </div>
+
+      <div style="background:#fff;border-radius:16px;padding:16px;margin-bottom:16px;box-shadow:0 1px 6px rgba(92,61,78,.07);">
+        <div style="font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--text-muted);font-weight:600;margin-bottom:14px;">Historical Expense Trend</div>
+        ${histBars}
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:14px;padding-top:14px;border-top:1px solid var(--border);">
+          <div style="text-align:center;">
+            <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:3px;">4-yr CAGR</div>
+            <div style="font-size:18px;font-weight:800;color:var(--danger);">9.3%</div>
+          </div>
+          <div style="text-align:center;">
+            <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:3px;">2025 Gross</div>
+            <div style="font-size:18px;font-weight:800;color:var(--plum);">~$171k</div>
+          </div>
+          <div style="text-align:center;">
+            <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:3px;">2025 Net</div>
+            <div style="font-size:18px;font-weight:800;color:var(--success);">~$72k</div>
+          </div>
+        </div>
+        <div style="margin-top:10px;font-size:11px;color:var(--text-muted);line-height:1.6;">
+          Booth rent structure: 5 renters × $140/wk × 51 weeks = ${fmt(BOOTH_2025)}/yr &nbsp;·&nbsp;
+          2025 implied gross: ~${fmt(GROSS_2025)} &nbsp;·&nbsp; 2025 net midpoint: ~${fmt(NET_MID_2025)}
+        </div>
+      </div>
+
+      <div style="background:#fff;border-radius:16px;padding:16px;margin-bottom:16px;box-shadow:0 1px 6px rgba(92,61,78,.07);">
+        <div style="font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--text-muted);font-weight:600;margin-bottom:2px;">Pricing Scenario Calculator</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:18px;">Adjust sliders — charts and narrative update instantly</div>
+
+        <div style="margin-bottom:18px;">
+          <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:5px;">
+            <label style="font-size:13px;font-weight:600;color:var(--text);">Weekly booth rent / renter</label>
+            <span style="font-size:16px;font-weight:800;color:var(--plum);" id="bh-val-rent">$140/wk</span>
+          </div>
+          <input type="range" id="bh-rent" min="140" max="300" value="140" step="5"
+            style="width:100%;accent-color:var(--plum);height:4px;cursor:pointer;"
+            oninput="bhUpdate()">
+          <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-muted);margin-top:3px;">
+            <span>$140/wk (current)</span><span>$300/wk</span>
+          </div>
+        </div>
+
+        <div style="margin-bottom:18px;">
+          <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:5px;">
+            <label style="font-size:13px;font-weight:600;color:var(--text);">Personal service price increase</label>
+            <span style="font-size:16px;font-weight:800;color:var(--plum);" id="bh-val-svc">+0%</span>
+          </div>
+          <input type="range" id="bh-svc" min="0" max="30" value="0" step="1"
+            style="width:100%;accent-color:var(--plum);height:4px;cursor:pointer;"
+            oninput="bhUpdate()">
+          <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-muted);margin-top:3px;">
+            <span>0% (no change)</span><span>+30%</span>
+          </div>
+        </div>
+
+        <div style="margin-bottom:18px;">
+          <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:5px;">
+            <label style="font-size:13px;font-weight:600;color:var(--text);">Annual revenue growth assumption</label>
+            <span style="font-size:16px;font-weight:800;color:var(--plum);" id="bh-val-growth">+0%/yr</span>
+          </div>
+          <input type="range" id="bh-growth" min="0" max="10" value="0" step="0.5"
+            style="width:100%;accent-color:var(--plum);height:4px;cursor:pointer;"
+            oninput="bhUpdate()">
+          <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-muted);margin-top:3px;">
+            <span>0%/yr (flat)</span><span>+10%/yr</span>
+          </div>
+        </div>
+
+        <div>
+          <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:5px;">
+            <label style="font-size:13px;font-weight:600;color:var(--text);">Expense growth (CAGR)</label>
+            <span style="font-size:16px;font-weight:800;color:var(--danger);" id="bh-val-cagr">9.3%</span>
+          </div>
+          <input type="range" id="bh-cagr" min="3" max="15" value="9.3" step="0.1"
+            style="width:100%;accent-color:var(--danger);height:4px;cursor:pointer;"
+            oninput="bhUpdate()">
+          <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-muted);margin-top:3px;">
+            <span>3% (controlled)</span><span>15% (high)</span>
+          </div>
+        </div>
+      </div>
+
+      <div style="background:#fff;border-radius:16px;padding:16px;margin-bottom:16px;box-shadow:0 1px 6px rgba(92,61,78,.07);">
+        <div style="font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--text-muted);font-weight:600;margin-bottom:2px;">5-Year Projection (2026–2031)</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:14px;">Based on 2026 YTD annualized + scenario inputs</div>
+        <div style="position:relative;height:230px;">
+          <canvas id="bh-chart-main"></canvas>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:14px;margin-top:12px;justify-content:center;">
+          <span style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text-muted);">
+            <span style="width:18px;height:3px;background:#5C3D4E;border-radius:2px;display:inline-block;"></span>Gross Revenue
+          </span>
+          <span style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text-muted);">
+            <span style="width:18px;height:3px;background:#C4705A;border-radius:2px;display:inline-block;"></span>Expenses
+          </span>
+          <span style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text-muted);">
+            <span style="width:18px;height:3px;background:#5A9E6B;border-radius:2px;display:inline-block;"></span>Net Income
+          </span>
+        </div>
+      </div>
+
+      <div style="background:#fff;border-radius:16px;padding:16px;margin-bottom:16px;box-shadow:0 1px 6px rgba(92,61,78,.07);">
+        <div style="font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--text-muted);font-weight:600;margin-bottom:2px;">No Change vs. With Increases — Net Income</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:14px;">How pricing decisions shift your 5-year net income</div>
+        <div style="position:relative;height:200px;">
+          <canvas id="bh-chart-compare"></canvas>
+        </div>
+        <div style="display:flex;gap:18px;margin-top:12px;justify-content:center;">
+          <span style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text-muted);">
+            <span style="width:18px;height:0;border-top:2px dashed #9A8880;display:inline-block;"></span>No change
+          </span>
+          <span style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text-muted);">
+            <span style="width:18px;height:3px;background:#5C3D4E;border-radius:2px;display:inline-block;"></span>With increases
+          </span>
+        </div>
+      </div>
+
+      <div id="bh-narrative" style="background:var(--gold-lighter);border-radius:16px;padding:16px;margin-bottom:16px;border:1px solid var(--gold-light);"></div>
+
+    </div>
+  `;
+
+  window._bhData = { base2026Personal, base2026Expenses };
+  bhUpdate();
+}
+
+function bhProjection(basePersonal, baseExpenses, weeklyRent, svcPct, growthPct, cagrPct) {
+  return [2026, 2027, 2028, 2029, 2030, 2031].map((year, i) => {
+    const boothRent = 5 * weeklyRent * 51;
+    const personal  = basePersonal * (1 + svcPct / 100) * Math.pow(1 + growthPct / 100, i);
+    const gross     = personal + boothRent;
+    const expenses  = baseExpenses * Math.pow(1 + cagrPct / 100, i);
+    return { year, gross, expenses, net: gross - expenses };
+  });
+}
+
+function drawLineChart(canvasId, labels, datasets) {
+  if (typeof Chart === 'undefined') return;
+  if (_chartInstances[canvasId]) {
+    _chartInstances[canvasId].destroy();
+    delete _chartInstances[canvasId];
+  }
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+  try {
+    _chartInstances[canvasId] = new Chart(canvas.getContext('2d'), {
+      type: 'line',
+      data: {
+        labels,
+        datasets: datasets.map(ds => ({
+          label:               ds.label,
+          data:                ds.data,
+          borderColor:         ds.color,
+          backgroundColor:     ds.color + '15',
+          borderWidth:         2.5,
+          borderDash:          ds.dashed ? [6, 4] : [],
+          pointBackgroundColor: ds.color,
+          pointRadius:         4,
+          pointHoverRadius:    6,
+          tension:             0.35,
+          fill:                false,
+        })),
+      },
+      options: {
+        responsive:          true,
+        maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label: ctx => ` ${ctx.dataset.label}: $${Math.round(ctx.parsed.y).toLocaleString()}`,
+            },
+          },
+        },
+        scales: {
+          x: {
+            ticks: { font: { size: 11, family: "'DM Sans',sans-serif" }, color: '#9A8880' },
+            grid:  { display: false },
+          },
+          y: {
+            ticks: {
+              font: { size: 10, family: "'DM Sans',sans-serif" },
+              color: '#9A8880',
+              callback: v => '$' + (Math.abs(v) >= 1000 ? Math.round(v / 1000) + 'k' : v),
+            },
+            grid: { color: '#EDE4DC' },
+          },
+        },
+      },
+    });
+  } catch (e) {
+    console.error('Line chart error:', e);
+  }
+}
+
+function bhUpdate() {
+  const rentEl   = document.getElementById('bh-rent');
+  const svcEl    = document.getElementById('bh-svc');
+  const growthEl = document.getElementById('bh-growth');
+  const cagrEl   = document.getElementById('bh-cagr');
+  if (!rentEl || !window._bhData) return;
+
+  const weeklyRent = parseFloat(rentEl.value);
+  const svcPct     = parseFloat(svcEl.value);
+  const growthPct  = parseFloat(growthEl.value);
+  const cagrPct    = parseFloat(cagrEl.value);
+
+  document.getElementById('bh-val-rent').textContent   = `$${weeklyRent}/wk`;
+  document.getElementById('bh-val-svc').textContent    = `+${svcPct}%`;
+  document.getElementById('bh-val-growth').textContent = `+${growthPct}%/yr`;
+  document.getElementById('bh-val-cagr').textContent   = `${cagrPct.toFixed(1)}%`;
+
+  const { base2026Personal, base2026Expenses } = window._bhData;
+
+  const rows         = bhProjection(base2026Personal, base2026Expenses, weeklyRent, svcPct, growthPct, cagrPct);
+  const rowsBaseline = bhProjection(base2026Personal, base2026Expenses, 140, 0, 0, cagrPct);
+  const labels       = rows.map(r => String(r.year));
+
+  drawLineChart('bh-chart-main', labels, [
+    { label: 'Gross Revenue', data: rows.map(r => Math.round(r.gross)),    color: '#5C3D4E' },
+    { label: 'Expenses',      data: rows.map(r => Math.round(r.expenses)), color: '#C4705A' },
+    { label: 'Net Income',    data: rows.map(r => Math.round(r.net)),      color: '#5A9E6B' },
+  ]);
+
+  drawLineChart('bh-chart-compare', labels, [
+    { label: 'No Change',      data: rowsBaseline.map(r => Math.round(r.net)), color: '#9A8880', dashed: true },
+    { label: 'With Increases', data: rows.map(r => Math.round(r.net)),         color: '#5C3D4E' },
+  ]);
+
+  buildBhNarrative(rows, rowsBaseline, weeklyRent, svcPct, growthPct, cagrPct);
+}
+
+function buildBhNarrative(rows, rowsBaseline, weeklyRent, svcPct, growthPct, cagrPct) {
+  const el = document.getElementById('bh-narrative');
+  if (!el) return;
+
+  const last           = rows[rows.length - 1];
+  const cumulativeDiff = rows.reduce((s, r, i) => s + r.net - rowsBaseline[i].net, 0);
+  const rentDiff       = weeklyRent - 140;
+  const annRentGain    = 5 * rentDiff * 51;
+  const isBaseline     = rentDiff === 0 && svcPct === 0 && growthPct === 0;
+
+  const sentences = [];
+
+  if (isBaseline) {
+    sentences.push(
+      `At current pricing with no changes, expenses are projected to compound at ${cagrPct.toFixed(1)}% per year — ` +
+      (cagrPct === 9.3 ? 'matching the historical 4-year average.' :
+       cagrPct < 9.3 ? 'better than the historical 9.3% average.' : 'above the historical 9.3% average.')
+    );
+    sentences.push(
+      `By 2031, projected gross revenue of ${fmt(last.gross)} minus projected expenses of ${fmt(last.expenses)} ` +
+      `leaves net income of ${fmt(last.net)}.`
+    );
+    if (last.net < rows[0].net) {
+      sentences.push(
+        `Without a revenue increase, rising expenses will compress net income over time. ` +
+        `Raising booth rent or personal service prices would help stay ahead of the cost curve.`
+      );
+    }
+  } else {
+    if (rentDiff > 0) {
+      sentences.push(
+        `Raising booth rent to $${weeklyRent}/week adds ${fmt(annRentGain)}/year in guaranteed income ` +
+        `(5 renters × $${rentDiff} increase × 51 weeks).`
+      );
+    }
+    if (svcPct > 0) {
+      sentences.push(`A ${svcPct}% price increase on personal services lifts service revenue immediately in 2026.`);
+    }
+    if (growthPct > 0) {
+      sentences.push(`Compounding service growth at ${growthPct}%/year builds momentum — revenue reaches ${fmt(last.gross)} by 2031.`);
+    }
+    if (growthPct === 0) {
+      sentences.push(`Under this scenario, 2031 gross revenue is ${fmt(last.gross)}, expenses reach ${fmt(last.expenses)}, and net income is ${fmt(last.net)}.`);
+    }
+    if (cumulativeDiff > 0) {
+      sentences.push(
+        `Over 5 years, these changes generate an estimated ${fmt(cumulativeDiff)} more in cumulative net income ` +
+        `than doing nothing — roughly ${fmt(cumulativeDiff / 5)} per year on average.`
+      );
+    } else if (cumulativeDiff < 0) {
+      sentences.push(
+        `Despite the revenue changes, faster expense growth means this scenario generates ${fmt(Math.abs(cumulativeDiff))} less ` +
+        `in cumulative net income than baseline. Consider whether expense controls are achievable.`
+      );
+    }
+  }
+
+  el.innerHTML = `
+    <div style="font-size:10px;text-transform:uppercase;letter-spacing:.7px;color:var(--gold-dark);font-weight:700;margin-bottom:8px;">What This Means</div>
+    <div style="font-size:13px;color:var(--text);line-height:1.7;">${sentences.join(' ')}</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:14px;padding-top:12px;border-top:1px solid var(--gold-light);">
+      <div style="text-align:center;">
+        <div style="font-size:10px;color:var(--text-muted);margin-bottom:3px;">2031 Net</div>
+        <div style="font-size:15px;font-weight:800;color:${last.net >= 0 ? 'var(--success)' : 'var(--danger)'};">${fmt(last.net)}</div>
+      </div>
+      <div style="text-align:center;">
+        <div style="font-size:10px;color:var(--text-muted);margin-bottom:3px;">5-yr Diff</div>
+        <div style="font-size:15px;font-weight:800;color:${cumulativeDiff >= 0 ? 'var(--success)' : 'var(--danger)'};">${cumulativeDiff >= 0 ? '+' : ''}${fmt(cumulativeDiff)}</div>
+      </div>
+      <div style="text-align:center;">
+        <div style="font-size:10px;color:var(--text-muted);margin-bottom:3px;">2031 Gross</div>
+        <div style="font-size:15px;font-weight:800;color:var(--plum);">${fmt(last.gross)}</div>
+      </div>
     </div>
   `;
 }
