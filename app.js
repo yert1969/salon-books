@@ -10472,16 +10472,21 @@ async function renderBusinessHealthView() {
   const NET_MID_2025 = 72000;
 
   const histBars = HIST.map(h => {
-    const w = Math.round((h.exp / maxHistExp) * 100);
+    const w       = Math.round((h.exp / maxHistExp) * 100);
+    const is2025  = h.year === 2025;
+    const barColor = is2025
+      ? 'linear-gradient(90deg,var(--gold),#D4A574)'
+      : 'linear-gradient(90deg,var(--plum),var(--plum-light))';
     return `
-      <div style="margin-bottom:10px;">
-        <div style="display:flex;justify-content:space-between;margin-bottom:3px;">
-          <span style="font-size:13px;font-weight:600;color:var(--text);">${h.year}</span>
-          <span style="font-size:13px;font-weight:700;color:var(--text);">${fmt(h.exp)}</span>
+      <div style="margin-bottom:${is2025 ? 4 : 10}px;">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:3px;">
+          <span style="font-size:13px;font-weight:600;color:${is2025 ? 'var(--gold-dark)' : 'var(--text)'};">${h.year}</span>
+          <span style="font-size:13px;font-weight:700;color:${is2025 ? 'var(--gold-dark)' : 'var(--text)'};">${fmt(h.exp)}</span>
         </div>
         <div style="height:6px;background:var(--gold-light);border-radius:3px;overflow:hidden;">
-          <div style="height:100%;width:${w}%;background:linear-gradient(90deg,var(--plum),var(--plum-light));border-radius:3px;"></div>
+          <div style="height:100%;width:${w}%;background:${barColor};border-radius:3px;"></div>
         </div>
+        ${is2025 ? `<div style="font-size:10px;color:var(--gold-dark);margin-top:3px;margin-bottom:8px;font-style:italic;">Includes new employee costs — excluded from CAGR calculation</div>` : ''}
       </div>`;
   }).join('');
 
@@ -10540,8 +10545,9 @@ async function renderBusinessHealthView() {
         ${histBars}
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:14px;padding-top:14px;border-top:1px solid var(--border);">
           <div style="text-align:center;">
-            <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:3px;">4-yr CAGR</div>
-            <div style="font-size:18px;font-weight:800;color:var(--danger);">9.3%</div>
+            <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:3px;">Organic CAGR</div>
+            <div style="font-size:18px;font-weight:800;color:var(--danger);">6.5%</div>
+            <div style="font-size:9px;color:var(--text-muted);margin-top:2px;">2021–2024</div>
           </div>
           <div style="text-align:center;">
             <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:3px;">2025 Gross</div>
@@ -10553,7 +10559,9 @@ async function renderBusinessHealthView() {
           </div>
         </div>
         <div style="margin-top:10px;font-size:11px;color:var(--text-muted);line-height:1.6;">
-          Booth rent structure: 5 renters × $140/wk × 51 weeks = ${fmt(BOOTH_2025)}/yr &nbsp;·&nbsp;
+          Organic CAGR 6.5% = ($84,087 ÷ $69,752)<sup>1/3</sup> − 1, using 2021–2024 only.
+          2025 excluded: new employee onboarding inflated expenses and is not representative of underlying cost growth.<br>
+          Booth rent: 5 renters × $140/wk × 51 weeks = ${fmt(BOOTH_2025)}/yr &nbsp;·&nbsp;
           2025 implied gross: ~${fmt(GROSS_2025)} &nbsp;·&nbsp; 2025 net midpoint: ~${fmt(NET_MID_2025)}
         </div>
       </div>
@@ -10617,9 +10625,9 @@ async function renderBusinessHealthView() {
         <div>
           <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:5px;">
             <label style="font-size:13px;font-weight:600;color:var(--text);">Expense growth (CAGR)</label>
-            <span style="font-size:16px;font-weight:800;color:var(--danger);" id="bh-val-cagr">9.3%</span>
+            <span style="font-size:16px;font-weight:800;color:var(--danger);" id="bh-val-cagr">6.5%</span>
           </div>
-          <input type="range" id="bh-cagr" min="3" max="15" value="9.3" step="0.1"
+          <input type="range" id="bh-cagr" min="3" max="15" value="6.5" step="0.1"
             style="width:100%;accent-color:var(--danger);height:4px;cursor:pointer;"
             oninput="bhUpdate()">
           <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-muted);margin-top:3px;">
@@ -10801,8 +10809,8 @@ function buildBhNarrative(rows, rowsBaseline, weeklyRent, renterCount, svcPct, g
   if (isBaseline) {
     sentences.push(
       `At current pricing with no changes, expenses are projected to compound at ${cagrPct.toFixed(1)}% per year — ` +
-      (cagrPct === 9.3 ? 'matching the historical 4-year average.' :
-       cagrPct < 9.3 ? 'better than the historical 9.3% average.' : 'above the historical 9.3% average.')
+      (cagrPct === 6.5 ? 'matching the 2021–2024 organic baseline.' :
+       cagrPct < 6.5 ? 'better than the 6.5% organic baseline (2021–2024).' : 'above the 6.5% organic baseline (2021–2024).')
     );
     sentences.push(
       `By 2031, projected gross revenue of ${fmt(last.gross)} minus projected expenses of ${fmt(last.expenses)} ` +
