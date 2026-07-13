@@ -1328,9 +1328,10 @@ html, body {
   border-radius: 6px; padding: 5px 10px; font-size: 11px; font-weight: 600; cursor: pointer;
 }
 
-.status-ontime { color: var(--success); font-weight: 600; }
-.status-late   { color: var(--danger);  font-weight: 600; }
-.status-unpaid { color: var(--text-muted); }
+.status-ontime   { color: var(--success); font-weight: 600; }
+.status-late     { color: var(--danger);  font-weight: 600; }
+.status-unpaid   { color: var(--text-muted); }
+.status-vacation { color: var(--plum);    font-weight: 600; }
 
 .renter-history-row {
   display: flex; align-items: center; gap: 10px;

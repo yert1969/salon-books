@@ -1048,6 +1048,7 @@ function generateSmartInsights(allTxns, allMExp, allRenters, allRentPmts) {
       ensureRateHistory(r);
       const rate = getRateForWeek(r, lastWS);
       const pmt = allRentPmts.find(p => p.renterId === r.id && p.weekStart === lastWS);
+      if (pmt && pmt.vacation) return; // rent-free vacation week — not behind
       if (!pmt || pmt.amount < rate) {
         outstanding += rate - (pmt?.amount || 0);
         overdueCount++;
@@ -1341,7 +1342,9 @@ async function buildDashboard() {
     const rentDisplayWS = addDays(ws, -7); // Always show last week
     const weekRentPmts = allRentPmts.filter(p => p.weekStart === rentDisplayWS);
     const rentCollected = weekRentPmts.reduce((s,p) => s + (p.amount||0), 0);
-    const rentExpected  = allRenters.reduce((s,r) => s + getRateForWeek(r, rentDisplayWS), 0);
+    // Renters on a rent-free vacation week owe nothing, so exclude them from Expected
+    const vacationRenterIds = new Set(weekRentPmts.filter(p => p.vacation).map(p => p.renterId));
+    const rentExpected  = allRenters.reduce((s,r) => s + (vacationRenterIds.has(r.id) ? 0 : getRateForWeek(r, rentDisplayWS)), 0);
     const rentersPaid   = new Set(weekRentPmts.map(p => p.renterId)).size;
     const rentOutstanding = Math.max(0, rentExpected - rentCollected);
     const rentWeekLabel = 'Last Week';
@@ -1356,7 +1359,9 @@ async function buildDashboard() {
     allRenters.forEach(r => {
       ensureRateHistory(r);
       const renterPmts = allRentPmts.filter(p => p.renterId === r.id);
-      
+      // Rent-free vacation weeks are excused — they owe nothing and aren't "late"
+      const vacationWeeks = new Set(renterPmts.filter(p => p.vacation).map(p => p.weekStart));
+
       // Build a map of weekStart → amount paid for this renter
       const paidByWeek = {};
       renterPmts.forEach(p => {
@@ -1373,10 +1378,11 @@ async function buildDashboard() {
       let totalOwed = 0;
       
       while (checkWS >= startLimit) {
+        if (vacationWeeks.has(checkWS)) { checkWS = addDays(checkWS, -7); continue; }
         const rate = getRateForWeek(r, checkWS);
         const paid = paidByWeek[checkWS] || 0;
         const shortfall = rate - paid;
-        
+
         if (shortfall > 0.01) {
           totalOwed += shortfall;
           if (paid < 0.01) {
@@ -1387,9 +1393,9 @@ async function buildDashboard() {
         }
         checkWS = addDays(checkWS, -7);
       }
-      
-      // Check late pattern from actual payments
-      const sortedPmts = renterPmts.sort((a,b) => b.weekStart.localeCompare(a.weekStart)).slice(0, 6);
+
+      // Check late pattern from actual payments (excluding excused vacation weeks)
+      const sortedPmts = renterPmts.filter(p => !p.vacation).sort((a,b) => b.weekStart.localeCompare(a.weekStart)).slice(0, 6);
       const lateCount = sortedPmts.filter(p => getRentStatus(p.weekStart, p.datePaid) === 'late').length;
 
       if (totalOwed > 0.01) {
@@ -6971,7 +6977,12 @@ async function runBoothRentReport() {
 
   // Build per-renter stats
   const renterStats = allRenters.map(r => {
-    const pmts = yearPayments.filter(p => p.renterId === r.id);
+    const allPmtsForRenter = yearPayments.filter(p => p.renterId === r.id);
+    // Rent-free vacation weeks are fully excused — excluded from paid-week counts,
+    // on-time math, averages, streaks, and expected/outstanding totals.
+    const vacWeeks = new Set(allPmtsForRenter.filter(p => p.vacation).map(p => p.weekStart));
+    const pmts = allPmtsForRenter.filter(p => !p.vacation);
+    const vacationCount = vacWeeks.size;
     const totalPaid = pmts.reduce((s, p) => s + (p.amount || 0), 0);
     const onTime = pmts.filter(p => getRentStatus(p.weekStart, p.datePaid) === 'ontime').length;
     const late   = pmts.filter(p => getRentStatus(p.weekStart, p.datePaid) === 'late').length;
@@ -7000,7 +7011,7 @@ async function runBoothRentReport() {
     });
     const avgDaysToPay = total > 0 ? (totalDays / total).toFixed(1) : '—';
 
-    // Longest on-time streak
+    // Longest on-time streak (vacation weeks already excluded, so a streak carries across them)
     const sorted = [...pmts].sort((a, b) => a.weekStart.localeCompare(b.weekStart));
     let maxStreak = 0, curStreak = 0, currentStreak = 0;
     sorted.forEach((p, i) => {
@@ -7030,14 +7041,14 @@ async function runBoothRentReport() {
     let expectedWeeks = 0;
     let cursor = getWeekStart(rangeStart);
     while (cursor <= rangeEnd) {
-      expectedWeeks++;
+      if (!vacWeeks.has(cursor)) expectedWeeks++;
       cursor = addDays(cursor, 7);
     }
     const expectedAmt = (() => {
       let total = 0;
       let cursor = getWeekStart(rangeStart);
       while (cursor <= rangeEnd) {
-        total += getRateForWeek(r, cursor);
+        if (!vacWeeks.has(cursor)) total += getRateForWeek(r, cursor);
         cursor = addDays(cursor, 7);
       }
       return total;
@@ -7048,7 +7059,7 @@ async function runBoothRentReport() {
     return {
       id: r.id, name: r.name, booth: r.booth, rate: getCurrentRate(r),
       status: r.status, startDate: r.startDate,
-      totalPaid, onTime, late, total, onTimePct, months,
+      totalPaid, onTime, late, total, onTimePct, months, vacations: vacationCount,
       avgDaysToPay, maxStreak, currentStreak,
       expectedWeeks, expectedAmt, outstanding, overpaid,
     };
@@ -8008,7 +8019,10 @@ function formatWeekRange(ws) {
   return s.toLocaleDateString('en-US', opts) + ' – ' + e.toLocaleDateString('en-US', opts);
 }
 
-function getRentStatus(weekStart, datePaid) {
+function getRentStatus(weekStart, datePaid, isVacation) {
+  // A rent-free vacation week granted at Annette's discretion — fully excused.
+  // Counts as neither on-time, late, nor unpaid; excluded from all on-time math.
+  if (isVacation) return 'vacation';
   if (!datePaid) return 'unpaid';
   // Due date is Saturday, but "on time" includes 3-day grace period (through Tuesday)
   const due  = new Date(getWeekDue(weekStart) + 'T23:59:59');
@@ -8046,7 +8060,11 @@ async function renderRentersView() {
   const payMap = {};
   payments.forEach(p => { payMap[p.renterId] = p; });
 
-  const expectedTotal  = renters.reduce((s, r) => s + getRateForWeek(r, state.renterWeekStart), 0);
+  // Renters on a rent-free vacation week owe nothing, so they're excluded from Expected.
+  const expectedTotal  = renters.reduce((s, r) => {
+    const p = payMap[r.id];
+    return s + (p && p.vacation ? 0 : getRateForWeek(r, state.renterWeekStart));
+  }, 0);
   const collectedTotal = payments.reduce((s, p) => s + (p.amount || 0), 0);
   const outstanding    = expectedTotal - collectedTotal;
 
@@ -8089,24 +8107,28 @@ async function renderRentersView() {
         </div>` :
         renters.map(r => {
           const p           = payMap[r.id];
-          const status      = p ? getRentStatus(ws, p.datePaid) : 'unpaid';
-          const statusLabel = { ontime: 'On Time', late: 'Late', unpaid: 'Unpaid' }[status];
-          const statusClass = { ontime: 'status-ontime', late: 'status-late', unpaid: 'status-unpaid' }[status];
-          const icon        = { ontime: '✅', late: '⚠️', unpaid: '○' }[status];
+          const status      = p ? getRentStatus(ws, p.datePaid, p.vacation) : 'unpaid';
+          const statusLabel = { ontime: 'On Time', late: 'Late', unpaid: 'Unpaid', vacation: 'Vacation' }[status];
+          const statusClass = { ontime: 'status-ontime', late: 'status-late', unpaid: 'status-unpaid', vacation: 'status-vacation' }[status];
+          const icon        = { ontime: '✅', late: '⚠️', unpaid: '○', vacation: '🌴' }[status];
+          const isVac       = status === 'vacation';
           return `
           <div class="renter-row" onclick="openRenterDetail('${r.id}')">
             <div class="renter-icon">${icon}</div>
             <div class="renter-info">
               <div class="renter-name">${escapeHTML(r.name)}${r.booth ? ` <span class="renter-booth">Booth ${escapeHTML(r.booth)}</span>` : ''}</div>
               <div class="renter-meta">
-                ${p
+                ${isVac
+                  ? `<span class="${statusClass}">Rent-free week (excused)</span>`
+                  : p
                   ? `Paid ${formatDateDisplay(p.datePaid)} · ${escapeHTML(p.paymentMethod)} · <span class="${statusClass}">${statusLabel}</span>`
                   : `<span class="${statusClass}">Not yet paid</span> · Due ${fmt(getRateForWeek(r, state.renterWeekStart))}`}
               </div>
-              ${p && p.notes && p.notes.includes('catch-up') ? `<div style="font-size:10px;color:var(--plum);margin-top:2px;">↳ ${escapeHTML(p.notes)}</div>` : ''}
+              ${p && !isVac && p.notes && p.notes.includes('catch-up') ? `<div style="font-size:10px;color:var(--plum);margin-top:2px;">↳ ${escapeHTML(p.notes)}</div>` : ''}
+              ${isVac && p.notes ? `<div style="font-size:10px;color:var(--plum);margin-top:2px;">↳ ${escapeHTML(p.notes)}</div>` : ''}
             </div>
             <div class="renter-amount">
-              <div style="font-weight:700;color:${p ? 'var(--success)' : 'var(--text-muted)'}">${p ? fmt(p.amount) : fmt(getRateForWeek(r, state.renterWeekStart))}</div>
+              <div style="font-weight:700;color:${isVac ? 'var(--plum)' : p ? 'var(--success)' : 'var(--text-muted)'}">${isVac ? 'Free' : p ? fmt(p.amount) : fmt(getRateForWeek(r, state.renterWeekStart))}</div>
               ${!p ? `<button class="renter-pay-btn" onclick="event.stopPropagation();openLogPaymentModal('${r.id}')">Log Payment</button>`
                    : `<button class="renter-pay-btn" style="background:var(--bg-card);color:var(--text-muted);font-size:10px;padding:2px 8px;" onclick="event.stopPropagation();openEditRentPayment('${p.id}','${r.id}')">Edit</button>`}
             </div>
@@ -8132,22 +8154,33 @@ function openLogPaymentModal(renterId) {
       <h2 class="modal-title">Log Rent Payment</h2>
       <p style="color:var(--text-muted);font-size:13px;margin-bottom:14px;">${escapeHTML(r.name)} · Week of ${formatWeekRange(state.rentersWeekStart)}</p>
 
-      <label class="form-label">Amount Paid ($)</label>
-      <input type="number" inputmode="decimal" class="form-input" id="rp-amount"
-        value="${getRateForWeek(r, state.renterWeekStart) || 140}" step="0.01" min="0">
+      <label style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:rgba(93,56,84,0.06);border-radius:10px;margin-bottom:14px;cursor:pointer;">
+        <input type="checkbox" id="rp-vacation" onchange="toggleVacationFields('rp')"
+          style="width:20px;height:20px;accent-color:var(--plum);">
+        <div style="flex:1;">
+          <div style="font-size:14px;font-weight:600;color:var(--plum);">🌴 Rent-free vacation week</div>
+          <div style="font-size:11px;color:var(--text-muted);">Excused — won't count against on-time status</div>
+        </div>
+      </label>
 
-      <label class="form-label">Date Paid</label>
-      <input type="date" class="form-input" id="rp-date" value="${todayStr()}">
+      <div id="rp-payment-fields">
+        <label class="form-label">Amount Paid ($)</label>
+        <input type="number" inputmode="decimal" class="form-input" id="rp-amount"
+          value="${getRateForWeek(r, state.renterWeekStart) || 140}" step="0.01" min="0">
 
-      <label class="form-label">Payment Method</label>
-      <select class="form-select" id="rp-method">
-        <option>Cash</option>
-        <option>Venmo</option>
-        <option>Zelle</option>
-        <option>Card</option>
-        <option>Check</option>
-        <option>Other</option>
-      </select>
+        <label class="form-label">Date Paid</label>
+        <input type="date" class="form-input" id="rp-date" value="${todayStr()}">
+
+        <label class="form-label">Payment Method</label>
+        <select class="form-select" id="rp-method">
+          <option>Cash</option>
+          <option>Venmo</option>
+          <option>Zelle</option>
+          <option>Card</option>
+          <option>Check</option>
+          <option>Other</option>
+        </select>
+      </div>
 
       <label class="form-label">Notes (optional)</label>
       <input type="text" class="form-input" id="rp-notes" placeholder="Any notes…">
@@ -8157,11 +8190,43 @@ function openLogPaymentModal(renterId) {
   });
 }
 
+// Show/hide the amount/date/method fields when the vacation toggle flips.
+// prefix is 'rp' (log modal) or 'erp' (edit modal).
+function toggleVacationFields(prefix) {
+  const isVac  = document.getElementById(`${prefix}-vacation`).checked;
+  const fields = document.getElementById(`${prefix}-payment-fields`);
+  if (fields) fields.style.display = isVac ? 'none' : '';
+}
+
 async function saveRentPayment(renterId) {
+  const isVacation = document.getElementById('rp-vacation')?.checked;
+  const notes   = document.getElementById('rp-notes').value.trim();
+  const ws0     = state.rentersWeekStart;
+
+  // Rent-free vacation week — record an excused week (no money, no on-time impact)
+  if (isVacation) {
+    const existing = await db.rentPayments
+      .where('renterId').equals(renterId)
+      .filter(p => p.weekStart === ws0)
+      .first();
+    const vacData = {
+      renterId, weekStart: ws0, amount: 0, datePaid: todayStr(),
+      paymentMethod: 'Vacation', notes, vacation: true,
+    };
+    if (existing) {
+      await db.rentPayments.update(existing.id, vacData);
+    } else {
+      await db.rentPayments.add(vacData);
+    }
+    closeModal();
+    showToast('Vacation week granted 🌴');
+    renderRentersView();
+    return;
+  }
+
   const amount  = parseFloat(document.getElementById('rp-amount').value);
   const datePaid = document.getElementById('rp-date').value;
   const method  = document.getElementById('rp-method').value;
-  const notes   = document.getElementById('rp-notes').value.trim();
 
   if (!amount || !datePaid) { showToast('Please fill in amount and date'); return; }
 
@@ -8183,7 +8248,8 @@ async function saveRentPayment(renterId) {
     .first();
 
   if (existing) {
-    await db.rentPayments.update(existing.id, { amount, datePaid, paymentMethod: method, notes });
+    // vacation:false clears any prior rent-free flag if this week is now being paid
+    await db.rentPayments.update(existing.id, { amount, datePaid, paymentMethod: method, notes, vacation: false });
   } else {
     await db.rentPayments.add({
       renterId, weekStart: ws, amount, datePaid, paymentMethod: method, notes,
@@ -8210,7 +8276,10 @@ async function openCatchUpModal(renterId, totalAmount, datePaid, method, notes) 
     if (r.startDate && weekStart < getWeekStart(r.startDate)) break;
     const rate = getRateForWeek(r, weekStart);
     const existingPmt = allPmts.find(p => p.weekStart === weekStart);
-    if (!existingPmt) {
+    // Skip rent-free vacation weeks — they're excused and owe nothing
+    if (existingPmt && existingPmt.vacation) {
+      continue;
+    } else if (!existingPmt) {
       // Fully unpaid
       unpaidWeeks.push({ weekStart, rate, amountDue: rate, paid: 0, status: 'unpaid' });
     } else if (existingPmt.amount < rate - 0.01) {
@@ -8414,23 +8483,35 @@ async function openEditRentPayment(paymentId, renterId) {
   const r = await db.renters.get(renterId);
   const renterName = r ? r.name : 'Renter';
 
+  const isVac = !!p.vacation;
   openModal(`
     <h2 class="modal-title">Edit Rent Payment</h2>
     <p style="color:var(--text-muted);font-size:13px;margin-bottom:14px;">${renterName} · Week of ${formatWeekRange(p.weekStart)}</p>
 
-    <label class="form-label">Amount Paid ($)</label>
-    <input type="number" inputmode="decimal" class="form-input" id="erp-amount"
-      value="${p.amount || 0}" step="0.01" min="0">
+    <label style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:rgba(93,56,84,0.06);border-radius:10px;margin-bottom:14px;cursor:pointer;">
+      <input type="checkbox" id="erp-vacation" ${isVac ? 'checked' : ''} onchange="toggleVacationFields('erp')"
+        style="width:20px;height:20px;accent-color:var(--plum);">
+      <div style="flex:1;">
+        <div style="font-size:14px;font-weight:600;color:var(--plum);">🌴 Rent-free vacation week</div>
+        <div style="font-size:11px;color:var(--text-muted);">Excused — won't count against on-time status</div>
+      </div>
+    </label>
 
-    <label class="form-label">Date Paid</label>
-    <input type="date" class="form-input" id="erp-date" value="${p.datePaid || ''}">
+    <div id="erp-payment-fields" ${isVac ? 'style="display:none;"' : ''}>
+      <label class="form-label">Amount Paid ($)</label>
+      <input type="number" inputmode="decimal" class="form-input" id="erp-amount"
+        value="${p.amount || 0}" step="0.01" min="0">
 
-    <label class="form-label">Payment Method</label>
-    <select class="form-select" id="erp-method">
-      ${['Cash','Venmo','Card','Check','Other'].map(m =>
-        `<option${m === p.paymentMethod ? ' selected' : ''}>${m}</option>`
-      ).join('')}
-    </select>
+      <label class="form-label">Date Paid</label>
+      <input type="date" class="form-input" id="erp-date" value="${p.datePaid || ''}">
+
+      <label class="form-label">Payment Method</label>
+      <select class="form-select" id="erp-method">
+        ${['Cash','Venmo','Card','Check','Other'].map(m =>
+          `<option${m === p.paymentMethod ? ' selected' : ''}>${m}</option>`
+        ).join('')}
+      </select>
+    </div>
 
     <label class="form-label">Notes (optional)</label>
     <input type="text" class="form-input" id="erp-notes" value="${p.notes || ''}" placeholder="Any notes…">
@@ -8441,14 +8522,28 @@ async function openEditRentPayment(paymentId, renterId) {
 }
 
 async function updateRentPayment(paymentId) {
+  const isVacation = document.getElementById('erp-vacation')?.checked;
+  const notes      = document.getElementById('erp-notes').value.trim();
+
+  // Convert to / keep as a rent-free vacation week
+  if (isVacation) {
+    await db.rentPayments.update(paymentId, {
+      amount: 0, datePaid: todayStr(), paymentMethod: 'Vacation', notes, vacation: true,
+    });
+    closeModal();
+    showToast('Vacation week saved 🌴');
+    renderRentersView();
+    return;
+  }
+
   const amount    = parseFloat(document.getElementById('erp-amount').value);
   const datePaid  = document.getElementById('erp-date').value;
   const method    = document.getElementById('erp-method').value;
-  const notes     = document.getElementById('erp-notes').value.trim();
 
   if (!amount || !datePaid) { showToast('Please fill in amount and date'); return; }
 
-  await db.rentPayments.update(paymentId, { amount, datePaid, paymentMethod: method, notes });
+  // Clear any prior vacation flag when saving a real payment
+  await db.rentPayments.update(paymentId, { amount, datePaid, paymentMethod: method, notes, vacation: false });
   closeModal();
   showToast('Payment updated ✓');
   renderRentersView();
@@ -8497,10 +8592,12 @@ function openRenterDetail(renterId, histYear) {
     weeks.reverse();
 
     // Stats
-    let totalExpected = 0, totalPaid = 0, onTimeCount = 0, lateCount = 0, missedCount = 0;
+    let totalExpected = 0, totalPaid = 0, onTimeCount = 0, lateCount = 0, missedCount = 0, vacationCount = 0;
     weeks.forEach(ws => {
-      const rate = getRateForWeek(r, ws);
       const p = payByWeek[ws];
+      // Rent-free vacation weeks are fully excused: no expected rent, no on-time impact.
+      if (p && p.vacation) { vacationCount++; return; }
+      const rate = getRateForWeek(r, ws);
       totalExpected += rate;
       if (p) {
         totalPaid += p.amount;
@@ -8522,6 +8619,20 @@ function openRenterDetail(renterId, histYear) {
     const rows = weeks.map(ws => {
       const rate = getRateForWeek(r, ws);
       const p    = payByWeek[ws];
+      if (p && p.vacation) {
+        return `<div class="renter-history-row" onclick="openEditRentPayment('${p.id}','${renterId}')" style="cursor:pointer;">
+          <span style="font-size:16px;">🌴</span>
+          <div style="flex:1;min-width:0;">
+            <div style="font-size:12px;font-weight:500;">${formatWeekRange(ws)}</div>
+            <div style="font-size:11px;color:var(--plum);">Rent-free vacation week${p.notes ? ` · ${escapeHTML(p.notes)}` : ''}</div>
+          </div>
+          <div style="text-align:right;">
+            <div style="font-weight:700;color:var(--plum);font-size:13px;">Free</div>
+            <div style="font-size:10px;color:var(--plum);">Excused</div>
+          </div>
+          <div style="font-size:14px;color:var(--text-muted);margin-left:4px;">✎</div>
+        </div>`;
+      }
       if (p) {
         const status   = getRentStatus(ws, p.datePaid);
         const isShort  = p.amount < rate * 0.99;
@@ -8595,7 +8706,7 @@ function openRenterDetail(renterId, histYear) {
       </div>
 
       <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted);margin-bottom:8px;">
-        ${selectedYear} · ${weeks.length} weeks · ${missedCount} missing
+        ${selectedYear} · ${weeks.length} weeks · ${missedCount} missing${vacationCount > 0 ? ` · 🌴 ${vacationCount} vacation` : ''}
       </div>
       ${rows || '<p style="color:var(--text-muted);font-size:13px;text-align:center;padding:16px 0;">No weeks in this period</p>'}
     `);
@@ -9741,17 +9852,23 @@ async function gatherBusinessSnapshot() {
     const currentRate = getCurrentRate(r);
     const pmts = allRentPmts.filter(p => p.renterId === r.id).sort((a,b) => b.weekStart.localeCompare(a.weekStart));
     const totalPaid = pmts.reduce((s,p) => s + (p.amount || 0), 0);
-    const lastPaid = pmts.length > 0 ? pmts[0].datePaid : 'never';
+    const realPmts = pmts.filter(p => !p.vacation);
+    const lastPaid = realPmts.length > 0 ? realPmts[0].datePaid : 'never';
 
     // Check last 8 weeks for on-time pattern
     let onTime = 0;
     let late = 0;
     let missed = 0;
+    let vacation = 0;
     const recentWeeks = [];
     for (let i = 0; i < 8; i++) {
       const ws = addDays(getWeekStart(todayStr()), -(i * 7));
       const pmt = pmts.find(p => p.weekStart === ws);
-      if (pmt) {
+      if (pmt && pmt.vacation) {
+        // Rent-free vacation week — excused, doesn't count against on-time
+        vacation++;
+        recentWeeks.push('vacation');
+      } else if (pmt) {
         // Consider "on time" if paid within 2 days of week start
         const wsDate = new Date(ws + 'T12:00:00');
         const paidDate = new Date(pmt.datePaid + 'T12:00:00');
@@ -9763,7 +9880,7 @@ async function gatherBusinessSnapshot() {
         recentWeeks.push('missed');
       }
     }
-    return `- ${r.name}: Current rate $${currentRate}/week, ${pmts.length} payments ($${totalPaid.toFixed(0)} total), last paid ${lastPaid}, last 8 weeks: ${onTime} on-time, ${late} late, ${missed} missed`;
+    return `- ${r.name}: Current rate $${currentRate}/week, ${pmts.length} payments ($${totalPaid.toFixed(0)} total), last paid ${lastPaid}, last 8 weeks: ${onTime} on-time, ${late} late, ${missed} missed${vacation > 0 ? `, ${vacation} rent-free vacation (excused)` : ''}`;
   });
 
   return `
