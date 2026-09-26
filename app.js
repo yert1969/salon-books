@@ -53,7 +53,7 @@ function userCol(name) {
 // Exposes a Dexie-like API so all existing app code works unchanged:
 //   db.transactions.add(record)
 //   db.transactions.where('date').equals(date).toArray()
-//   db.settings.get('pin')
+//   db.settings.get('businessName')
 //   db.settings.put({key, value})
 //   db.transaction('rw', ...tables, fn)
 // ----------------------------------------------------------------
@@ -281,8 +281,6 @@ const state = {
   selectedMonth:     new Date().getMonth() + 1,
   selectedYear:      new Date().getFullYear(),
   reportType:        'daily',
-  pinBuffer:         '',
-  pinEnabled:        false,
   rentersWeekStart:  null,
   showRentersTab:    false,  // Updated by updateRentersTabVisibility() on boot
   entriesViewMode:   'daily', // 'daily', 'monthly', or 'all'
@@ -7447,8 +7445,6 @@ async function renderSettingsView() {
   document.getElementById('header-actions').innerHTML = '';
 
   const bizName = await db.settings.get('businessName');
-  const pinSet  = await db.settings.get('pin');
-  const pinOn   = await db.settings.get('pinEnabled');
   
   // Get renters tab status
   const rentersOverride = await db.settings.get('showRentersTab');
@@ -7499,30 +7495,6 @@ async function renderSettingsView() {
           <button class="btn-add-chip" onclick="addCategory('EXPENSE')">+ Add</button>
         </div>
       </div>
-    </div>
-
-    <!-- PIN Lock -->
-    <div class="settings-section">
-      <div class="settings-label">Security</div>
-      <div class="settings-item" onclick="openPINSettings()">
-        <div>
-          <div class="settings-item-label">${pinSet ? 'Change PIN' : 'Set Up PIN Lock'}</div>
-          <div class="settings-item-sub">${pinOn?.value === 'true' ? 'PIN lock is ON' : 'PIN lock is OFF'}</div>
-        </div>
-        <span class="settings-item-arrow">›</span>
-      </div>
-      ${pinSet ? `
-      <div class="settings-item">
-        <div>
-          <div class="settings-item-label">PIN Lock</div>
-          <div class="settings-item-sub">Require PIN on startup</div>
-        </div>
-        <label class="toggle" onclick="event.stopPropagation()">
-          <input type="checkbox" ${pinOn?.value === 'true' ? 'checked' : ''} onchange="togglePINLock()">
-          <span class="toggle-slider"></span>
-        </label>
-      </div>
-      ` : ''}
     </div>
 
     <!-- Features -->
@@ -7797,45 +7769,6 @@ async function deleteCategory(type, name) {
   loadCategoryChips();
 }
 
-// ----------------------------------------------------------------
-// 16. PIN SYSTEM
-// ----------------------------------------------------------------
-
-function openPINSettings() {
-  openModal(`
-    <h2 class="modal-title">Set PIN</h2>
-    <p style="color:var(--text-muted); font-size:14px; margin-bottom:20px;">Choose a 4-digit PIN to secure the app.</p>
-    <div class="form-group">
-      <label class="form-label">New PIN (4 digits)</label>
-      <input type="password" class="form-input" id="new-pin" maxlength="4" inputmode="numeric" placeholder="••••">
-    </div>
-    <div class="form-group">
-      <label class="form-label">Confirm PIN</label>
-      <input type="password" class="form-input" id="confirm-pin" maxlength="4" inputmode="numeric" placeholder="••••">
-    </div>
-    <button class="btn-submit" onclick="savePIN()">Set PIN</button>
-  `);
-}
-
-async function savePIN() {
-  const p1 = document.getElementById('new-pin').value;
-  const p2 = document.getElementById('confirm-pin').value;
-  if (p1.length !== 4 || !/^\d{4}$/.test(p1)) { alert('PIN must be exactly 4 digits.'); return; }
-  if (p1 !== p2) { alert('PINs do not match. Try again.'); return; }
-  await db.settings.put({ key: 'pin', value: p1 });
-  await db.settings.put({ key: 'pinEnabled', value: 'true' });
-  closeModal();
-  showToast('PIN set ✓');
-  renderSettingsView();
-}
-
-async function togglePINLock() {
-  const current = await db.settings.get('pinEnabled');
-  const newVal  = current?.value === 'true' ? 'false' : 'true';
-  await db.settings.put({ key: 'pinEnabled', value: newVal });
-  renderSettingsView();
-}
-
 async function toggleRentersTab() {
   const override = await db.settings.get('showRentersTab');
   const allRenters = await db.renters.toArray();
@@ -7899,69 +7832,6 @@ async function toggleRentersTab() {
     navigate('renters');
   } else {
     navigate(state.currentView);
-  }
-}
-
-let pinBuffer = '';
-let pinPadInitialized = false; // Prevent duplicate event listeners
-
-function initPINPad() {
-  if (pinPadInitialized) return; // Already initialized
-  
-  document.querySelectorAll('.pin-btn[data-num]').forEach(btn => {
-    btn.addEventListener('click', () => enterPin(btn.dataset.num));
-  });
-  document.getElementById('pin-back')?.addEventListener('click', clearPin);
-  
-  pinPadInitialized = true;
-}
-
-function enterPin(num) {
-  if (pinBuffer.length >= 4) return;
-  pinBuffer += num;
-  updatePinDots();
-  if (pinBuffer.length === 4) {
-    setTimeout(checkPin, 150);
-  }
-}
-
-function clearPin() {
-  pinBuffer = pinBuffer.slice(0, -1);
-  updatePinDots();
-  document.getElementById('pin-error').classList.add('hidden');
-}
-
-function updatePinDots() {
-  for (let i = 0; i < 4; i++) {
-    document.getElementById(`dot-${i}`)?.classList.toggle('filled', i < pinBuffer.length);
-  }
-}
-
-async function checkPin() {
-  const stored = await db.settings.get('pin');
-  
-  if (stored && pinBuffer === stored.value) {
-      try {
-      document.getElementById('pin-screen').classList.add('hidden');
-      document.getElementById('app').classList.remove('hidden');
-      
-          
-      // Call navigate to update tab visibility and render the view
-      navigate('entries');
-      
-          
-      // Give renderEntriesView a moment to complete
-      // (navigate is sync but calls async renderEntriesView)
-      await new Promise(resolve => setTimeout(resolve, 100));
-      
-        } catch (err) {
-      console.error('Error after PIN entry:', err);
-      showToast('Error loading app — please refresh');
-    }
-  } else {
-      document.getElementById('pin-error').classList.remove('hidden');
-    pinBuffer = '';
-    updatePinDots();
   }
 }
 
@@ -10116,20 +9986,12 @@ async function bootApp() {
   await updateRentersTabVisibility();
   injectAskButton();
 
-  const pinSetting  = await db.settings.get('pin');
-  const pinEnabled  = await db.settings.get('pinEnabled');
-  const shouldPin   = pinSetting && pinEnabled?.value === 'true';
+  // PIN lock was removed; clear any PIN left in settings by either app
+  ['pinLock', 'pinCode', 'pin', 'pinEnabled'].forEach(k => db.settings.delete(k).catch(() => {}));
 
-  // Hide login screen, show correct gate
   document.getElementById('login-screen').classList.add('hidden');
-
-  if (shouldPin) {
-    document.getElementById('pin-screen').classList.remove('hidden');
-    initPINPad();
-  } else {
-    document.getElementById('app').classList.remove('hidden');
-    navigate('entries');
-  }
+  document.getElementById('app').classList.remove('hidden');
+  navigate('entries');
 
   // Fire-and-forget reminder check — runs after UI is visible
   setTimeout(() => checkRecurringExpenseReminders(), 2000);
@@ -10144,7 +10006,6 @@ auth.onAuthStateChanged(user => {
     currentUser = null;
     // Hide everything, show login screen
     document.getElementById('app').classList.add('hidden');
-    document.getElementById('pin-screen').classList.add('hidden');
     document.getElementById('login-screen').classList.remove('hidden');
   }
 });
