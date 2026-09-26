@@ -10005,19 +10005,43 @@ document.addEventListener('DOMContentLoaded', () => {
 // ----------------------------------------------------------------
 
 async function migrateMonthlyExpensesToTransactions() {
-  const FLAG_KEY = 'mf_monthly_migrated_v1';
+  // v2: idempotent across devices. v1 tracked completion only in localStorage,
+  // so every new browser re-copied all monthly expenses. Source docs are now
+  // marked in Firestore, and already-copied records are matched, not re-added.
+  const FLAG_KEY = 'mf_monthly_migrated_v2';
   if (localStorage.getItem(FLAG_KEY)) return;
 
-  const all = await db.monthlyExpenses.toArray();
-  if (all.length === 0) {
-    localStorage.setItem(FLAG_KEY, '1');
-    return;
-  }
+  // Date expense entry was unified. Unmatched legacy records paid before this
+  // were copied by v1 and the copy was later deleted on purpose — don't revive.
+  // Records paid on/after it were entered in an outdated build and still need copying.
+  const UNIFIED_DATE = '2026-05-27';
 
-  const records = all.map(e => {
+  const [legacy, txns] = await Promise.all([
+    db.monthlyExpenses.toArray(),
+    db.transactions.toArray()
+  ]);
+
+  const toDate = e => {
     const lastDay = new Date(e.year, e.month, 0).getDate();
-    const date = `${e.year}-${String(e.month).padStart(2,'0')}-${String(lastDay).padStart(2,'0')}`;
-    return {
+    return `${e.year}-${String(e.month).padStart(2,'0')}-${String(lastDay).padStart(2,'0')}`;
+  };
+  const keyOf = (category, amount, date) => `${category}|${Math.round((amount || 0) * 100)}|${date}`;
+
+  // Count existing v1 copies so each legacy record consumes at most one
+  const copies = {};
+  txns.filter(t => t.migratedFromMonthly).forEach(t => {
+    const k = keyOf(t.category, t.amount, t.date);
+    copies[k] = (copies[k] || 0) + 1;
+  });
+
+  const toAdd = [], toMark = [];
+  legacy.filter(e => !e.migratedToTransactions).forEach(e => {
+    const date = toDate(e);
+    const k = keyOf(e.category, e.amount, date);
+    toMark.push(e.id);
+    if (copies[k] > 0) { copies[k]--; return; }
+    if (!e.datePaid || e.datePaid < UNIFIED_DATE) return;
+    toAdd.push({
       date,
       type: 'EXPENSE',
       category:            e.category,
@@ -10029,12 +10053,18 @@ async function migrateMonthlyExpensesToTransactions() {
       recurring:           true,
       usualPayDay:         null,
       migratedFromMonthly: true,
-    };
+    });
   });
 
-  await db.transactions.bulkAdd(records);
+  // Add before marking: if marking fails, the next run matches these copies instead of re-adding
+  if (toAdd.length) await db.transactions.bulkAdd(toAdd);
+  await Promise.all(toMark.map(id => db.monthlyExpenses.update(id, { migratedToTransactions: true })));
   localStorage.setItem(FLAG_KEY, '1');
-  console.log(`Migrated ${records.length} monthly expenses to transactions.`);
+
+  if (toAdd.length) {
+    console.log(`Migrated ${toAdd.length} monthly expenses to transactions.`);
+    showToast(`Recovered ${toAdd.length} monthly expense${toAdd.length === 1 ? '' : 's'} entered in an older version`);
+  }
 }
 
 async function checkRecurringExpenseReminders() {

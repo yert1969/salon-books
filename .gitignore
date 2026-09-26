@@ -1,1 +1,6 @@
 .claude/
+# Financial and client data: never commit
+mane-frame-backup-*.json
+mane-frame-migration-*.json
+*.csv
+*.xlsx
