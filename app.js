@@ -266,9 +266,26 @@ async function signInWithGoogle() {
 
 async function signOutUser() {
   if (!confirm('Sign out of Mane Frame?')) return;
+
+  // Don't wipe the local copy while it still holds changes that haven't synced
+  const synced = await Promise.race([
+    firestore.waitForPendingWrites().then(() => true),
+    new Promise(resolve => setTimeout(() => resolve(false), 5000))
+  ]);
+  if (!synced && !confirm('Some changes have not synced yet (you may be offline). Sign out anyway and lose them?')) return;
+
   _appBooted = false;
   await auth.signOut();
-  // onAuthStateChanged fires → shows login screen
+
+  // Remove the offline copy of the salon's data from this browser
+  try {
+    await firestore.terminate();
+    await firestore.clearPersistence();
+  } catch (err) {
+    console.warn('Could not clear offline data:', err);
+    alert('Signed out. Close any other Mane Frame tabs to fully clear saved data from this browser.');
+  }
+  location.reload();
 }
 
 // ----------------------------------------------------------------
