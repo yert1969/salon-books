@@ -469,6 +469,20 @@ function escapeHTML(str) {
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;');
 }
+// Privacy: turn a person's name into initials for data sent to the AI.
+// Repeated initials get a number so different people stay distinct.
+function makeNameAliaser() {
+  const byName = {}, used = {};
+  return name => {
+    const key = (name || '').trim().toLowerCase();
+    if (!key) return 'Unknown';
+    if (byName[key]) return byName[key];
+    const initials = key.split(/\s+/).filter(Boolean).map(p => p[0].toUpperCase() + '.').join('');
+    used[initials] = (used[initials] || 0) + 1;
+    return byName[key] = used[initials] > 1 ? `${initials} (${used[initials]})` : initials;
+  };
+}
+
 
 function monthName(num) {
   return new Date(2000, num - 1, 1).toLocaleString('en-US', { month: 'long' });
@@ -9588,6 +9602,7 @@ function askSuggestion(btn) {
 }
 
 async function gatherBusinessSnapshot() {
+  const alias = makeNameAliaser();
   const allTxns = await db.transactions.toArray();
   const allSums = await db.dailySummary.toArray();
   const allRenters = await db.renters.toArray();
@@ -9664,7 +9679,7 @@ async function gatherBusinessSnapshot() {
     if (t.date > clientMap[key].lastVisit) clientMap[key].lastVisit = t.date;
   });
   const clientList = Object.values(clientMap).sort((a,b) => b.spend - a.spend).slice(0, 15)
-    .map(c => `${c.name}: ${c.visits} visits, $${c.spend.toFixed(2)} total, last visit ${c.lastVisit}`);
+    .map(c => `${alias(c.name)}: ${c.visits} visits, $${c.spend.toFixed(2)} total, last visit ${c.lastVisit}`);
 
   // Employee performance (YTD)
   const employees = state.employees || ['Chasity McGill'];
@@ -9767,7 +9782,7 @@ async function gatherBusinessSnapshot() {
         recentWeeks.push('missed');
       }
     }
-    return `- ${r.name}: Current rate $${currentRate}/week, ${pmts.length} payments ($${totalPaid.toFixed(0)} total), last paid ${lastPaid}, last 8 weeks: ${onTime} on-time, ${late} late, ${missed} missed${vacation > 0 ? `, ${vacation} rent-free vacation (excused)` : ''}`;
+    return `- ${alias(r.name)}: Current rate $${currentRate}/week, ${pmts.length} payments ($${totalPaid.toFixed(0)} total), last paid ${lastPaid}, last 8 weeks: ${onTime} on-time, ${late} late, ${missed} missed${vacation > 0 ? `, ${vacation} rent-free vacation (excused)` : ''}`;
   });
 
   return `
@@ -9791,7 +9806,7 @@ ${topExpenses.join('\n')}
 BOOTH RENTERS (${activeRenters.length} active, total weekly rent: $${totalWeeklyRent}):
 ${renterInfo.join('\n') || 'None'}
 
-CLIENT BOOK (top ${clientList.length} by spend):
+CLIENT BOOK (top ${clientList.length} by spend) (Client and renter names are shown as initials for privacy.):
 ${clientList.join('\n') || 'No client names tracked yet'}
 `.trim();
 }
