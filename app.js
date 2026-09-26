@@ -868,8 +868,8 @@ async function updateRentersTabVisibility() {
   // Check for manual override first
   const override = await db.settings.get('showRentersTab');
   
-  if (override?.value !== undefined) {
-    // Manual override exists — respect it
+  if (override?.value === 'true' || override?.value === 'false') {
+    // Manual override exists — respect it ('auto', which desktop may save, means auto-detect)
     state.showRentersTab = override.value === 'true';
   } else {
     // No override — auto-detect based on renter data
@@ -7964,7 +7964,7 @@ async function renderRentersView() {
   // Renters on a rent-free vacation week owe nothing, so they're excluded from Expected.
   const expectedTotal  = renters.reduce((s, r) => {
     const p = payMap[r.id];
-    return s + (p && p.vacation ? 0 : getRateForWeek(r, state.renterWeekStart));
+    return s + (p && p.vacation ? 0 : getRateForWeek(r, state.rentersWeekStart));
   }, 0);
   const collectedTotal = payments.reduce((s, p) => s + (p.amount || 0), 0);
   const outstanding    = expectedTotal - collectedTotal;
@@ -8023,13 +8023,13 @@ async function renderRentersView() {
                   ? `<span class="${statusClass}">Rent-free week (excused)</span>`
                   : p
                   ? `Paid ${formatDateDisplay(p.datePaid)} · ${escapeHTML(p.paymentMethod)} · <span class="${statusClass}">${statusLabel}</span>`
-                  : `<span class="${statusClass}">Not yet paid</span> · Due ${fmt(getRateForWeek(r, state.renterWeekStart))}`}
+                  : `<span class="${statusClass}">Not yet paid</span> · Due ${fmt(getRateForWeek(r, state.rentersWeekStart))}`}
               </div>
               ${p && !isVac && p.notes && p.notes.includes('catch-up') ? `<div style="font-size:10px;color:var(--plum);margin-top:2px;">↳ ${escapeHTML(p.notes)}</div>` : ''}
               ${isVac && p.notes ? `<div style="font-size:10px;color:var(--plum);margin-top:2px;">↳ ${escapeHTML(p.notes)}</div>` : ''}
             </div>
             <div class="renter-amount">
-              <div style="font-weight:700;color:${isVac ? 'var(--plum)' : p ? 'var(--success)' : 'var(--text-muted)'}">${isVac ? 'Free' : p ? fmt(p.amount) : fmt(getRateForWeek(r, state.renterWeekStart))}</div>
+              <div style="font-weight:700;color:${isVac ? 'var(--plum)' : p ? 'var(--success)' : 'var(--text-muted)'}">${isVac ? 'Free' : p ? fmt(p.amount) : fmt(getRateForWeek(r, state.rentersWeekStart))}</div>
               ${!p ? `<button class="renter-pay-btn" onclick="event.stopPropagation();openLogPaymentModal('${r.id}')">Log Payment</button>`
                    : `<button class="renter-pay-btn" style="background:var(--bg-card);color:var(--text-muted);font-size:10px;padding:2px 8px;" onclick="event.stopPropagation();openEditRentPayment('${p.id}','${r.id}')">Edit</button>`}
             </div>
@@ -8067,7 +8067,7 @@ function openLogPaymentModal(renterId) {
       <div id="rp-payment-fields">
         <label class="form-label">Amount Paid ($)</label>
         <input type="number" inputmode="decimal" class="form-input" id="rp-amount"
-          value="${getRateForWeek(r, state.renterWeekStart) || 140}" step="0.01" min="0">
+          value="${getRateForWeek(r, state.rentersWeekStart) || 140}" step="0.01" min="0">
 
         <label class="form-label">Date Paid</label>
         <input type="date" class="form-input" id="rp-date" value="${todayStr()}">
