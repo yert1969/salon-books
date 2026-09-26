@@ -9919,7 +9919,7 @@ async function sendAskQuery() {
   // Add user message
   messagesEl.innerHTML += `
     <div style="align-self:flex-end;background:var(--plum, #5D3854);color:#fff;border-radius:12px;padding:10px 14px;max-width:85%;font-size:14px;line-height:1.4;">
-      ${question}
+      ${escapeHTML(question)}
     </div>
   `;
 
@@ -9958,7 +9958,7 @@ async function sendAskQuery() {
     const loadingEl = document.getElementById(loadingId);
     if (loadingEl) {
       loadingEl.innerHTML = `
-        <div style="font-size:14px;color:var(--text, #333);line-height:1.6;white-space:pre-wrap;">${answer}</div>
+        <div style="font-size:14px;color:var(--text, #333);line-height:1.6;white-space:pre-wrap;">${escapeHTML(answer)}</div>
       `;
     }
   } catch (error) {
